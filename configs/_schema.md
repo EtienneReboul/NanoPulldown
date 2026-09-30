@@ -24,10 +24,11 @@ sequences:
 bait_chains: [A]
 prey_chains: [B]
 
-# ── Annotation review gate ──────────────────────────────────────────────
-# Stage 1 writes data/annotation/<pair>/annotation.yaml for you to merge
-# into the `domains:` block below. Flip this to true once you've reviewed
-# it -- stage 2 refuses to run for a pair still set false.
+# ── Annotation review (informational only, doesn't gate folding) ───────
+# Preprocessing writes data/annotation/<pair>/annotation.yaml for you to
+# merge into the `domains:` block below, whenever convenient. Flip this to
+# true once you've reviewed it -- report figures then prefer this file's
+# curated `domains:` over the auto-proposed one (see plot_domain_bar.py).
 annotation_reviewed: false
 
 # ── Domain / region map (hand-curated from stage-1 annotation) ──────────

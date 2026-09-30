@@ -12,26 +12,28 @@ One seed, `esmfold2.num_diffusion_samples` diffusion samples (5 by default)
 per pair, no pose clustering, one PAE-based domain×domain confidence heatmap
 per sample, ONE report at the end.
 
-## The two stages
+## Pipeline
+
+One `Snakefile`, one `rule all`, one command — everything runs on one
+machine (no cluster profile, no manual checkpoint to flip) straight
+through from sequence annotation to the final report.
 
 ```
-┌─ STAGE 1  preprocessing (local, needs internet) ───────────────────────────┐
-│  workflows/preprocessing/Snakefile      snakemake --use-conda --cores 2    │
-│                                                                             │
+┌─ preprocessing (needs internet) ───────────────────────────────────────────┐
 │  sequence annotation:  domains (ScanProsite + InterProScan v6 MATCH API)   │
 │                        disorder + MoRF (AIUPred docker)                    │
-│                     ─► data/annotation/<pair>/annotation.yaml [HUMAN REVIEW]│
-└────────────────────────────────┬────────────────────────────────────────────┘
-┌─ STAGE 2  folding (local, Apple Silicon GPU) ──────────────────────────────┐
-│  workflows/folding/Snakefile            snakemake --use-conda --cores 4    │
-│                                                                             │
-│  refuses to run any pair with annotation_reviewed: false                  │
+│                     ─► data/annotation/<pair>/annotation.yaml              │
+│                        (proposed `domains:`; curate into configs/<pair>.yaml│
+│                        whenever convenient — doesn't block folding)        │
+├─ folding (Apple Silicon GPU) ───────────────────────────────────────────────┤
 │  ESMFold2-Fast: 1 seed, N diffusion samples, no MSA/templates              │
 │  ─► metadata compression (arrays.h5 + model_metadata.parquet)             │
 │  ─► OpenMM minimization (no ChimeraX, no antechamber)                     │
 │  ─► rescoring: ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM             │
 │  ─► reports/report.zip  (unzip → report.html) — the ONE report            │
 └──────────────────────────────────────────────────────────────────────────┘
+
+snakemake --use-conda --cores 4
 ```
 
 ## Quick start
@@ -45,14 +47,13 @@ conda env create -f envs/controller.yaml && conda activate nanopulldown
 python scripts/expand_pairs.py
 #    edit config.yaml's `pairs:` list to include the new configs/<pair>.yaml stems
 
-# 2. STAGE 1 — local
-snakemake -s workflows/preprocessing/Snakefile --use-conda --cores 2
-#    review data/annotation/<pair>/annotation.yaml, curate the `domains:`
-#    block into configs/<pair>.yaml, set `annotation_reviewed: true`
-
-# 3. STAGE 2 — local (Apple Silicon GPU via MLX/Metal)
-snakemake -s workflows/folding/Snakefile --use-conda --cores 4
+# 2. run the whole pipeline (Apple Silicon GPU via MLX/Metal for folding)
+snakemake --use-conda --cores 4
 #    -> reports/report.zip
+
+# anytime before or after: review data/annotation/<pair>/annotation.yaml and
+# curate the `domains:` block into configs/<pair>.yaml -- optional, only
+# affects domain-map figures, never blocks a run
 ```
 
 ## Layout
@@ -66,7 +67,7 @@ snakemake -s workflows/folding/Snakefile --use-conda --cores 4
 | `envs/` | one conda env per rule group, built by `--use-conda` |
 | `tools/` | vendored: `ipsae`, `pinc` (both from ab_initio_pipeline, unchanged) |
 | `scripts/` | see each script's own docstring for what it reuses/adapts/replaces from ab_initio_pipeline |
-| `workflows/<stage>/Snakefile` | the two stage workflows |
+| `Snakefile` | the whole pipeline, one default `rule all` |
 | `report/` | `custom.css` (dark theme, from ab_initio_pipeline), `datavzrd/nanopulldown.datavzrd.yaml` |
 | `data/ results/ logs/ reports/` | runtime outputs (gitignored) |
 

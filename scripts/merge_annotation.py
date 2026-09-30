@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-scripts/merge_annotation.py — Stage 1b (the human-review checkpoint)
+scripts/merge_annotation.py — Stage 1b (optional human review)
 ======================================================================
 Fuse domains.raw.tsv + disorder_binding.tsv into ONE proposed `domains:`
 block per protein chain, written to data/annotation/<pair>/annotation.yaml
-for a human to curate into configs/<pair>.yaml. Also emits a plain-text diff
-against whatever `domains:` the config already has.
+for a human to curate into configs/<pair>.yaml whenever convenient --
+folding does not wait on this. Also emits a plain-text diff against
+whatever `domains:` the config already has.
 
 Adapted from ab_initio_pipeline's scripts/merge_annotation.py: disorder now
 comes from a single AIUPred "disorder" track (no multi-track consensus
@@ -185,8 +186,8 @@ def main() -> int:
     print(f"[merge_annotation] -> {out}")
     print("\n".join(diff_lines))
     if not spec.get("annotation_reviewed"):
-        print(f"\n[merge_annotation] REVIEW REQUIRED: configs/{args.pair}.yaml still has "
-              "annotation_reviewed: false — stage 2 will refuse to run this pair.")
+        print(f"\n[merge_annotation] configs/{args.pair}.yaml still has annotation_reviewed: "
+              "false — folding will proceed anyway; curate `domains:` whenever convenient.")
     return 0
 
 

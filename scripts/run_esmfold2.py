@@ -111,12 +111,6 @@ def main() -> int:
     cfg = load_config()
     spec = load_pair(args.pair, Path(args.spec).resolve().parent.parent)
 
-    if not spec.get("annotation_reviewed"):
-        raise RuntimeError(
-            f"{args.pair}: annotation_reviewed is false in configs/{args.pair}.yaml — "
-            "review data/annotation/<pair>/annotation.yaml and curate `domains:` first."
-        )
-
     fold_pair(spec, cfg, Path(args.out_dir))
     Path(args.done).write_text("ok\n")
     return 0

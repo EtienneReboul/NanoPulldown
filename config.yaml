@@ -10,7 +10,7 @@
 #      for you by scripts/expand_pairs.py from configs/baits.txt x
 #      configs/preys.txt.
 # Per-machine / per-user paths go in config.local.yaml (copy
-# config.local.yaml.example), which every Snakefile loads on top of this one
+# config.local.yaml.example), which the Snakefile loads on top of this one
 # when present.
 #
 # Stages:

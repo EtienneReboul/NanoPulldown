@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # scripts/build_report.sh [repo_root]
-# Rebuilds reports/report.zip from the just-completed folding Snakemake run.
-# Invoked from workflows/folding/Snakefile's `onsuccess:` hook, so it must
-# never fail the pipeline — a broken report build is logged and swallowed.
+# Rebuilds reports/report.zip from the just-completed Snakemake run.
+# Invoked from Snakefile's `onsuccess:` hook, so it must never fail the
+# pipeline — a broken report build is logged and swallowed.
 #
 # Unlike ab_initio_pipeline (one report.zip per stage), nanopulldown builds
-# only ONE report, from the folding Snakefile alone — preprocessing has no
-# report of its own, since its only output that matters (the annotation
-# review) is meant to be read directly from data/annotation/<pair>/annotation.yaml,
-# not packaged.
+# only ONE report — preprocessing has no report of its own, since its only
+# output that matters (the annotation review) is meant to be read directly
+# from data/annotation/<pair>/annotation.yaml, not packaged. Its rules just
+# carry no `report()` markers, so they don't show up in the zip.
 #
 # The report is a .zip (not a bare .html) because `snakemake --report` only
 # embeds interactive HTML items — the datavzrd table bundle — for the zip
@@ -17,7 +17,7 @@
 set -uo pipefail
 
 REPO="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-SNAKEFILE="$REPO/workflows/folding/Snakefile"
+SNAKEFILE="$REPO/Snakefile"
 OUT="$REPO/reports/report.zip"
 CSS="$REPO/report/custom.css"
 
