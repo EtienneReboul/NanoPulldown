@@ -2,10 +2,13 @@ name: nanopulldown-esmfold2
 # Stage 2a folding — ESMFold2-Fast on Apple Silicon via MLX/Metal. Mirrors
 # /Users/ereboul/projects/esmfold2_test/esmfold2_local_applesilicon.ipynb's
 # setup: `esm` (featurizer/builder, brings torch/biotite) via this file's
-# pip section, then `mlx-lm` (the MLX model) as a SEPARATE manual step with
+# pip section, then `mlx-lm` (the MLX model) as a SEPARATE step with
 # --no-deps, since its packaging wants a newer transformers than the esm
 # featurizer's fork tolerates and `pip install -r` cannot mix --no-deps
-# per-line with a normal install in one `conda env create` pass:
+# per-line with a normal install in one `conda env create` pass. The
+# Snakefile's run_esmfold2 rule installs it itself on first run (checks
+# `import mlx_lm` before calling pip), so `--use-conda` alone is enough --
+# no manual step needed. To do it by hand instead (e.g. outside Snakemake):
 #
 #   conda env create -f envs/esmfold2.yaml
 #   conda run -n nanopulldown-esmfold2 pip install --no-deps \
@@ -20,3 +23,4 @@ dependencies:
   - pip
   - pip:
       - esm
+      - mlx>=0.30   # mlx-lm's actual runtime need, dropped by its own --no-deps install below

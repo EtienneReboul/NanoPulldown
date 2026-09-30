@@ -12,3 +12,4 @@ dependencies:
   - openmm>=8.1
   - pdbfixer>=1.9
   - numpy>=1.26
+  - pyyaml>=6.0   # scripts/minimize_openmm.py imports lib_pipeline.load_config
