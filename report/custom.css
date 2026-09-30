@@ -1,0 +1,162 @@
+/* ab_initio_pipeline — Snakemake report stylesheet (injected via
+   `snakemake --report --report-stylesheet report/custom.css`).
+
+   The Snakemake 9 report app is Tailwind-generated at runtime and ships no
+   dark mode of its own, so this sheet *is* the dark theme: it repaints the
+   shell, the RST/prose panels, the rule graph and the result tables, and
+   frames the (white) matplotlib SVGs on a light card so they stay readable.
+   Loaded last in <head>, hence the `!important`s. The interactive datavzrd
+   bundles carry their own dark skin (scripts/datavzrd-dark.css). */
+
+:root {
+  --ab-bg:        #0f1620;   /* page / main canvas            */
+  --ab-panel:     #172230;   /* sidebar, cards                */
+  --ab-panel-2:   #1e2c3d;   /* raised elements, code blocks  */
+  --ab-border:    #2c3e52;
+  --ab-fg:        #d6e2ee;
+  --ab-fg-dim:    #93a4b6;
+  --ab-heading:   #f1f6fb;
+  --ab-link:      #6ec6ff;
+  --ab-code:      #ff9db1;
+  --accent:       #4fd1a5;
+}
+
+/* ── shell ──────────────────────────────────────────────────────────────── */
+html, body, #app {
+  background: var(--ab-bg) !important;
+  color: var(--ab-fg) !important;
+}
+#app > div,
+#app > div > .grow,
+.grow.flex.items-center,
+.grow.flex.gap-3 {
+  background: var(--ab-bg) !important;
+}
+#loading-screen { background-color: var(--ab-bg) !important; color: var(--ab-fg); }
+
+/* sidebar (bg-slate-900/70 over a now-dark page → bump toward opaque) */
+nav.bg-slate-900\/70 { background: rgba(15, 22, 32, 0.92) !important; }
+nav.bg-slate-800     { background: var(--ab-panel-2) !important; }
+.bg-slate-800        { background-color: var(--ab-panel-2) !important; }
+
+/* sidebar sticky title + the floating open/close tab (both bg-white/*) */
+.bg-white\/80, .bg-white\/70 {
+  background: rgba(23, 34, 48, 0.9) !important;
+  color: var(--ab-fg) !important;
+}
+.text-slate-700, .text-slate-800 { color: var(--ab-fg) !important; }
+
+/* breadcrumb + nav links */
+.hover\:text-emerald-600:hover,
+.hover\:text-emerald-500:hover { color: var(--accent) !important; }
+
+/* ── prose: the .rst captions / stage description ───────────────────────── */
+/* Tailwind's prose plugin re-declares these vars from a rule that loads
+   after this sheet, so pin them !important and also hit the elements. */
+.prose {
+  --tw-prose-body:          var(--ab-fg) !important;
+  --tw-prose-headings:      var(--ab-heading) !important;
+  --tw-prose-lead:          var(--ab-fg-dim) !important;
+  --tw-prose-links:         var(--ab-link) !important;
+  --tw-prose-bold:          var(--ab-heading) !important;
+  --tw-prose-counters:      var(--ab-fg-dim) !important;
+  --tw-prose-bullets:       #4b5f74 !important;
+  --tw-prose-hr:            var(--ab-border) !important;
+  --tw-prose-quotes:        var(--ab-fg) !important;
+  --tw-prose-quote-borders: var(--ab-border) !important;
+  --tw-prose-captions:      var(--ab-fg-dim) !important;
+  --tw-prose-code:          var(--ab-code) !important;
+  --tw-prose-pre-code:      #dbe4ee !important;
+  --tw-prose-pre-bg:        #0b1118 !important;
+  --tw-prose-th-borders:    var(--ab-border) !important;
+  --tw-prose-td-borders:    var(--ab-border) !important;
+  color: var(--ab-fg) !important;
+}
+.prose :where(p, li, ul, ol, blockquote, dd, dt, table, td, th):not(:where([class~="not-prose"] *)) {
+  color: var(--ab-fg) !important;
+}
+.prose :where(strong, b):not(:where([class~="not-prose"] *)),
+.prose :where(h1, h2, h3, h4, h5, h6):not(:where([class~="not-prose"] *)) {
+  color: var(--ab-heading) !important;
+}
+.prose :where(a):not(:where([class~="not-prose"] *)) { color: var(--ab-link) !important; }
+.prose :where(code):not(:where([class~="not-prose"] *)) { color: var(--ab-code) !important; }
+.document, .document *, .rst-content { color: inherit !important; }
+.document .title, .document h1, .document h2, .document h3 { color: var(--ab-heading) !important; }
+
+/* generic code / pre outside prose */
+pre, code, tt, .highlight, .literal-block {
+  background: #0b1118 !important;
+  color: #dbe4ee !important;
+}
+
+/* ── result tables (sidebar system list + any embedded tables) ──────────── */
+table.table-auto, table.table-auto th, table.table-auto td {
+  color: var(--ab-fg) !important;
+  border-color: var(--ab-border) !important;
+}
+table.table-auto tbody tr:hover { background: rgba(110, 198, 255, 0.10) !important; }
+
+/* Snakemake statistics / rules / packages tables */
+table:not(.table-auto) {
+  color: var(--ab-fg) !important;
+  border-color: var(--ab-border) !important;
+}
+table:not(.table-auto) th { background: var(--ab-panel-2) !important; color: var(--ab-fg) !important; }
+table:not(.table-auto) td { border-color: var(--ab-border) !important; }
+table:not(.table-auto) tr:nth-child(even) td,
+table:not(.table-auto) tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03) !important; }
+
+/* ── vega: rule graph, runtimes, timeline ──────────────────────────────── */
+.vega-embed text, #rulegraph text, #runtimes text, #timeline text {
+  fill: #e8eef5 !important;
+}
+#rulegraph text { font-weight: 500; }
+.vega-embed .role-axis line, .vega-embed .role-axis path,
+.vega-embed .background { stroke: var(--ab-border) !important; }
+.vega-embed .background > rect,
+.vega-embed g > rect:first-child { fill: transparent !important; }
+.vega-embed summary { color: var(--ab-fg-dim); }
+.vega-actions { background: var(--ab-panel-2) !important; color: var(--ab-fg) !important; }
+.vega-actions a:hover { background: rgba(110, 198, 255, 0.12) !important; }
+
+/* ── figures: matplotlib SVGs bake in a white ground — frame them ───────── */
+/* Let the single-figure view use the whole main column instead of shrink-
+   wrapping to the SVG's intrinsic ~880 px (which left the plot small and
+   clipped its edge labels). */
+.grow.items-center.justify-center { align-items: stretch !important; }
+.grow.items-center.justify-center > * {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.results img, .results svg,
+.grow img, .grow object, .grow > * > svg,
+img[src$=".svg"], object[type="image/svg+xml"] {
+  display: block;
+  width: 100%;
+  max-width: 1200px;
+  height: auto;
+  margin: 0 auto;
+  box-sizing: border-box;
+  background: #ffffff;
+  /* white "padding" as a border so Chrome's `img { overflow: clip }` can't
+     crop the plot's outer labels/legend. */
+  border: 16px solid #ffffff;
+  border-radius: 10px;
+  overflow: visible;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+/* ── headings / misc ──────────────────────────────────────────────────── */
+h1, h2, h3 { font-weight: 600; color: var(--ab-heading); }
+a { color: var(--ab-link); }
+hr { border-color: var(--ab-border); }
+::selection { background: rgba(79, 209, 165, 0.35); }
+table { font-size: 0.85rem; }
+
+/* scrollbars */
+* { scrollbar-color: #33475c var(--ab-bg); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--ab-bg); }
+::-webkit-scrollbar-thumb { background: #33475c; border-radius: 5px; }

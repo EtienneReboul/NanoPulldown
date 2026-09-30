@@ -1,0 +1,14 @@
+name: nanopulldown-metrics
+# Stage 2c — PAE-based interface metrics over ESMFold2's diffusion samples.
+# Wraps the vendored tools/ipsae, tools/pinc scripts, feeding them per-sample
+# PAE straight from results/metadata/<pair>/arrays.h5.
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - pandas>=2.0
+  - h5py>=3.10
+  - gemmi>=0.7
+  - pyarrow>=15.0

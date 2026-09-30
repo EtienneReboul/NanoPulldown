@@ -1,0 +1,14 @@
+name: nanopulldown-minimize
+# Stage 2d — OpenMM minimization (no ChimeraX, no antechamber). OpenMM's
+# conda-forge build includes the OpenCL platform; whether it actually
+# initializes against the Mac's Metal-backed OpenCL driver should be checked
+# once (see the project plan's verification section) -- CPU is a safe
+# fallback either way.
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - openmm>=8.1
+  - pdbfixer>=1.9
+  - numpy>=1.26

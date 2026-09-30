@@ -1,0 +1,22 @@
+name: nanopulldown-esmfold2
+# Stage 2a folding — ESMFold2-Fast on Apple Silicon via MLX/Metal. Mirrors
+# /Users/ereboul/projects/esmfold2_test/esmfold2_local_applesilicon.ipynb's
+# setup: `esm` (featurizer/builder, brings torch/biotite) via this file's
+# pip section, then `mlx-lm` (the MLX model) as a SEPARATE manual step with
+# --no-deps, since its packaging wants a newer transformers than the esm
+# featurizer's fork tolerates and `pip install -r` cannot mix --no-deps
+# per-line with a normal install in one `conda env create` pass:
+#
+#   conda env create -f envs/esmfold2.yaml
+#   conda run -n nanopulldown-esmfold2 pip install --no-deps \
+#       "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main"
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pyyaml>=6.0
+  - numpy>=1.26
+  - pip
+  - pip:
+      - esm

@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# example_toy__example_toy — ubiquitin homodimer (verification vehicle, not
+# real science). Same worked example as ab_initio_pipeline's example_toy.
+# ~152 residues total: trivial for ESMFold2-Fast, and the flexible
+# C-terminal ...LRGG tail gives the disorder/MoRF plots something to show.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: example_toy__example_toy
+
+bait: {uniprot: P0CG48, copies: 1, regions: null}
+prey: {uniprot: P0CG48, copies: 1, regions: null}
+
+sequences:
+  - {id: A, name: ubiquitin_bait, sequence: "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG", role: bait}
+  - {id: B, name: ubiquitin_prey, sequence: "MQIFVKTLTGKTITLEVEPSDTIENVKAKIQDKEGIPPDQQRLIFAGKQLEDGRTLSDYNIQKESTLHLVLRLRGG", role: prey}
+
+bait_chains: [A]
+prey_chains: [B]
+
+# reviewed against data/annotation/example_toy__example_toy/annotation.yaml
+# (Pfam PF00240 / SMART SM00213 / PROSITE PS50053 ubiquitin fold 1-72; the
+# LRGG tail is flexible but kept as a short disordered tag by hand, same as
+# ab_initio_pipeline's own example_toy, for the plumbing demo).
+annotation_reviewed: true
+
+domains:
+  A:
+    - {name: ubiquitin_fold, start: 1,  end: 72, kind: domain}
+    - {name: LRGG_tail,      start: 73, end: 76, kind: disordered}
+  B:
+    - {name: ubiquitin_fold, start: 1,  end: 72, kind: domain}
+    - {name: LRGG_tail,      start: 73, end: 76, kind: disordered}

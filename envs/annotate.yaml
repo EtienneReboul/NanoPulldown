@@ -1,0 +1,13 @@
+name: nanopulldown-annotate
+# Stage 1b sequence annotation — domains (ScanProsite + InterProScan v6 MATCH
+# API), disorder + binding/MoRF (AIUPred, via docker -- the `docker` CLI must
+# be on PATH and the daemon running; nothing AIUPred-specific installs here).
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - requests>=2.31
+  - numpy>=1.26
+  - pandas>=2.0
+  - pyyaml>=6.0

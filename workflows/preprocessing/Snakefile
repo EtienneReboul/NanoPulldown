@@ -1,0 +1,143 @@
+"""
+workflows/preprocessing/Snakefile — Stage 1 (local, needs internet)
+====================================================================
+Sequence annotation for every pair in config.yaml's `pairs:` list.
+Pairs themselves (bait/prey UniProt sequences resolved, chains assigned)
+come from scripts/expand_pairs.py, run once ahead of Snakemake -- see the
+top-level README. This Snakefile only annotates configs/<pair>.yaml's
+already-resolved `sequences:`.
+
+  1a. annotate_domains          ScanProsite + InterProScan v6 MATCH API -> domains.raw.tsv
+      annotate_disorder_aiupred AIUPred docker (disorder + binding/MoRF)  -> disorder.tsv
+      merge_annotation          -> data/annotation/<pair>/annotation.yaml  (HUMAN REVIEW)
+  1b. report figures (domain map, disorder/binding) -- viewed directly as
+      SVGs, not packaged into a report (nanopulldown's one report.zip comes
+      from workflows/folding/Snakefile, after the review gate below passes).
+
+Usage:
+  snakemake -s workflows/preprocessing/Snakefile --use-conda --cores 2
+"""
+import sys
+from pathlib import Path
+
+REPO = Path(workflow.basedir).parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
+from lib_pipeline import load_config, load_pair, protein_chains  # noqa: E402
+
+configfile: str(REPO / "config.yaml")
+if (REPO / "config.local.yaml").exists():
+    configfile: str(REPO / "config.local.yaml")
+
+CFG = load_config(REPO)
+DIRS = CFG["dirs"]
+ANN = Path(DIRS["annotation"])
+REP = Path(DIRS["reports"]) / "preprocessing"
+LOG = Path(DIRS["logs"]) / "preprocessing"
+PAIRS = CFG["pairs"]
+
+SPECS = {p: load_pair(p, REPO) for p in PAIRS}
+CHAIN_IDS = {p: [c["id"] for c in protein_chains(SPECS[p])] for p in PAIRS}
+
+
+def chain_figs(kind):
+    return [str(REP / p / f"{kind}_{cid}.svg")
+            for p in PAIRS for cid in CHAIN_IDS[p]]
+
+
+rule all:
+    default_target: True
+    input:
+        [str(ANN / p / "annotation.yaml") for p in PAIRS],
+        chain_figs("domain_bar"),
+        chain_figs("disorder"),
+
+
+rule annotate_domains:
+    input:
+        spec=str(REPO / "configs" / "{pair}.yaml"),
+    output:
+        tsv=str(ANN / "{pair}" / "domains.raw.tsv"),
+    log:
+        str(LOG / "annotate_domains" / "{pair}.log"),
+    conda:
+        "../../envs/annotate.yaml"
+    shell:
+        r"""
+        python scripts/annotate_domains.py \
+          --pair {wildcards.pair} --spec {input.spec} --out {output.tsv} \
+          > {log} 2>&1
+        """
+
+
+rule annotate_disorder:
+    input:
+        spec=str(REPO / "configs" / "{pair}.yaml"),
+    output:
+        tsv=str(ANN / "{pair}" / "disorder.tsv"),
+    log:
+        str(LOG / "annotate_disorder" / "{pair}.log"),
+    conda:
+        "../../envs/annotate.yaml"
+    shell:
+        r"""
+        python scripts/annotate_disorder_aiupred.py \
+          --pair {wildcards.pair} --spec {input.spec} --out {output.tsv} \
+          > {log} 2>&1
+        """
+
+
+rule merge_annotation:
+    input:
+        spec=str(REPO / "configs" / "{pair}.yaml"),
+        domains=str(ANN / "{pair}" / "domains.raw.tsv"),
+        disorder=str(ANN / "{pair}" / "disorder.tsv"),
+    output:
+        yaml=str(ANN / "{pair}" / "annotation.yaml"),
+    log:
+        str(LOG / "merge_annotation" / "{pair}.log"),
+    conda:
+        "../../envs/annotate.yaml"
+    shell:
+        r"""
+        python scripts/merge_annotation.py \
+          --pair {wildcards.pair} --spec {input.spec} \
+          --domains {input.domains} --disorder {input.disorder} \
+          --out {output.yaml} \
+          > {log} 2>&1
+        """
+
+
+rule fig_domain_bar:
+    input:
+        spec=str(REPO / "configs" / "{pair}.yaml"),
+        annotation=str(ANN / "{pair}" / "annotation.yaml"),
+    output:
+        str(REP / "{pair}" / "domain_bar_{chain}.svg"),
+    conda:
+        "../../envs/report.yaml"
+    params:
+        fmts=",".join(CFG["report"]["figure_formats"]),
+    shell:
+        r"""
+        python scripts/plot_domain_bar.py \
+          --spec {input.spec} --annotation {input.annotation} --chain {wildcards.chain} \
+          --out {output[0]} --formats {params.fmts}
+        """
+
+
+rule fig_disorder:
+    input:
+        disorder=str(ANN / "{pair}" / "disorder.tsv"),
+    output:
+        str(REP / "{pair}" / "disorder_{chain}.svg"),
+    conda:
+        "../../envs/report.yaml"
+    params:
+        fmts=",".join(CFG["report"]["figure_formats"]),
+        cutoff=CFG["annotate"]["consensus"]["disorder_cutoff"],
+    shell:
+        r"""
+        python scripts/plot_disorder.py \
+          --disorder {input.disorder} --chain {wildcards.chain} \
+          --cutoff {params.cutoff} --out {output[0]} --formats {params.fmts}
+        """

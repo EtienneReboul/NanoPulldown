@@ -1,0 +1,106 @@
+# =============================================================================
+# nanopulldown — Master Configuration (shared defaults, both stages)
+# =============================================================================
+# A local, protein-protein-only bait/prey screening pipeline: AlphaPulldown's
+# UniProt-ID-driven bait/prey screening strategy, folded locally with
+# ESMFold2-Fast (no MSA, no templates, no cluster) instead of AlphaFold-
+# multimer/AF3. Adding a new pair should need edits ONLY to:
+#   1. this file's `pairs:` list (one line per bait__prey pair), and
+#   2. a new configs/<pair>.yaml spec (see configs/_schema.md) — generated
+#      for you by scripts/expand_pairs.py from configs/baits.txt x
+#      configs/preys.txt.
+# Per-machine / per-user paths go in config.local.yaml (copy
+# config.local.yaml.example), which every Snakefile loads on top of this one
+# when present.
+#
+# Stages:
+#   1. preprocessing  (local, needs internet) — UniProt sequence fetch +
+#      sequence annotation (domains / disorder / MoRF)
+#   2. folding        (local, Apple Silicon GPU via MLX/Metal) — ESMFold2-Fast,
+#      one seed, 5 diffusion samples; metadata compression; OpenMM
+#      minimization; PAE-based rescoring (ipSAE/iLIS/Pinc); ONE report
+# =============================================================================
+
+# ── Pairs to run ─────────────────────────────────────────────────────────────
+# One configs/<name>.yaml per entry. Comment/uncomment to scope a run.
+pairs:
+  - example_toy__example_toy
+  # - baitId__preyId
+
+# ── Stage 1a: UniProt sequence fetch ────────────────────────────────────────
+uniprot:
+  base_url: "https://rest.uniprot.org/uniprotkb"
+  cache_dir: "data/sequences"     # <cache_dir>/<accession>.fasta
+  retries: 3
+  timeout_s: 30
+
+# ── Stage 1b: sequence annotation (domains / disorder / MoRF) ──────────────
+# Results are written to data/annotation/<pair>/ and a proposed merge into
+# configs/<pair>.yaml is left at data/annotation/<pair>/annotation.yaml for
+# HUMAN REVIEW. Downstream stages read the hand-curated `domains:` block in
+# configs/<pair>.yaml, never the raw annotation directly.
+annotate:
+  prosite:
+    scan_url: "https://prosite.expasy.org/cgi-bin/prosite/PSScan.cgi"
+    skip_profiles: false        # false = include PROSITE profiles (PS50xxx), not just patterns
+  interproscan:
+    # InterProScan v6 MATCH API: submit MD5(sequence) first; a global cache
+    # hit (very likely for any previously-analysed UniProt sequence) returns
+    # matches immediately with no wait. Falls back to full submission (same
+    # submit/poll shape as v5) only on a cache miss.
+    email: ""                       # REQUIRED: set in config.local.yaml (EBI needs a contact address)
+    base_url: "https://www.ebi.ac.uk/Tools/services/rest/iprscan6"
+    match_endpoint: "matches"       # POST {base_url}/{match_endpoint} with md5 list -- confirm against current EBI docs
+    poll_s: 15
+    applications: ["PfamA", "SMART", "PrositeProfiles", "Gene3d", "MobiDBLite"]
+  aiupred:
+    # Disorder AND MoRF/binding-propensity in one step, via AIUPred's docker
+    # image (replaces metapredict/IUPred3/ANCHOR2 and MoRFchibi2). Mac has no
+    # CUDA, so :cpu is what actually runs here; :gpu is for a future CUDA host.
+    image_cpu: "ghcr.io/doszilab/aiupred:cpu"
+    image_gpu: "ghcr.io/doszilab/aiupred:gpu"
+    use_gpu: false
+    docker_platform: ""            # e.g. "linux/amd64" on Apple Silicon if the image has no arm64 build
+  morfchibi:
+    score_threshold: 0.725         # AIUPred binding-mode probability cutoff for calling a MoRF residue
+    min_len: 5                     # minimum contiguous MoRF segment length (residues)
+  consensus:
+    disorder_cutoff: 0.5
+
+# ── Stage 2a: ESMFold2-Fast folding ─────────────────────────────────────────
+esmfold2:
+  checkpoint: "biohub/ESMFold2-Fast"
+  num_loops: 10
+  num_sampling_steps: 100
+  num_diffusion_samples: 5        # one seed, 5 diffusion samples -- no pose clustering needed
+  seed: 1
+
+# ── Stage 2b: interface metrics (PAE-based, over all 5 diffusion samples) ──
+metrics:
+  enabled: ["ipsae", "ilis", "pinc"]   # tools/ipsae, pure-python LIS family, tools/pinc
+  pae_cutoff: 12.0             # Angstrom -- LIS / ipSAE interaction-region PAE ceiling
+  contact_cutoff_cb: 8.0       # Angstrom -- Cb-Cb direct-contact cutoff (cLIS / iLIS)
+  pairs: "bait_prey"           # "bait_prey" (each bait chain x each prey chain) | "all"
+
+# ── Stage 2c: OpenMM minimization (no ChimeraX, no antechamber) ────────────
+minimize:
+  forcefield: ["amber14-all.xml", "implicit/gbn2.xml"]
+  platform_preference: ["OpenCL", "CPU"]   # OpenCL for Mac Metal-backed GPU accel; CPU fallback
+  max_abs_energy: 1.0e15       # |energy| kJ/mol above this = diverged, stop and flag
+  divergence_factor: 100.0     # energy rising by more than this x its running min = diverged
+  probe_steps: 200
+  max_steps: 2000
+
+# ── Stage 2d: reports ────────────────────────────────────────────────────────
+report:
+  figure_formats: ["svg", "pdf"]   # NEVER png/jpeg
+  datavzrd: true                    # tabular report items rendered via the datavzrd wrapper
+
+# ── Output directories ──────────────────────────────────────────────────────
+dirs:
+  sequences:   "data/sequences"
+  annotation:  "data/annotation"
+  metadata:    "results/metadata"
+  postproc:    "results"        # per-pair results live at results/<pair>/
+  reports:     "reports"
+  logs:        "logs"

@@ -1,0 +1,70 @@
+name: "nanopulldown results"
+
+default-view: results
+
+datasets:
+  results:
+    path: "results_table.csv"
+    separator: ","
+  minimize_failures:
+    path: "minimize_failure_rate.csv"
+    separator: ","
+
+views:
+  results:
+    dataset: results
+    desc: |
+      Per bait/prey pair, per ESMFold2-Fast diffusion sample, per bait-prey
+      chain pair: AlphaPulldown-style confidence and interaction scores.
+      `pair_iptm` is ESMFold2's own per-chain-pair ipTM; `ipsae`/`ilis`/
+      `pinc`/`pdockq`/`pdockq2` are ab_initio_pipeline's PAE-based rescoring
+      stack (ipSAE, LIS-family, Pinc), computed identically here.
+    render-table:
+      columns:
+        pair:
+          label: "pair"
+        sample_index:
+          label: "sample"
+        chain_i:
+          label: "chain i"
+        chain_j:
+          label: "chain j"
+        ptm:
+          label: "pTM"
+        iptm:
+          label: "ipTM"
+        pair_iptm:
+          label: "pair ipTM"
+        mean_plddt:
+          label: "mean pLDDT"
+        ipsae:
+          label: "ipSAE"
+        ilis:
+          label: "iLIS"
+        pinc:
+          label: "Pinc"
+        pdockq:
+          label: "pDockQ"
+        pdockq2:
+          label: "pDockQ2"
+        note:
+          label: "note"
+
+  minimize_failures:
+    dataset: minimize_failures
+    desc: |
+      OpenMM minimization outcome per pair: how many of the
+      `esmfold2.num_diffusion_samples` diffusion samples minimized cleanly
+      vs. diverged (energy -> NaN or past `minimize.max_abs_energy`).
+    render-table:
+      columns:
+        pair:
+          label: "pair"
+        num_samples:
+          label: "samples"
+        num_succeeded:
+          label: "succeeded"
+        num_failed:
+          label: "failed"
+        failure_rate:
+          label: "failure rate"
