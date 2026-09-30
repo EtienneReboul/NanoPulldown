@@ -91,7 +91,18 @@ minimize:
   probe_steps: 200
   max_steps: 2000
 
-# ── Stage 2d: reports ────────────────────────────────────────────────────────
+# ── Stage 2d: PLIP contact analysis (docker + pliparser) ────────────────────
+# Once per minimized sample: PLIP (docker) identifies bait<->prey contacts,
+# treating bait_chains as one interaction partner and prey_chains as the
+# other (--chains); pliparser (scripts/plip_to_csv rule) turns its TXT
+# report into summary.csv, then all of a pair's samples are merged into
+# results/<pair>/plip_summary.csv.
+plip:
+  image: "docker.io/pharmai/plip:latest"
+  docker_memory: "8g"
+  docker_platform: "linux/amd64"   # pharmai/plip has no arm64 build -- required on Apple Silicon
+
+# ── Stage 2e: reports ────────────────────────────────────────────────────────
 report:
   figure_formats: ["svg", "pdf"]   # NEVER png/jpeg
   datavzrd: true                    # tabular report items rendered via the datavzrd wrapper

@@ -1,5 +1,5 @@
 # Per-machine / per-user overrides. Copy this file to config.local.yaml
-# (gitignored, never committed) — every Snakefile deep-merges it on top of
+# (gitignored, never committed) — the Snakefile deep-merges it on top of
 # config.yaml when present.
 
 annotate:

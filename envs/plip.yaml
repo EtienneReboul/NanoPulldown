@@ -1,0 +1,9 @@
+name: nanopulldown-plip
+# Stage 2e — PLIP runs inside Docker (see plip.image in config.yaml); this
+# env is intentionally minimal, just enough for Snakemake to drive `docker
+# run`. Docker must be installed and running on the host.
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11

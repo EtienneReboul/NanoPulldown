@@ -10,7 +10,8 @@ what changed and why).
 
 One seed, `esmfold2.num_diffusion_samples` diffusion samples (5 by default)
 per pair, no pose clustering, one PAE-based domain×domain confidence heatmap
-per sample, ONE report at the end.
+per sample, PLIP contact identification per minimized sample, ONE report at
+the end.
 
 ## Pipeline
 
@@ -18,7 +19,7 @@ One `Snakefile`, one `rule all`, one command — everything runs on one
 machine (no cluster profile, no manual checkpoint to flip) straight
 through from sequence annotation to the final report.
 
-```
+```text
 ┌─ preprocessing (needs internet) ───────────────────────────────────────────┐
 │  sequence annotation:  domains (ScanProsite + InterProScan v6 MATCH API)   │
 │                        disorder + MoRF (AIUPred docker)                    │
@@ -30,6 +31,8 @@ through from sequence annotation to the final report.
 │  ─► metadata compression (arrays.h5 + model_metadata.parquet)             │
 │  ─► OpenMM minimization (no ChimeraX, no antechamber)                     │
 │  ─► rescoring: ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM             │
+│  ─► PLIP (docker) + pliparser: bait↔prey contacts per sample              │
+│     ─► results/<pair>/plip_summary.csv                                    │
 │  ─► reports/report.zip  (unzip → report.html) — the ONE report            │
 └──────────────────────────────────────────────────────────────────────────┘
 
@@ -59,7 +62,7 @@ snakemake --use-conda --cores 4
 ## Layout
 
 | Path | What |
-|---|---|
+| --- | --- |
 | `config.yaml` | all shared defaults, both stages |
 | `config.local.yaml` | per-machine overrides (gitignored; copy `.example`) — set `annotate.interproscan.email` here |
 | `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; expanded into pairs by `scripts/expand_pairs.py` |
@@ -91,3 +94,7 @@ a template for the schema in `configs/_schema.md`.
 - **OpenMM OpenCL platform**: `scripts/minimize_openmm.py` prefers OpenCL
   (Mac Metal-backed GPU accel) with a CPU fallback — confirm OpenCL actually
   initializes on the target Mac.
+- **PLIP docker image on Apple Silicon**: `docker.io/pharmai/plip` has no
+  arm64 build, so `plip.docker_platform` defaults to `linux/amd64` (x86
+  emulation via Docker Desktop's Rosetta) — slower than a native image, and
+  needs "Use Rosetta for x86/amd64 emulation" enabled in Docker Desktop.

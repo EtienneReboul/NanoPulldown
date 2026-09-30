@@ -31,9 +31,13 @@ straight into folding.
                          results/<pair>/interface_metrics.parquet
       minimize_cif       OpenMM energy minimization (+ *_energy.csv trace),
                          no ChimeraX / antechamber
-      + report figures (domain x domain confidence heatmaps, minimize energy)
-        and reports/report.zip (onsuccess hook; unzip -> report.html) -- the
-        ONLY report this pipeline produces.
+      run_plip           PLIP (docker) on each minimized sample, bait_chains
+                         vs prey_chains -> per-sample TXT report
+      plip_to_csv        pliparser -> per-sample summary.csv
+      aggregate_plip     -> results/<pair>/plip_summary.csv (all samples)
+      + report figures (domain x domain confidence heatmaps, minimize energy,
+        PLIP contact heatmaps) and reports/report.zip (onsuccess hook; unzip
+        -> report.html) -- the ONLY report this pipeline produces.
 
 Usage (one command, both stages):
   snakemake --use-conda --cores 4
@@ -70,6 +74,7 @@ FOLD_LOG = Path(DIRS["logs"]) / "folding"
 EF = CFG["esmfold2"]
 MET = CFG["metrics"]
 MZ = CFG["minimize"]
+PLIP = CFG["plip"]
 RPT = CFG["report"]
 DATAVZRD = bool(RPT.get("datavzrd", False))
 FMTS = ",".join(RPT["figure_formats"])
@@ -91,6 +96,7 @@ rule all:
         [str(POST / p / "interface_metrics.parquet") for p in PAIRS],
         [str(FOLD_REP / p / "domain_heatmap.svg") for p in PAIRS],
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
+        [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         ([str(FOLD_REP / "tables")] if DATAVZRD else []),
@@ -281,6 +287,89 @@ rule minimize_cif:
     shell:
         r"""
         python scripts/minimize_openmm.py {input.cif} {output.pdb} > {log} 2>&1
+        """
+
+
+# ── 2e. PLIP contact identification ──────────────────────────────────────
+# --chains treats bait_chains as one interaction partner and prey_chains as
+# the other (protein-protein only, so no --dnareceptor, and no fix_pdb pass
+# -- minimize_openmm.py's PDBFixer step already adds missing atoms/hydrogens,
+# unlike ab_initio_pipeline's ChimeraX minimization).
+rule run_plip:
+    input:
+        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb"),
+    output:
+        report=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}_report.txt"),
+    params:
+        image=PLIP["image"],
+        memory=PLIP["docker_memory"],
+        platform=(f"--platform {PLIP['docker_platform']}" if PLIP.get("docker_platform") else ""),
+        chains=lambda wc: '--chains "[{},{}]"'.format(
+            SPECS[wc.pair]["bait_chains"], SPECS[wc.pair]["prey_chains"]),
+        outdir=str(POST / "{pair}" / "plip" / "sample_{sample}_report"),
+    log:
+        str(FOLD_LOG / "plip" / "{pair}" / "sample_{sample}.log"),
+    shell:
+        r"""
+        mkdir -p {params.outdir}
+        docker run --rm --memory={params.memory} {params.platform} \
+          -v $(pwd):/work -w /work {params.image} \
+          -f {input.pdb} -t {params.chains} -o {params.outdir} > {log} 2>&1
+        actual="{params.outdir}/$(basename {input.pdb} .pdb)_report.txt"
+        [ "$actual" != "{output.report}" ] && mv "$actual" "{output.report}" || true
+        """
+
+
+rule plip_to_csv:
+    input:
+        report=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}_report.txt"),
+    output:
+        summary=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv" / "summary.csv"),
+    params:
+        outdir=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv"),
+    conda:
+        "envs/pliparser.yaml"
+    log:
+        str(FOLD_LOG / "pliparser" / "{pair}" / "sample_{sample}.log"),
+    shell:
+        r"""
+        mkdir -p {params.outdir}
+        pliparser plip2csv --input {input.report} --output {params.outdir}/ > {log} 2>&1
+        """
+
+
+rule aggregate_plip:
+    input:
+        csvs=lambda wc: expand(
+            str(POST / "{{pair}}" / "plip" / "sample_{s}_report" / "csv" / "summary.csv"), s=SAMPLE_IDX),
+    output:
+        str(POST / "{pair}" / "plip_summary.csv"),
+    conda:
+        "envs/report.yaml"
+    log:
+        str(FOLD_LOG / "aggregate_plip" / "{pair}.log"),
+    shell:
+        r"""
+        python scripts/aggregate_plip_summaries.py {input.csvs} --out {output[0]} > {log} 2>&1
+        """
+
+
+rule fig_plip_contacts:
+    input:
+        spec=str(REPO / "configs" / "{pair}.yaml"),
+        summary=str(POST / "{pair}" / "plip_summary.csv"),
+    output:
+        report(str(FOLD_REP / "{pair}" / "plip_contacts.svg"),
+               category="PLIP contacts", labels={"pair": "{pair}"}),
+    conda:
+        "envs/report.yaml"
+    params:
+        fmts=FMTS,
+    shell:
+        r"""
+        python scripts/plot_plip_heatmap.py --pair {wildcards.pair} \
+          --spec {input.spec} --summary {input.summary} \
+          --out {output[0]} --formats {params.fmts}
         """
 
 
