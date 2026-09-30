@@ -1,3 +1,9 @@
 # One protein spec per line (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop).
 # Lines starting with # and blank lines are ignored.
 # P0CG48
+
+# PXD013906 (Chico et al. 2020 PNAS, 10.1073/pnas.1912199117) -- GFP-BPM6
+# immunoprecipitation in Arabidopsis thaliana. Bait = BPM6 itself
+# (immunoprecipitated protein); see configs/preys.txt for the interactors
+# PNAS Dataset S1 (Table S3) flags as significant/known.
+A1L4W5   # BPM6 (AT3G43700) -- CUL3 substrate adaptor, IP bait
