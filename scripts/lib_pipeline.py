@@ -16,6 +16,8 @@ per-rule conda envs.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import copy
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,27 @@ def protein_chains(spec: dict) -> list[dict]:
     so this is every entry — kept as a function for parity with call sites
     that read like ab_initio_pipeline's protein_chains(spec))."""
     return list(spec.get("sequences", []))
+
+
+def seq_md5(seq: str) -> str:
+    return hashlib.md5(seq.encode("ascii")).hexdigest()
+
+
+def annotation_cache_dir(cfg: dict, kind: str) -> Path:
+    """data/annotation/_cache/<kind>/ -- per-UNIQUE-SEQUENCE annotation cache
+    (<md5(sequence)>.<ext>), shared by every pair that contains the sequence.
+    The bait appears in every pair, so without this it would be re-annotated
+    once per pair. Delete the directory to force a refresh."""
+    d = Path(cfg["dirs"]["annotation"]) / "_cache" / kind
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def atomic_write(path: Path, text: str) -> None:
+    """Write via a temp file + rename so concurrent jobs never see a partial cache entry."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
 
 
 def pair_tokens(spec: dict) -> int:

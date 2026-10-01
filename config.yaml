@@ -1596,6 +1596,16 @@ uniprot:
 # HUMAN REVIEW. Downstream stages read the hand-curated `domains:` block in
 # configs/<pair>.yaml, never the raw annotation directly.
 annotate:
+  web_workers: 4                # thread pool for the ScanProsite/InterPro batch
+  # Neither InterPro nor ScanProsite publishes a numeric limit. InterPro asks users to
+  # "start querying gradually, then ramp up" (tens of thousands of requests in a short
+  # period have taken the API down for everyone). All requests share these limiters, so
+  # web_workers only sets concurrency, never the request rate.
+  rate_limits:
+    interpro_per_s: 1.0         # InterPro API: 1 request/s (3600/h; 1559 proteins ~ 26 min)
+    scanprosite_per_s: 0.5      # ScanProsite (ExPASy): 1 request / 2 s
+    ramp_s: 120                 # start at 10% of the rate, reach 100% linearly over this many seconds
+    max_throttle_events: 10     # 429/502/503/504 responses before the batch aborts (progress is cached)
   prosite:
     scan_url: "https://prosite.expasy.org/cgi-bin/prosite/PSScan.cgi"
     skip_profiles: false        # false = include PROSITE profiles (PS50xxx), not just patterns
@@ -1604,7 +1614,12 @@ annotate:
     # hit (very likely for any previously-analysed UniProt sequence) returns
     # matches immediately with no wait. Falls back to full submission (same
     # submit/poll shape as v5) only on a cache miss.
-    email: ""                       # REQUIRED: set in config.local.yaml (EBI needs a contact address)
+    # Fast path (default for every full-length UniProt chain): precomputed InterPro
+    # matches by accession, ONE request each (~2 s; no multi-accession form exists --
+    # batching = the web_workers thread pool). Fragments / isoforms / length
+    # mismatches fall back to the MATCH/submit path below.
+    api_url: "https://www.ebi.ac.uk/interpro/api"
+    email: ""                       # only for the InterProScan submission fallback (set in config.local.yaml)
     base_url: "https://www.ebi.ac.uk/Tools/services/rest/iprscan6"
     match_endpoint: "matches"       # POST {base_url}/{match_endpoint} with md5 list -- confirm against current EBI docs
     poll_s: 15
@@ -1617,6 +1632,7 @@ annotate:
     image_gpu: "ghcr.io/doszilab/aiupred:gpu"
     use_gpu: false
     docker_platform: ""            # e.g. "linux/amd64" on Apple Silicon if the image has no arm64 build
+    batch_size: 200                # sequences per container invocation in the batch rule
   morfchibi:
     score_threshold: 0.725         # AIUPred binding-mode probability cutoff for calling a MoRF residue
     min_len: 5                     # minimum contiguous MoRF segment length (residues)
@@ -1632,12 +1648,14 @@ esmfold2:
                                    # sample at 600 tokens) but NOT with num_loops / num_sampling_steps, so
                                    # one sample lets longer complexes fit and folds faster. Measured on a
                                    # 36 GB M4 Max (notebooks/esmfold2_memory_model.ipynb).
-  max_tokens: 950                 # pairs with more total tokens (sum of chain lengths) than this are not
+  max_tokens: 1000               # pairs with more total tokens (sum of chain lengths) than this are not
                                    # run: expand_pairs.py doesn't write them and the Snakefile ignores
-                                   # them. 0 = no limit. Peak memory grows ~n^2.2 (1 sample: 9.9 GiB above
-                                   # the 12 GiB weights at 800 tokens, 24 GiB at 1200 = the whole 36 GB
-                                   # machine), so this is the working-set limit with ~10% margin -- set it
-                                   # per machine in config.local.yaml after running the notebook.
+                                   # them. 0 = no limit. Measured on a 36 GB M4 Max, 1 sample, loops 10 /
+                                   # steps 100: 945 tokens fine; 1000 tokens = 16.9 GiB above the 12.2 GiB
+                                   # weights (29.1 GiB total, 145 s, ~3 GB extra swap with other apps open);
+                                   # 1200 ~ 24 GiB = the whole machine. Peak grows ~n^2.2. Lower it if you
+                                   # keep memory-heavy apps open; set per machine in config.local.yaml
+                                   # after running notebooks/esmfold2_memory_model.ipynb.
   seed: 1
 
 # ── Stage 2b: interface metrics (PAE-based, over all 5 diffusion samples) ──

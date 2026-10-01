@@ -29,13 +29,15 @@ residue: `resi<TAB>restype<TAB>disorder_score[<TAB>binding_score]`.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import load_config, load_pair, protein_chains  # noqa: E402
+from lib_pipeline import (annotation_cache_dir, atomic_write, load_config, load_pair,  # noqa: E402
+                          protein_chains, seq_md5)
 
 CFG = load_config()
 
@@ -101,6 +103,59 @@ def _parse_aiupred_output(text: str, expected_len: int) -> dict[str, list[float]
     return tracks or None
 
 
+def run_aiupred_batch(seqs: list[str], cfg: dict, timeout: int = 3600) -> dict[str, dict[str, list[float]]]:
+    """ONE container invocation over many sequences (the CLI takes multi-FASTA
+    and loads the networks once). Records are keyed by md5(sequence); returns
+    {md5: tracks} for the sequences that parsed. This is the efficient path:
+    per-chain `docker run` costs ~2.6 s each on Apple Silicon (amd64 image,
+    emulated) vs ~0.26 s/sequence inside a single container."""
+    image = cfg["image_gpu"] if cfg.get("use_gpu") else cfg["image_cpu"]
+    platform_args = ["--platform", cfg["docker_platform"]] if cfg.get("docker_platform") else []
+    gpu_args = ["--gpus", "all"] if cfg.get("use_gpu") else []
+    cpu_args = [] if cfg.get("use_gpu") else ["--force-cpu"]
+    by_md5 = {seq_md5(q): q for q in seqs}
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        (td / "input.fasta").write_text("".join(f">{m}\n{q}\n" for m, q in by_md5.items()))
+        cmd = ["docker", "run", "--rm", *platform_args, *gpu_args, "-v", f"{td}:/work",
+               "--entrypoint", "python3", image, "-m", "aiupred.cli",
+               "-i", "/work/input.fasta", "-o", "/work/aiupred.tsv", "-b", *cpu_args]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"[disorder] AIUPred batch invocation failed: {e}", file=sys.stderr)
+            return {}
+        out = td / "aiupred.tsv"
+        if proc.returncode != 0 or not out.exists():
+            print(f"[disorder] AIUPred batch exited {proc.returncode}: {proc.stderr[:300]}",
+                  file=sys.stderr)
+            return {}
+        # records: "#>md5" line, then residue rows, blank line between records
+        results, cur, buf = {}, None, []
+        for line in out.read_text().splitlines() + ["#>"]:
+            if line.startswith("#>"):
+                if cur in by_md5:
+                    tracks = _parse_aiupred_output("\n".join(buf), len(by_md5[cur]))
+                    if tracks:
+                        results[cur] = tracks
+                cur, buf = line[2:].strip(), []
+            elif cur is not None:
+                buf.append(line)
+        return results
+
+
+def get_tracks(seq: str, acfg: dict) -> dict[str, list[float]]:
+    """Per-sequence tracks, cached on disk by md5(sequence); falls back to a
+    single-sequence container run on a miss (and caches that)."""
+    cache = annotation_cache_dir(CFG, "disorder") / f"{seq_md5(seq)}.json"
+    if cache.exists():
+        return json.loads(cache.read_text())
+    tracks = _run_aiupred_container(seq, acfg) or {}
+    if tracks:
+        atomic_write(cache, json.dumps(tracks))
+    return tracks
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
@@ -115,7 +170,7 @@ def main() -> int:
     for ch in protein_chains(spec):
         cid, seq = ch["id"], ch["sequence"]
         print(f"[disorder] chain {cid} ({len(seq)} aa)", flush=True)
-        tracks = _run_aiupred_container(seq, acfg) or {}
+        tracks = get_tracks(seq, acfg)
         for i, aa in enumerate(seq, start=1):
             for tname, vals in tracks.items():
                 if i - 1 < len(vals):

@@ -10,8 +10,11 @@ straight into folding.
     resolved, chains assigned) come from scripts/expand_pairs.py, run once
     ahead of Snakemake -- see the README. This stage only annotates
     configs/<pair>.yaml's already-resolved `sequences:`.
-      annotate_domains   ScanProsite + InterProScan v6 MATCH API -> domains.raw.tsv
-      annotate_disorder  AIUPred docker (disorder + binding/MoRF)  -> disorder.tsv
+      annotate_domains_batch / annotate_disorder_batch
+                         once per UNIQUE sequence into data/annotation/_cache/
+                         (throttled InterPro API + ScanProsite; one AIUPred container run per 200 seqs)
+      annotate_domains   per pair, assembled from the cache -> domains.raw.tsv
+      annotate_disorder  per pair, assembled from the cache -> disorder.tsv
       merge_annotation   -> data/annotation/<pair>/annotation.yaml -- a
                           proposed `domains:` block; hand-curate it into
                           configs/<pair>.yaml whenever convenient (see
@@ -129,9 +132,58 @@ rule all:
 # STAGE 1 — preprocessing
 # ═══════════════════════════════════════════════════════════════════════════
 
+ANN_CACHE = ANN / "_cache"
+SPEC_FILES = [str(REPO / "configs" / f"{p}.yaml") for p in PAIRS]
+
+
+# Annotation is per UNIQUE SEQUENCE, not per pair: the bait is in every pair,
+# so per-pair jobs would re-query the web services / re-run the AIUPred
+# container ~2x per pair for work that is identical. These two batch rules fill
+# a per-sequence cache once (web calls in a small thread pool; AIUPred in a few
+# multi-FASTA container runs); the per-pair rules below just assemble from it.
+# They run concurrently with each other and, via `priority`, ahead of folding.
+rule annotate_domains_batch:
+    input:
+        SPEC_FILES,
+    output:
+        done=str(ANN_CACHE / "domains.done"),
+    log:
+        str(PRE_LOG / "annotate_domains_batch.log"),
+    conda:
+        "envs/annotate.yaml"
+    priority: 50
+    shell:
+        r"""
+        python scripts/annotate_domains_batch.py --specs {input} --done {output.done} \
+          > {log} 2>&1
+        """
+
+
+rule annotate_disorder_batch:
+    input:
+        SPEC_FILES,
+    output:
+        done=str(ANN_CACHE / "disorder.done"),
+    log:
+        str(PRE_LOG / "annotate_disorder_batch.log"),
+    conda:
+        "envs/annotate.yaml"
+    priority: 50
+    resources:
+        # docker_heavy=1: never overlaps a run_esmfold2 model load (that rule
+        # claims the whole pool). CPU-only -- no gpu= claim, the GPU stays free.
+        docker_heavy=1,
+    shell:
+        r"""
+        python scripts/annotate_disorder_batch.py --specs {input} --done {output.done} \
+          > {log} 2>&1
+        """
+
+
 rule annotate_domains:
     input:
         spec=str(REPO / "configs" / "{pair}.yaml"),
+        cache=str(ANN_CACHE / "domains.done"),
     output:
         tsv=str(ANN / "{pair}" / "domains.raw.tsv"),
     log:
@@ -149,6 +201,7 @@ rule annotate_domains:
 rule annotate_disorder:
     input:
         spec=str(REPO / "configs" / "{pair}.yaml"),
+        cache=str(ANN_CACHE / "disorder.done"),
     output:
         tsv=str(ANN / "{pair}" / "disorder.tsv"),
     log:
