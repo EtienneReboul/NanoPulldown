@@ -3,12 +3,10 @@
 A local, protein-protein-only bait/prey screening pipeline: reuses
 AlphaPulldown's UniProt-ID-driven bait/prey screening strategy, folds
 locally with **ESMFold2-Fast** on Apple Silicon (MLX/Metal) instead of
-AlphaFold-multimer/AF3 — no MSA, no templates, no cluster — and reuses
-[ab_initio_pipeline](../ab_initio_pipeline)'s config/report/metadata-
-compression/rescoring machinery (adapted; see each script's docstring for
-what changed and why).
+AlphaFold-multimer/AF3 — no MSA, no templates, no cluster. Provide rescoring
+and downstream analysis with PLIP.
 
-One seed, `esmfold2.num_diffusion_samples` diffusion samples (5 by default)
+One seed, `esmfold2.num_diffusion_samples` diffusion samples (1 by default; see `esmfold2.max_tokens` for the pair-length limit)
 per pair, no pose clustering, one PAE-based domain×domain confidence heatmap
 per sample, PLIP contact identification per minimized sample, ONE report at
 the end.
@@ -18,6 +16,14 @@ the end.
 One `Snakefile`, one `rule all`, one command — everything runs on one
 machine (no cluster profile, no manual checkpoint to flip) straight
 through from sequence annotation to the final report.
+
+**`--resources gpu=1` is required on every invocation, not optional.**
+ESMFold2-Fast loads ~25GB per instance into Apple Silicon's shared unified
+memory. Nothing else guards against multiple concurrent loads -- there is
+no lock or safety net in the script itself, only this flag telling
+Snakemake's scheduler to cap `run_esmfold2` at one job at a time. Omit it
+and `--cores 4` will happily load 4 models at once; this  will likely results in a
+OOM-crash.
 
 ```text
 ┌─ preprocessing (needs internet) ───────────────────────────────────────────┐
@@ -29,14 +35,12 @@ through from sequence annotation to the final report.
 ├─ folding (Apple Silicon GPU) ───────────────────────────────────────────────┤
 │  ESMFold2-Fast: 1 seed, N diffusion samples, no MSA/templates              │
 │  ─► metadata compression (arrays.h5 + model_metadata.parquet)             │
-│  ─► OpenMM minimization (no ChimeraX, no antechamber)                     │
+│  ─► OpenMM minimization                     │
 │  ─► rescoring: ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM             │
-│  ─► PLIP (docker) + pliparser: bait↔prey contacts per sample              │
-│     ─► results/<pair>/plip_summary.csv                                    │
 │  ─► reports/report.zip  (unzip → report.html) — the ONE report            │
 └──────────────────────────────────────────────────────────────────────────┘
 
-snakemake --use-conda --cores 4
+snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 ```
 
 ## Quick start
@@ -47,11 +51,21 @@ conda env create -f envs/controller.yaml && conda activate nanopulldown
 
 # 1. define bait/prey lists (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop)
 #    edit configs/baits.txt and configs/preys.txt, then:
-python scripts/expand_pairs.py
+python scripts/expand_pairs.py          # skips pairs over esmfold2.max_tokens (listed in configs/skipped_too_long.tsv)
 #    edit config.yaml's `pairs:` list to include the new configs/<pair>.yaml stems
 
 # 2. run the whole pipeline (Apple Silicon GPU via MLX/Metal for folding)
-snakemake --use-conda --cores 4
+#    --resources gpu=1 is REQUIRED (see above) -- --cores alone doesn't
+#    know run_esmfold2's ~25GB model load is one shared GPU resource, and
+#    nothing else in this pipeline stops it dispatching several at once.
+#    docker_heavy=N (config.yaml's scheduling.docker_heavy_pool) keeps
+#    minimize_cif/run_plip from running alongside a model load -- run_esmfold2
+#    claims the whole pool -- then lets up to N of them run concurrently
+#    once folding for a pair is done. Tune N to your machine; 3 caused a
+#    swap/OOM crash on the dev Mac when it was 3 PLIP containers at once
+#    with no folding running (see git history) -- start lower (e.g. 2) and
+#    watch `vm.swapusage` / Activity Monitor before raising it.
+snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 #    -> reports/report.zip
 
 # anytime before or after: review data/annotation/<pair>/annotation.yaml and
@@ -61,18 +75,18 @@ snakemake --use-conda --cores 4
 
 ## Layout
 
-| Path | What |
-| --- | --- |
-| `config.yaml` | all shared defaults, both stages |
-| `config.local.yaml` | per-machine overrides (gitignored; copy `.example`) — set `annotate.interproscan.email` here |
-| `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; expanded into pairs by `scripts/expand_pairs.py` |
-| `configs/<bait>__<prey>.yaml` | per-pair chain spec + curated domains |
-| `envs/` | one conda env per rule group, built by `--use-conda` |
-| `tools/` | vendored: `ipsae`, `pinc` (both from ab_initio_pipeline, unchanged) |
-| `scripts/` | see each script's own docstring for what it reuses/adapts/replaces from ab_initio_pipeline |
-| `Snakefile` | the whole pipeline, one default `rule all` |
-| `report/` | `custom.css` (dark theme, from ab_initio_pipeline), `datavzrd/nanopulldown.datavzrd.yaml` |
-| `data/ results/ logs/ reports/` | runtime outputs (gitignored) |
+| Path                                         | What                                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `config.yaml`                              | all shared defaults, both stages                                                                 |
+| `config.local.yaml`                        | per-machine overrides (gitignored; copy`.example`) — set `annotate.interproscan.email` here |
+| `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; expanded into pairs by`scripts/expand_pairs.py`                     |
+| `configs/<bait>__<prey>.yaml`              | per-pair chain spec + curated domains                                                            |
+| `envs/`                                    | one conda env per rule group, built by`--use-conda`                                            |
+| `tools/`                                   | vendored:`ipsae`, `pinc` (both from ab_initio_pipeline, unchanged)                           |
+| `scripts/`                                 | see each script's own docstring for what it reuses/adapts/replaces from ab_initio_pipeline       |
+| `Snakefile`                                | the whole pipeline, one default`rule all`                                                      |
+| `report/`                                  | `custom.css` (dark theme, from ab_initio_pipeline), `datavzrd/nanopulldown.datavzrd.yaml`    |
+| `data/ results/ logs/ reports/`            | runtime outputs (gitignored)                                                                     |
 
 ## Worked example
 

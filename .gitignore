@@ -7,7 +7,6 @@ logs/
 __pycache__/
 *.pyc
 .DS_Store
-
 # Auto-generated per-pair experiment specs (scripts/expand_pairs.py output) --
 # these accumulate one per bait x prey combination and are reproducible from
 # configs/baits.txt + configs/preys.txt, so they're not tracked. The worked

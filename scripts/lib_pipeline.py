@@ -73,6 +73,12 @@ def protein_chains(spec: dict) -> list[dict]:
     return list(spec.get("sequences", []))
 
 
+def pair_tokens(spec: dict) -> int:
+    """Total token count (= residues, protein-only) ESMFold2 sees for a pair.
+    Folding memory grows ~quadratically with this -- see esmfold2.max_tokens."""
+    return sum(len(c["sequence"]) for c in protein_chains(spec))
+
+
 def chain_by_id(spec: dict, cid: str) -> dict | None:
     for s in spec.get("sequences", []):
         if s.get("id") == cid:

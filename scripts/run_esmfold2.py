@@ -25,6 +25,16 @@ output["pae"]/output["pair_chains_iptm"] exactly like the Torch/CUDA path
 read in esm/models/esmfold2/processor.py:271-283 ("the same code" per the
 notebook) -- confirm this once against a live run before trusting the
 rescoring stage built on top of it.
+
+*** ONE MODEL AT A TIME -- REQUIRED, NOT OPTIONAL ***
+The -Fast checkpoint loads ~25GB into Apple Silicon's unified memory (shared
+between CPU and GPU) per the reference notebook. Snakemake's `--cores` has
+no idea that's a single shared GPU resource -- `--cores 4` will happily
+dispatch 4 concurrent run_esmfold2 jobs, each loading its own ~25GB copy,
+which is how this actually OOM-crashed the Mac once already. The Snakefile's
+`resources: gpu=1` on this rule is what now prevents that, and it ONLY works
+if the run is launched with `--resources gpu=1` (see README) -- it is a
+no-op otherwise. There is no other guard: always pass that flag.
 """
 from __future__ import annotations
 
@@ -59,13 +69,29 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path) -> list[Path]:
         for ch in protein_chains(spec)
     ])
 
+    n_requested = int(ef_cfg["num_diffusion_samples"])
     results = builder.fold(
         model, spi,
         num_loops=int(ef_cfg["num_loops"]),
         num_sampling_steps=int(ef_cfg["num_sampling_steps"]),
-        num_diffusion_samples=int(ef_cfg["num_diffusion_samples"]),
+        num_diffusion_samples=n_requested,
         seed=int(ef_cfg["seed"]),
     )
+    print(f"[run_esmfold2] builder.fold() returned {type(results).__name__} "
+          f"of length {len(results) if hasattr(results, '__len__') else 'n/a'} "
+          f"(requested {n_requested})", flush=True)
+    if isinstance(results, list) and len(results) != n_requested:
+        # Seen in practice: under GPU memory pressure, builder.fold() can
+        # silently return fewer samples than requested with no exception --
+        # exit 0, no traceback, the loop below just has fewer items. Fail
+        # loud here instead of writing a partial `raw/` dir that Snakemake
+        # would only catch later (and less clearly) via MissingOutputException.
+        raise RuntimeError(
+            f"builder.fold() returned {len(results)} sample(s), expected "
+            f"{n_requested} -- likely Metal/unified-memory pressure "
+            "(silently dropped samples rather than raising). Try again, or "
+            "lower esmfold2.num_diffusion_samples in config.yaml."
+        )
     if not isinstance(results, list):
         results = [results]
 

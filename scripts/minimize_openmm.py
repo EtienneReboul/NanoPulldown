@@ -55,7 +55,10 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     pdb_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[minimize] loading {cif_path.name}")
-    fixer = PDBFixer(pdbxfile=str(cif_path))
+    # pdbxfile= wants a file OBJECT (it calls .seek() on it), not a path
+    # string -- filename= is the string-path form and auto-detects mmCIF
+    # from the .cif extension.
+    fixer = PDBFixer(filename=str(cif_path))
     fixer.findMissingResidues()
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()

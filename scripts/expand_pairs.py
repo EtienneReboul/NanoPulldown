@@ -10,8 +10,16 @@ scripts/fetch_uniprot.py, and writes one `configs/<bait>__<prey>.yaml` stub
 per combination (skipping any that already exist, so hand-curated `domains:`
 blocks are never clobbered by a re-run).
 
+Pairs whose total token count (sum of all chain lengths) exceeds
+`--max-tokens` (default: config's `esmfold2.max_tokens`, 0 = no limit) are NOT
+written: ESMFold2 memory grows ~quadratically with tokens, and past the Metal
+buffer cap the fold aborts the whole process. They are listed, with their
+token counts, in `configs/skipped_too_long.tsv` instead. Measure your
+machine's limit with notebooks/esmfold2_memory_model.ipynb.
+
 Usage:
     python scripts/expand_pairs.py --baits configs/baits.txt --preys configs/preys.txt
+    python scripts/expand_pairs.py --max-tokens 1500    # override the config limit
 """
 from __future__ import annotations
 
@@ -23,7 +31,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import REPO_ROOT, load_config  # noqa: E402
+from lib_pipeline import REPO_ROOT, load_config, pair_tokens  # noqa: E402
 from fetch_uniprot import fetch_sequence, parse_protein_spec  # noqa: E402
 
 
@@ -83,9 +91,13 @@ def main() -> int:
     ap.add_argument("--baits", default="configs/baits.txt")
     ap.add_argument("--preys", default="configs/preys.txt")
     ap.add_argument("--configs-dir", default="configs")
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help="skip pairs with more total tokens than this "
+                         "(default: config esmfold2.max_tokens; 0 = no limit)")
     a = ap.parse_args()
 
     cfg = load_config(REPO_ROOT)
+    max_tokens = a.max_tokens if a.max_tokens is not None else int(cfg["esmfold2"].get("max_tokens", 0))
     baits = read_specs(Path(a.baits))
     preys = read_specs(Path(a.preys))
     if not baits or not preys:
@@ -94,10 +106,14 @@ def main() -> int:
 
     out_dir = Path(a.configs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    written, skipped = 0, 0
+    written, skipped, too_long = 0, 0, []
     for bait_spec in baits:
         for prey_spec in preys:
             pair = build_pair_spec(bait_spec, prey_spec, cfg)
+            n_tok = pair_tokens(pair)
+            if max_tokens and n_tok > max_tokens:
+                too_long.append((pair["name"], n_tok))
+                continue
             out_path = out_dir / f"{pair['name']}.yaml"
             if out_path.exists():
                 skipped += 1
@@ -105,6 +121,14 @@ def main() -> int:
             out_path.write_text(yaml.safe_dump(pair, sort_keys=False))
             written += 1
             print(f"[expand_pairs] wrote {out_path}")
+    skip_tsv = out_dir / "skipped_too_long.tsv"
+    if too_long:
+        skip_tsv.write_text("pair\ttokens\n" + "".join(f"{n}\t{t}\n" for n, t in too_long))
+    elif skip_tsv.exists():
+        skip_tsv.unlink()
+    if too_long:
+        print(f"[expand_pairs] {len(too_long)} pair(s) over max_tokens={max_tokens} NOT written "
+              f"-> {skip_tsv}")
     print(f"[expand_pairs] {written} new pair(s), {skipped} already existed "
           f"({len(baits)} bait(s) x {len(preys)} prey(s) = {len(baits) * len(preys)} combination(s))")
     return 0

@@ -1,0 +1,32 @@
+name: nanopulldown-esmfold2-notebook
+# Environment for notebooks/esmfold2_memory_model.ipynb. Superset of
+# envs/esmfold2.yaml (the notebook's probe worker needs `esm` + `mlx-lm`, and
+# the notebook finds a python that can import them -- this env's own kernel
+# qualifies) plus jupyter/matplotlib for the notebook itself.
+#
+# mlx-lm must be installed as a SEPARATE --no-deps step (see esmfold2.yaml for
+# why), so after creating the env run:
+#
+#   conda env create -f envs/esmfold2_notebook.yaml
+#   conda run -n nanopulldown-esmfold2-notebook pip install --no-deps \
+#       "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main"
+#   conda run -n nanopulldown-esmfold2-notebook python -m ipykernel install --user \
+#       --name nanopulldown-esmfold2-notebook
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pyyaml>=6.0
+  - numpy>=1.26
+  # pthreads (not OpenMP) OpenBLAS: the default OpenMP build loads conda's
+  # libomp next to the one bundled in pip's torch -> "OMP: Error #15:
+  # libomp already initialized" abort on `import torch`.
+  - libopenblas=*=*pthreads*
+  - matplotlib>=3.8
+  - jupyterlab
+  - ipykernel
+  - pip
+  - pip:
+      - esm
+      - mlx>=0.30

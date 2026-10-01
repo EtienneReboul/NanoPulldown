@@ -47,7 +47,7 @@ from pathlib import Path
 
 REPO = Path(workflow.basedir)
 sys.path.insert(0, str(REPO / "scripts"))
-from lib_pipeline import load_config, load_pair, protein_chains  # noqa: E402
+from lib_pipeline import load_config, load_pair, pair_tokens, protein_chains  # noqa: E402
 
 configfile: str(REPO / "config.yaml")
 if (REPO / "config.local.yaml").exists():
@@ -57,8 +57,31 @@ report: "report/folding.rst"
 
 CFG = load_config(REPO)
 DIRS = CFG["dirs"]
-PAIRS = CFG["pairs"]
-SPECS = {p: load_pair(p, REPO) for p in PAIRS}
+EF = CFG["esmfold2"]
+MAX_TOKENS = int(EF.get("max_tokens", 0))
+
+# A pair is dropped (with a warning) when its spec is missing -- expand_pairs
+# does not write specs for pairs over esmfold2.max_tokens -- or when it is
+# over max_tokens anyway (specs expanded before the limit existed): ESMFold2
+# memory grows ~quadratically with tokens and an over-limit fold aborts the
+# whole process on the Metal buffer cap. 0 = no limit.
+PAIRS, SPECS, _no_spec, _too_long = [], {}, [], []
+for _p in CFG["pairs"]:
+    if not (REPO / "configs" / f"{_p}.yaml").exists():
+        _no_spec.append(_p)
+        continue
+    _spec = load_pair(_p, REPO)
+    if MAX_TOKENS and pair_tokens(_spec) > MAX_TOKENS:
+        _too_long.append(_p)
+        continue
+    PAIRS.append(_p)
+    SPECS[_p] = _spec
+if _no_spec:
+    print(f"[Snakefile] WARNING: {len(_no_spec)} pair(s) in config.yaml have no configs/<pair>.yaml "
+          f"(not expanded, or skipped as too long) and are ignored, e.g. {_no_spec[:3]}", file=sys.stderr)
+if _too_long:
+    print(f"[Snakefile] {len(_too_long)} pair(s) exceed esmfold2.max_tokens={MAX_TOKENS} and are ignored",
+          file=sys.stderr)
 CHAIN_IDS = {p: [c["id"] for c in protein_chains(SPECS[p])] for p in PAIRS}
 
 # ── stage 1: preprocessing ───────────────────────────────────────────────
@@ -71,11 +94,11 @@ META = Path(DIRS["metadata"])
 POST = Path(DIRS["postproc"])
 FOLD_REP = Path(DIRS["reports"]) / "folding"
 FOLD_LOG = Path(DIRS["logs"]) / "folding"
-EF = CFG["esmfold2"]
 MET = CFG["metrics"]
 MZ = CFG["minimize"]
 PLIP = CFG["plip"]
 RPT = CFG["report"]
+DOCKER_HEAVY_POOL = int(CFG["scheduling"]["docker_heavy_pool"])
 DATAVZRD = bool(RPT.get("datavzrd", False))
 FMTS = ",".join(RPT["figure_formats"])
 N_SAMPLES = int(EF["num_diffusion_samples"])
@@ -216,14 +239,30 @@ rule run_esmfold2:
         str(FOLD_LOG / "run_esmfold2" / "{pair}.log"),
     conda:
         "envs/esmfold2.yaml"
+    resources:
+        # gpu=1 caps run_esmfold2 at one concurrent job -- REQUIRED, not a
+        # hint: the -Fast checkpoint loads ~25GB into Apple Silicon's shared
+        # unified memory, and nothing else guards against multiple
+        # concurrent loads (this OOM-crashed the Mac once already). Only
+        # takes effect when the run is launched with `--resources gpu=1`
+        # (see README) -- always pass it. docker_heavy claims the ENTIRE
+        # pool (see config.yaml's `scheduling:`) so minimize_cif/run_plip
+        # -- which each only claim 1 -- can't run concurrently with a model
+        # load; once this rule finishes, up to docker_heavy_pool of them
+        # run at once. Also requires a matching `--resources` flag.
+        gpu=1,
+        docker_heavy=DOCKER_HEAVY_POOL,
     params:
         out=lambda wc: str(POST / wc.pair / "raw"),
     shell:
         r"""
+        python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
+          "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
+          > {log} 2>&1
         python scripts/run_esmfold2.py \
           --pair {wildcards.pair} --spec {input.spec} \
           --out-dir {params.out} --done {output.done} \
-          > {log} 2>&1
+          >> {log} 2>&1
         """
 
 
@@ -284,6 +323,10 @@ rule minimize_cif:
         str(FOLD_LOG / "minimize" / "{pair}" / "sample_{sample}.log"),
     conda:
         "envs/minimize.yaml"
+    resources:
+        # Shares config.yaml's docker_heavy pool with run_esmfold2/run_plip
+        # -- see run_esmfold2's resources: comment.
+        docker_heavy=1,
     shell:
         r"""
         python scripts/minimize_openmm.py {input.cif} {output.pdb} > {log} 2>&1
@@ -309,6 +352,14 @@ rule run_plip:
         outdir=str(POST / "{pair}" / "plip" / "sample_{sample}_report"),
     log:
         str(FOLD_LOG / "plip" / "{pair}" / "sample_{sample}.log"),
+    resources:
+        # Shares config.yaml's docker_heavy pool with run_esmfold2/minimize_cif
+        # -- see run_esmfold2's resources: comment. Each PLIP container also
+        # runs under amd64/Rosetta emulation (config.yaml's plip.docker_platform),
+        # which is the heaviest of the three per-instance -- keep
+        # docker_heavy_pool modest (config.yaml default: 3) until you've
+        # watched a few runs at that concurrency.
+        docker_heavy=1,
     shell:
         r"""
         mkdir -p {params.outdir}
