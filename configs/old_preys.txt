@@ -1,0 +1,32 @@
+# One protein spec per line (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop).
+# Lines starting with # and blank lines are ignored.
+# P0CG48
+
+# PXD013906 (Chico et al. 2020 PNAS, 10.1073/pnas.1912199117) -- GFP-BPM6
+# immunoprecipitation in Arabidopsis thaliana, quantified by spectral
+# counting (edgeR GLM, BPM6 vs control). These 9 are Dataset S1 Table S3's
+# own literature-annotated hits (the paper's highlighted interactors), all
+# significant at adjp < 2e-2 except NINJA: BPM paralogs (heterodimerize
+# with BPM6 in the CUL3 substrate-adaptor complex) and the JA-signalling
+# factors it targets for degradation. Table S3 has 245 significant
+# (adjp<0.05) positive hits in total if you want to broaden the screen
+# past these curated ones.
+Q8L765   # BPM1  (AT5G19000) adjp=7.9e-05
+Q9M8J9   # BPM2  (AT3G06190) adjp=1.8e-05
+Q9SRV1   # BPM4  (AT3G03740) adjp=2.5e-10
+Q1EBV6   # BPM5  (AT5G21010) adjp=7.4e-20
+Q39204   # MYC2  (AT1G32640) adjp=1.6e-04
+Q9FIP9   # MYC3  (AT5G46760) adjp=9.0e-06
+O49687   # MYC4  (AT4G17880) adjp=2.6e-06
+Q9LMA8   # JAZ1  (AT1G19180) adjp=2.0e-02
+Q9SV55   # NINJA (AT4G28910) adjp=7.7e-02 -- below the 0.05 cutoff, kept for biological completeness (JAZ corepressor)
+
+# Negative controls: proteins detected at similar, decent spectral counts
+# in BOTH the GFP-BPM6 and control IPs (min >=2 spectra/replicate in each),
+# with essentially no BPM6/control differential (adjp > 0.7, |Log2FC| < 1)
+# -- flat, abundant background binders with no jasmonate/CUL3 biology tying
+# them to BPM6. ESMFold2/PLIP should show no real bait-prey interface here.
+P32961   # NIT1 nitrilase 1              (AT3G44310) adjp=0.96, log2fc=-0.03
+Q9ZP05   # PMDH2 peroxisomal malate DH    (AT5G09660) adjp=0.93, log2fc=+0.06
+P56757   # ATP synthase subunit alpha    (ATCG00120) adjp=0.84, log2fc=+0.05 -- classic abundant AP-MS background protein
+P46010   # NIT3 nitrilase 3              (AT3G44320) adjp=0.77, log2fc=+0.20
