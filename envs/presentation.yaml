@@ -1,0 +1,17 @@
+name: nanopulldown-presentation
+# Beamer/LaTeX toolchain — builds presentation/main.tex to PDF.
+# tectonic is a self-contained LaTeX engine: no multi-GB texlive install,
+# it fetches only the packages main.tex actually uses (needs internet on
+# first build; fully offline afterwards, cached in ~/.cache/Tectonic).
+#
+# Install:
+#   conda env create -f envs/presentation.yaml
+#   conda activate nanopulldown-presentation
+#
+# Build:
+#   cd presentation && tectonic main.tex
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - tectonic>=0.15
