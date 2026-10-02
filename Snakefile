@@ -281,42 +281,81 @@ rule fig_disorder:
 # esmfold2.num_diffusion_samples) so minimize_cif's per-sample input can wire
 # back to this rule -- a `done` sentinel alone would hide the per-sample CIFs
 # from the DAG.
-rule run_esmfold2:
-    input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
-    output:
-        cifs=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}.cif"), s=SAMPLE_IDX),
-        jsons=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}_confidences.json"), s=SAMPLE_IDX),
-        done=str(POST / "{pair}" / "raw" / "prediction.done"),
-    log:
-        str(FOLD_LOG / "run_esmfold2" / "{pair}.log"),
-    conda:
-        "envs/esmfold2.yaml"
-    resources:
-        # gpu=1 caps run_esmfold2 at one concurrent job -- REQUIRED, not a
-        # hint: the -Fast checkpoint loads ~25GB into Apple Silicon's shared
-        # unified memory, and nothing else guards against multiple
-        # concurrent loads (this OOM-crashed the Mac once already). Only
-        # takes effect when the run is launched with `--resources gpu=1`
-        # (see README) -- always pass it. docker_heavy claims the ENTIRE
-        # pool (see config.yaml's `scheduling:`) so minimize_cif/run_plip
-        # -- which each only claim 1 -- can't run concurrently with a model
-        # load; once this rule finishes, up to docker_heavy_pool of them
-        # run at once. Also requires a matching `--resources` flag.
-        gpu=1,
-        docker_heavy=DOCKER_HEAVY_POOL,
-    params:
-        out=lambda wc: str(POST / wc.pair / "raw"),
-    shell:
-        r"""
-        python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
-          "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
-          > {log} 2>&1
-        python scripts/run_esmfold2.py \
-          --pair {wildcards.pair} --spec {input.spec} \
-          --out-dir {params.out} --done {output.done} \
-          >> {log} 2>&1
-        """
+# Fold granularity. pairs_per_load = 0: one process (and one ~25 GB model load,
+# with its swap spike) per pair. > 0: pairs are split into chunks of that size
+# and each chunk is ONE job that loads the model once and folds its pairs in a
+# loop (scripts/run_esmfold2_batch.py). A chunk's downstream steps (minimize,
+# PLIP, ...) only start once the whole chunk is done, so keep chunks to ~1-2 h.
+PAIRS_PER_LOAD = int(EF.get("pairs_per_load", 0))
+
+if PAIRS_PER_LOAD <= 0:
+    rule run_esmfold2:
+        input:
+            spec=str(REPO / "configs" / "{pair}.yaml"),
+        output:
+            cifs=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}.cif"), s=SAMPLE_IDX),
+            jsons=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}_confidences.json"), s=SAMPLE_IDX),
+            done=str(POST / "{pair}" / "raw" / "prediction.done"),
+        log:
+            str(FOLD_LOG / "run_esmfold2" / "{pair}.log"),
+        conda:
+            "envs/esmfold2.yaml"
+        resources:
+            # gpu=1 caps run_esmfold2 at one concurrent job -- REQUIRED, not a
+            # hint: the -Fast checkpoint loads ~25GB into Apple Silicon's shared
+            # unified memory, and nothing else guards against multiple
+            # concurrent loads (this OOM-crashed the Mac once already). Only
+            # takes effect when the run is launched with `--resources gpu=1`
+            # (see README) -- always pass it. docker_heavy claims the ENTIRE
+            # pool (see config.yaml's `scheduling:`) so minimize_cif/run_plip
+            # -- which each only claim 1 -- can't run concurrently with a model
+            # load; once this rule finishes, up to docker_heavy_pool of them
+            # run at once. Also requires a matching `--resources` flag.
+            gpu=1,
+            docker_heavy=DOCKER_HEAVY_POOL,
+        params:
+            out=lambda wc: str(POST / wc.pair / "raw"),
+        shell:
+            r"""
+            python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
+              "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
+              > {log} 2>&1
+            python scripts/run_esmfold2.py \
+              --pair {wildcards.pair} --spec {input.spec} \
+              --out-dir {params.out} --done {output.done} \
+              >> {log} 2>&1
+            """
+
+else:
+    for _k, _chunk in enumerate(PAIRS[i:i + PAIRS_PER_LOAD] for i in range(0, len(PAIRS), PAIRS_PER_LOAD)):
+        rule:
+            name: f"run_esmfold2_chunk_{_k:03d}"
+            input:
+                [str(REPO / "configs" / f"{_p}.yaml") for _p in _chunk],
+            output:
+                [str(POST / _p / "raw" / f"sample_{_s}.cif") for _p in _chunk for _s in SAMPLE_IDX],
+                [str(POST / _p / "raw" / f"sample_{_s}_confidences.json") for _p in _chunk for _s in SAMPLE_IDX],
+                [str(POST / _p / "raw" / "prediction.done") for _p in _chunk],
+            log:
+                str(FOLD_LOG / "run_esmfold2" / f"chunk_{_k:03d}.log"),
+            conda:
+                "envs/esmfold2.yaml"
+            resources:
+                # same single-model-at-a-time guard as the per-pair rule above
+                gpu=1,
+                docker_heavy=DOCKER_HEAVY_POOL,
+            params:
+                pairs=" ".join(_chunk),
+                root=str(POST),
+            shell:
+                r"""
+                python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
+                  "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
+                  > {log} 2>&1
+                python scripts/run_esmfold2_batch.py \
+                  --pairs {params.pairs} --out-root {params.root} \
+                  >> {log} 2>&1
+                """
 
 
 rule compress_metadata:

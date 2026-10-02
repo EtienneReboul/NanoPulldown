@@ -58,11 +58,13 @@ def _load_model_and_builder(checkpoint: str):
     return model, builder
 
 
-def fold_pair(spec: dict, cfg: dict, out_dir: Path) -> list[Path]:
+def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
+    """`loaded` = an already-loaded (model, builder) -- scripts/run_esmfold2_batch.py
+    loads once and folds many pairs; None loads (and discards) per call."""
     from esm.models.esmfold2 import ProteinInput, StructurePredictionInput
 
     ef_cfg = cfg["esmfold2"]
-    model, builder = _load_model_and_builder(ef_cfg["checkpoint"])
+    model, builder = loaded or _load_model_and_builder(ef_cfg["checkpoint"])
 
     spi = StructurePredictionInput(sequences=[
         ProteinInput(id=ch["id"], sequence=ch["sequence"])

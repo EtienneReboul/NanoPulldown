@@ -1656,6 +1656,10 @@ esmfold2:
                                    # 1200 ~ 24 GiB = the whole machine. Peak grows ~n^2.2. Lower it if you
                                    # keep memory-heavy apps open; set per machine in config.local.yaml
                                    # after running notebooks/esmfold2_memory_model.ipynb.
+  pairs_per_load: 50              # fold this many pairs per model load (one job per chunk; the model is loaded
+                                   # once, not once per pair -- avoids a ~25 GB transient load + swap spike per
+                                   # fold). 0 = one process per pair. Downstream steps of a chunk wait for the
+                                   # whole chunk, so ~1-2 h per chunk is a good size.
   seed: 1
 
 # ── Stage 2b: interface metrics (PAE-based, over all 5 diffusion samples) ──
