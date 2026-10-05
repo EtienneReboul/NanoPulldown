@@ -99,7 +99,9 @@ FOLD_REP = Path(DIRS["reports"]) / "folding"
 FOLD_LOG = Path(DIRS["logs"]) / "folding"
 MET = CFG["metrics"]
 MZ = CFG["minimize"]
+CL = MZ["clashes"]
 PLIP = CFG["plip"]
+CXC = PLIP["cxc"]
 RPT = CFG["report"]
 DOCKER_HEAVY_POOL = int(CFG["scheduling"]["docker_heavy_pool"])
 DATAVZRD = bool(RPT.get("datavzrd", False))
@@ -122,6 +124,10 @@ rule all:
         [str(POST / p / "interface_metrics.parquet") for p in PAIRS],
         [str(FOLD_REP / p / "domain_heatmap.svg") for p in PAIRS],
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
+        [str(POST / p / "plip" / f"sample_{i}_report" / f"sample_{i}.cxc")
+         for p in PAIRS for i in SAMPLE_IDX],
+        str(FOLD_REP / "clash_test.svg"),
+        str(FOLD_REP / "clash_test_stats.csv"),
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "metric_violins.svg"),
@@ -483,6 +489,36 @@ rule plip_to_csv:
         """
 
 
+# PLIP contacts -> ChimeraX visualization script (open the .cxc in ChimeraX).
+# Bait chains are one colored group, prey chains the other; the minimized PDB
+# is referenced by absolute path.
+rule plip_to_cxc:
+    input:
+        csv=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv" / "summary.csv"),
+        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb"),
+    output:
+        cxc=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}.cxc"),
+        config=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "cxc-config.json"),
+    params:
+        csv_dir=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv"),
+        bait=lambda wc: ",".join(SPECS[wc.pair]["bait_chains"]),
+        prey=lambda wc: ",".join(SPECS[wc.pair]["prey_chains"]),
+        bait_color=CXC["bait_color"], prey_color=CXC["prey_color"],
+        transparency=CXC["transparency"],
+    conda:
+        "envs/pliparser.yaml"
+    log:
+        str(FOLD_LOG / "plip_to_cxc" / "{pair}" / "sample_{sample}.log"),
+    shell:
+        r"""
+        python scripts/write_cxc_config.py --pdb {input.pdb} --csv-dir {params.csv_dir} \
+          --out {output.config} --bait-chains {params.bait} --prey-chains {params.prey} \
+          --bait-color {params.bait_color} --prey-color {params.prey_color} \
+          --transparency {params.transparency} > {log} 2>&1
+        pliparser csv2cxc --config {output.config} --output {output.cxc} >> {log} 2>&1
+        """
+
+
 rule aggregate_plip:
     input:
         csvs=lambda wc: expand(
@@ -557,6 +593,47 @@ rule fig_minimize_energy:
         python scripts/plot_minimize_energy.py --pair {wildcards.pair} \
           --results-root {POST} --num-samples {params.n} --max-abs-energy {params.maxe} \
           --out {output.svg} --out-table {output.table} --formats {params.fmts}
+        """
+
+
+# ChimeraX-style clash counting (scripts/count_clashes.py) on the raw ESMFold2
+# sample and its minimized counterpart, then a paired Wilcoxon test.
+rule count_clashes:
+    input:
+        raw=lambda wc: expand(str(POST / wc.pair / "raw" / "sample_{s}.cif"), s=SAMPLE_IDX),
+        minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb"), s=SAMPLE_IDX),
+    output:
+        str(POST / "{pair}" / "clashes.csv"),
+    conda:
+        "envs/clashes.yaml"
+    params:
+        n=N_SAMPLES, cutoff=CL["overlap_cutoff"], hb=CL["hbond_allowance"],
+        sep=CL["bond_separation"],
+    shell:
+        r"""
+        python scripts/count_clashes.py --pair {wildcards.pair} \
+          --results-root {POST} --num-samples {params.n} --out {output[0]} \
+          --overlap-cutoff {params.cutoff} --hbond-allowance {params.hb} \
+          --bond-separation {params.sep}
+        """
+
+
+rule fig_clash_test:
+    input:
+        [str(POST / p / "clashes.csv") for p in PAIRS],
+    output:
+        svg=report(str(FOLD_REP / "clash_test.svg"),
+                   category="Minimization clashes"),
+        stats=report(str(FOLD_REP / "clash_test_stats.csv"),
+                     category="Minimization clashes"),
+    conda:
+        "envs/report.yaml"
+    params:
+        fmts=FMTS, alt=CL["alternative"],
+    shell:
+        r"""
+        python scripts/plot_clash_test.py --tables {input} --out {output.svg} \
+          --out-stats {output.stats} --formats {params.fmts} --alternative {params.alt}
         """
 
 

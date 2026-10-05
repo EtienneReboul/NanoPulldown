@@ -1,0 +1,10 @@
+name: nanopulldown-clashes
+# Stage 2d QC — ChimeraX-style steric clash counting (scripts/count_clashes.py).
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - scipy>=1.11
+  - gemmi>=0.7

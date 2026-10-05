@@ -1677,6 +1677,13 @@ minimize:
   divergence_factor: 100.0     # energy rising by more than this x its running min = diverged
   probe_steps: 200
   max_steps: 2000
+  # ChimeraX `clashes` defaults, used by scripts/count_clashes.py to compare
+  # raw vs minimized structures (heavy atoms only -- see that script).
+  clashes:
+    overlap_cutoff: 0.6        # A: vdW overlap (after allowance) at/above which a pair clashes
+    hbond_allowance: 0.4       # A: subtracted for N/O--N/O pairs
+    bond_separation: 4         # ignore pairs <= this many bonds apart
+    alternative: "greater"     # Wilcoxon H1 on (raw - minimized); "two-sided" to be agnostic
 
 # ── Stage 2d: PLIP contact analysis (docker + pliparser) ────────────────────
 # Once per minimized sample: PLIP (docker) identifies bait<->prey contacts,
@@ -1688,6 +1695,11 @@ plip:
   image: "docker.io/pharmai/plip:latest"
   docker_memory: "8g"
   docker_platform: "linux/amd64"   # pharmai/plip has no arm64 build -- required on Apple Silicon
+  # ChimeraX visualization script (rule plip_to_cxc, pliparser csv2cxc)
+  cxc:
+    bait_color: "gray"
+    prey_color: "cornflowerblue"
+    transparency: 65
 
 # minimize_cif and run_plip each claim 1, so once folding for a pair is
 # done, up to N of them run concurrently (mixed, not per-rule limits).
