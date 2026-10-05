@@ -19,7 +19,8 @@ hard-linked into <out-root>/<pair>/raw/. Snakemake deletes a failed job's
 declared outputs (the links) but not the cache, so a rerun after a crash --
 e.g. the Metal allocation abort, a C++ abort no `except` can catch -- relinks
 the finished pairs instantly and only folds the rest. Pairs whose raw/ output
-already exists (earlier per-pair runs) are adopted, not refolded.
+is already complete (earlier per-pair runs) are adopted, not refolded; an
+incomplete one (marker but no confidences json -- see _complete) is refolded.
 
 Same one-model-at-a-time rule as run_esmfold2.py: the Snakefile gives each
 chunk gpu=1 and the whole docker_heavy pool.
@@ -40,7 +41,14 @@ from run_esmfold2 import _load_model_and_builder, fold_pair  # noqa: E402
 
 
 def _link_tree(src: Path, dst: Path) -> None:
+    """Make dst hold exactly src's files (hard links): stray sample_* files in dst
+    -- e.g. sample_1/2 left by an earlier 3-sample run, which compress_metadata
+    would otherwise pick up -- are removed first."""
     dst.mkdir(parents=True, exist_ok=True)
+    keep = {f.name for f in src.iterdir()}
+    for f in dst.iterdir():
+        if f.name.startswith("sample_") and f.name not in keep:
+            f.unlink()
     for f in src.iterdir():
         t = dst / f.name
         t.unlink(missing_ok=True)
@@ -50,8 +58,15 @@ def _link_tree(src: Path, dst: Path) -> None:
             shutil.copy2(f, t)
 
 
-def _complete(d: Path) -> bool:
-    return (d / "prediction.done").exists()
+def _complete(d: Path, n_samples: int) -> bool:
+    """prediction.done AND every declared output (cif + confidences json per
+    sample). The done-marker alone is not enough: compress_metadata deletes
+    raw/*_confidences.json (--delete-originals), so a raw/ dir adopted after
+    compression has the marker but not the json, and a chunk job that declares
+    the json as output then fails with MissingOutputException forever."""
+    return (d / "prediction.done").exists() and all(
+        (d / f"sample_{i}.cif").exists() and (d / f"sample_{i}_confidences.json").exists()
+        for i in range(n_samples))
 
 
 def main() -> int:
@@ -64,12 +79,13 @@ def main() -> int:
 
     root = Path(a.out_root)
     cache_root = root / "_fold_cache"
+    n_samples = int(load_config()["esmfold2"]["num_diffusion_samples"])
 
     # adopt finished per-pair outputs from earlier runs into the cache
     adopted = 0
     for p in a.pairs:
         raw, cache = root / p / "raw", cache_root / p
-        if not _complete(cache) and _complete(raw):
+        if not _complete(cache, n_samples) and _complete(raw, n_samples):
             _link_tree(raw, cache)
             adopted += 1
     if a.adopt_only:
@@ -83,7 +99,7 @@ def main() -> int:
     active = getattr(mx, "get_active_memory", None) or mx.metal.get_active_memory
     cfg = load_config()
 
-    todo = [p for p in a.pairs if not _complete(cache_root / p)]
+    todo = [p for p in a.pairs if not _complete(cache_root / p, n_samples)]
     print(f"[fold_batch] {len(a.pairs)} pair(s) in chunk, {len(todo)} to fold, "
           f"{len(a.pairs) - len(todo)} already done", flush=True)
 
@@ -112,7 +128,7 @@ def main() -> int:
             clear()                                        # return the fold's buffers; keep the weights
 
     for p in a.pairs:
-        if _complete(cache_root / p):
+        if _complete(cache_root / p, n_samples):
             _link_tree(cache_root / p, root / p / "raw")
 
     if failed:

@@ -24,6 +24,8 @@ dependencies:
   # libomp already initialized" abort on `import torch`.
   - libopenblas=*=*pthreads*
   - matplotlib>=3.8
+  - pandas>=2.0
+  - pyarrow  # parquet support (notebooks/top_interactors.ipynb)
   - jupyterlab
   - ipykernel
   - pip
