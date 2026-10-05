@@ -503,6 +503,7 @@ rule fig_plip_contacts:
     input:
         spec=str(REPO / "configs" / "{pair}.yaml"),
         summary=str(POST / "{pair}" / "plip_summary.csv"),
+        annotation=str(ANN / "{pair}" / "annotation.yaml"),
     output:
         report(str(FOLD_REP / "{pair}" / "plip_contacts.svg"),
                category="PLIP contacts", labels={"pair": "{pair}"}),
@@ -514,6 +515,7 @@ rule fig_plip_contacts:
         r"""
         python scripts/plot_plip_heatmap.py --pair {wildcards.pair} \
           --spec {input.spec} --summary {input.summary} \
+          --annotation {input.annotation} \
           --out {output[0]} --formats {params.fmts}
         """
 

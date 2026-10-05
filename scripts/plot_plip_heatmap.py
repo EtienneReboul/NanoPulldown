@@ -44,12 +44,18 @@ def main() -> int:
     ap.add_argument("--pair", required=True)
     ap.add_argument("--spec", required=True)
     ap.add_argument("--summary", required=True, help="results/<pair>/plip_summary.csv")
+    ap.add_argument("--annotation", default=None,
+                    help="data/annotation/<pair>/annotation.yaml; proposed domains used "
+                         "for chains the spec has no curated `domains:` for")
     ap.add_argument("--out", required=True)
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
 
     spec = yaml.safe_load(Path(a.spec).read_text())
     df = pd.read_csv(a.summary)
+    if a.annotation and Path(a.annotation).exists():
+        proposed = (yaml.safe_load(Path(a.annotation).read_text()) or {}).get("domains") or {}
+        spec["domains"] = {**proposed, **(spec.get("domains") or {})}
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
