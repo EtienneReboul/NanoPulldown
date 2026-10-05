@@ -1648,7 +1648,7 @@ esmfold2:
                                    # sample at 600 tokens) but NOT with num_loops / num_sampling_steps, so
                                    # one sample lets longer complexes fit and folds faster. Measured on a
                                    # 36 GB M4 Max (notebooks/esmfold2_memory_model.ipynb).
-  max_tokens: 1000               # pairs with more total tokens (sum of chain lengths) than this are not
+  max_tokens: 1050               # pairs with more total tokens (sum of chain lengths) than this are not
                                    # run: expand_pairs.py doesn't write them and the Snakefile ignores
                                    # them. 0 = no limit. Measured on a 36 GB M4 Max, 1 sample, loops 10 /
                                    # steps 100: 945 tokens fine; 1000 tokens = 16.9 GiB above the 12.2 GiB

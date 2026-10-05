@@ -124,6 +124,8 @@ rule all:
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
+        str(FOLD_REP / "metric_violins.svg"),
+        str(FOLD_REP / "metric_violins_interactive"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         ([str(FOLD_REP / "tables")] if DATAVZRD else []),
 
@@ -569,6 +571,38 @@ rule collect_results_table:
         r"""
         python scripts/collect_results_table.py --pairs {params.pairs} \
           --metadata-root {META} --results-root {POST} --out {output[0]}
+        """
+
+
+rule fig_metric_violins:
+    input:
+        str(FOLD_REP / "results_table.csv"),
+    output:
+        report(str(FOLD_REP / "metric_violins.svg"),
+               category="Metric distributions"),
+    conda:
+        "envs/report.yaml"
+    params:
+        fmts=FMTS,
+    shell:
+        r"""
+        python scripts/plot_metric_violins.py --table {input[0]} \
+          --out {output[0]} --formats {params.fmts}
+        """
+
+
+rule fig_metric_violins_interactive:
+    input:
+        str(FOLD_REP / "results_table.csv"),
+    output:
+        report(directory(str(FOLD_REP / "metric_violins_interactive")),
+               category="Metric distributions", htmlindex="index.html"),
+    conda:
+        "envs/report.yaml"
+    shell:
+        r"""
+        python scripts/plot_metric_violins_interactive.py --table {input[0]} \
+          --outdir {output[0]}
         """
 
 

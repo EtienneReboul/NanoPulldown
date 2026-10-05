@@ -98,7 +98,26 @@ def lis_family(pae, chains, cb, pae_cut, dist_cut):
 
 # ── ipSAE (reference script, subprocess -- unchanged) ──────────────────
 
-def run_ipsae(pae, token_chain_ids, token_res_ids, cif_path: Path, pae_cut, dist_cut):
+def _atom_plddts(cif_path: Path, token_plddt):
+    """Expand per-residue pLDDT (0-100) to a per-atom list indexed by atom serial - 1,
+    using the same residue order as residue_geometry()."""
+    st = gemmi.read_structure(str(cif_path))
+    per_atom, ri = {}, 0
+    for ch in st[0]:
+        for res in ch:
+            if not len(res):
+                continue
+            for a in res:
+                per_atom[a.serial - 1] = float(token_plddt[min(ri, len(token_plddt) - 1)])
+            ri += 1
+    out = np.zeros(max(per_atom) + 1)
+    for k, v in per_atom.items():
+        out[k] = v
+    return out.tolist()
+
+
+def run_ipsae(pae, token_chain_ids, token_res_ids, cif_path: Path, pae_cut, dist_cut,
+              plddt=None):
     """Returns {(cA,cB): {"ipsae","pdockq","pdockq2"}} or {} on any failure."""
     if not IPSAE.exists():
         return {}, "ipsae.py not vendored"
@@ -110,6 +129,11 @@ def run_ipsae(pae, token_chain_ids, token_res_ids, cif_path: Path, pae_cut, dist
             js = {"pae": np.asarray(pae, float).tolist(),
                   "token_chain_ids": [str(x) for x in token_chain_ids],
                   "token_res_ids": [int(x) for x in token_res_ids]}
+            # ipsae.py picks AF3 mode for .cif input and takes pDockQ / pDockQ2 pLDDT
+            # from "atom_plddts" (indexed by CIF atom serial). Without it, it silently
+            # falls back to zeros and both metrics collapse to a constant floor.
+            if plddt is not None:
+                js["atom_plddts"] = _atom_plddts(cif_path, plddt)
             jpath = td / "model_full_data.json"
             jpath.write_text(json.dumps(js))
             subprocess.run([sys.executable, str(IPSAE), str(jpath), str(cif_link),
@@ -255,12 +279,14 @@ def main() -> int:
             token_res_ids = (np.asarray(res_idx[:n]) if res_idx and len(res_idx) >= n
                               else np.arange(1, n + 1))
 
+            plddt = (np.asarray(h5[f"{key}/plddt"][:n], dtype=np.float32) * 100.0
+                     if f"{key}/plddt" in h5 else None)   # stored 0-1; ipsae.py wants 0-100
             lis = lis_family(pae, chain_ids, cb, a.pae_cutoff, a.contact_cutoff_cb) if "ilis" in enabled else {}
             pin = pinc_from_arrays(pae, com[:n], chain_ids) if "pinc" in enabled else {}
             ips, note = ({}, "")
             if "ipsae" in enabled:
                 ips, note = run_ipsae(pae, chain_ids, token_res_ids, cif_path,
-                                       a.pae_cutoff, 15.0)
+                                       a.pae_cutoff, 15.0, plddt)
             pit = pair_iptm_lookup(extra, list(dict.fromkeys(chain_ids.tolist())))
 
             pair_set = set(lis) | set(pin) | set(ips) | set(pit)

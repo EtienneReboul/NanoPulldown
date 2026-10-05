@@ -18,6 +18,9 @@ list, folded locally with ESMFold2-Fast (one seed,
   chain pair: pTM / ipTM / ESMFold2's own pair ipTM, plus ipSAE / iLIS /
   Pinc / pDockQ / pDockQ2 from ab_initio_pipeline's PAE-based rescoring
   stack.
+* **Metric distributions** — one violin per confidence / interface metric
+  (pTM, ipTM, pLDDT, ipSAE, iLIS, Pinc, pDockQ, ...) across all pairs,
+  samples and chain pairs in the results table.
 * **Minimization energy** — OpenMM energy trace per diffusion sample, plus a
   failure-rate table for any sample whose minimization diverged.
 
