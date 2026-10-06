@@ -128,10 +128,10 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \footnotesize
   \begin{columns}[t]
     \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={1,2,3}]
+      \tableofcontents[sections={1,2,3},hideallsubsections]
     \end{column}
     \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={4,5,6}]
+      \tableofcontents[sections={4,5,6},hideallsubsections]
     \end{column}
   \end{columns}
 \end{frame}
@@ -143,6 +143,110 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 \gdef\currentsubsectionname{}
 \sectiondivider{Introduction}
 
+% ---- Part 1: IP-MS background ---------------------------------------------
+\subsection{Background: IP-MS}
+
+\begin{frame}{IP-MS: finding what binds a bait}
+  \begin{columns}[c]
+    \begin{column}{0.56\textwidth}
+      \centering
+      {\setlength{\fboxsep}{3pt}\colorbox{white}{\includegraphics[width=\textwidth]{pulldown.png}}}\\[0.2em]
+      {\tiny\color{muted} Pull-down with tagged proteins (S-tag / FLAG).
+      RaihaT, Wikimedia Commons, CC BY-SA 3.0}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{enumerate}
+        \item \textbf{Immunoprecipitation}: tagged \emph{bait} captured on
+          beads
+        \item Incubate with a lysate: \emph{prey} proteins bind
+        \item Wash, then elute
+        \item \textbf{Mass spectrometry} identifies the eluate
+      \end{enumerate}
+      \vspace{0.3em}
+      \footnotesize
+      \textcolor{substrate}{\textbf{Limits}}: direct and indirect
+      (complex-mediated) binders are mixed; background binders to the
+      beads / tag
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---- Part 2: AlphaPulldown ------------------------------------------------
+\subsection{AlphaPulldown}
+
+\begin{frame}{AlphaFold-Multimer}
+  \begin{itemize}
+    \item AlphaFold2 retrained on \textbf{complexes}: several chains
+      folded jointly
+    \item Scores the interface with \textbf{ipTM} (and pTM / PAE) on top of
+      per-residue pLDDT
+    \item \textbf{AlphaPulldown}: bait $\times$ prey list from UniProt
+      IDs $\to$ one multimer prediction per pair $\to$ ranked interface
+      scores -- an \emph{in silico} pulldown
+    \item Cost: one multimer inference per pair, plus MSA building
+      (below) $\Rightarrow$ GPU cluster
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{The AlphaFold2 pipeline -- it all starts with an MSA}
+  \centering
+  {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=0.93\textwidth]{af2_pipeline.png}}}\\[0.2em]
+  {\tiny\color{muted} Jumper \textit{et al.}\ 2021, \textit{Nature} (Fig.~1e, cropped);
+  Wikimedia Commons, CC BY 4.0}
+
+  \vspace{0.3em}
+  {\footnotesize
+  \textcolor{substrate}{\textbf{Genetic database search $\to$ MSA (+ pairing for
+  complexes, + templates)}} is the first and the slowest step: the
+  Evoformer reads co-evolution from it.}
+\end{frame}
+
+% ---- Part 3: language-model folding ---------------------------------------
+\subsection{Language-model folding}
+
+\begin{frame}{ESMFold vs.\ AF2-Multimer: two ways to use evolution}
+  \small
+  \centering
+  \begin{tabular}{@{}p{2.6cm}p{5.6cm}p{5.6cm}@{}}
+    \toprule
+     & \textbf{AF2-Multimer} & \textbf{ESMFold-type (protein LM)} \\
+    \midrule
+    Input & sequence + \textbf{MSA} + templates & \textbf{single sequence} \\
+    Evolutionary signal & read explicitly from the alignment at inference
+      & \textbf{learned in the weights} of a language model during
+      pre-training \\
+    Pre-processing & database searches (slow, heavy) & none \\
+    Structure head & Evoformer + structure module & folding trunk on LM
+      embeddings $\to$ structure module / diffusion \\
+    Weak spot & few homologs $\Rightarrow$ poor MSA & orphan / rapidly
+      evolving sequences: relies on what the LM memorized \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Zoom on ESMFold2-Fast}
+  \small
+  Candido, Hayes, Derry, Rao, Lin, Verkuil \textit{et al.}, Biohub /
+  EvolutionaryScale -- \textit{Language Modeling Materializes a World Model
+  of Protein Biology} (bioRxiv, 2026)
+  \begin{itemize}
+    \item \textbf{ESMFold2}: recurrent folding trunk on \textbf{frozen
+      ESMC} representations (pooled over all layers), diffusion
+      transformer for atomic coordinates
+    \item \textbf{Fast variant}: 24 folding layers instead of 48, built for
+      high-throughput screening and design
+    \item \textbf{No MSA}: sequence-only prediction competitive with
+      MSA-based methods
+    \item Reported: protein--protein 68\,$\pm$\,1\,\% pass rate;
+      antibody--antigen 50\,$\pm$\,2\,\% (AF3: 47\,\%)
+    \item $\sim$9.4~s for 1\,024 residues on one H100 (reported 1.3$\times$
+      faster than AF3)
+    \item[$\Rightarrow$] \textcolor{substrate}{\textbf{This is what makes a
+      laptop pulldown screen feasible}}
+  \end{itemize}
+\end{frame}
+
+\subsection{Motivation}
 \begin{frame}{Motivation}
   \begin{itemize}
     \item A pulldown / IP-MS experiment returns a \textbf{long list} of
