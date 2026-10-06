@@ -16,11 +16,10 @@ per-rule conda envs.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
-import copy
 from pathlib import Path
-from typing import Any
 
 import yaml
 
