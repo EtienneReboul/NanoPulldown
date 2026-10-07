@@ -7,7 +7,21 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta, positioning, fit}
 \usepackage{booktabs}
+\usepackage[round]{natbib}
+\usepackage{bibentry}
+\nobibliography{refs}
+\bibliographystyle{plainnat}
+% centered (horizontally + vertically) multi-line table cell, no array.sty needed
+\newcommand{\cc}[1]{\begin{tabular}[c]{@{}c@{}}#1\end{tabular}}
 \usepackage{graphicx}
+\setbeamerfont{footnote}{size=\tiny}
+\setbeamercolor{footnote}{fg=muted}
+% author-year style footnotes: no number, muted tiny text
+\setbeamertemplate{footnote mark}{}
+\renewcommand{\thefootnote}{}
+\setbeamertemplate{footnote}{%
+  \parindent 0em\noindent\raggedright
+  {\usebeamercolor[fg]{footnote}\insertfootnotetext}\par}
 \graphicspath{{figures/}{figures/logos/}{figures/license/}}
 
 % --- Dark palette: navy / warm-white -------------------------------------
@@ -128,10 +142,10 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \footnotesize
   \begin{columns}[t]
     \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={1,2,3},hideallsubsections]
+      \tableofcontents[sections={1,2,3}]
     \end{column}
     \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={4,5,6},hideallsubsections]
+      \tableofcontents[sections={4,5,6}]
     \end{column}
   \end{columns}
 \end{frame}
@@ -143,10 +157,10 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 \gdef\currentsubsectionname{}
 \sectiondivider{Introduction}
 
-% ---- Part 1: IP-MS background ---------------------------------------------
-\subsection{Background: IP-MS}
+% ---- Part 1: pull-down background -----------------------------------------
+\subsection{Background}
 
-\begin{frame}{IP-MS: finding what binds a bait}
+\begin{frame}{Pull-down assay: finding what binds a bait}
   \begin{columns}[c]
     \begin{column}{0.56\textwidth}
       \centering
@@ -156,104 +170,129 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
     \end{column}
     \begin{column}{0.42\textwidth}
       \begin{enumerate}
-        \item \textbf{Immunoprecipitation}: tagged \emph{bait} captured on
+        \item \textbf{Pull-down}: tagged \emph{bait} immobilized on
           beads
-        \item Incubate with a lysate: \emph{prey} proteins bind
+        \item Incubate with \emph{prey} proteins (purified, or a lysate)
         \item Wash, then elute
-        \item \textbf{Mass spectrometry} identifies the eluate
+        \item Readout: Western blot, or \textbf{mass spectrometry}
+          (IP-MS) for a proteome-wide list of candidate preys
       \end{enumerate}
       \vspace{0.3em}
       \footnotesize
-      \textcolor{substrate}{\textbf{Limits}}: direct and indirect
-      (complex-mediated) binders are mixed; background binders to the
-      beads / tag
+      \textcolor{substrate}{\textbf{Limits}}: direct and indirect binders are mixed.
     \end{column}
   \end{columns}
 \end{frame}
 
-% ---- Part 2: AlphaPulldown ------------------------------------------------
-\subsection{AlphaPulldown}
 
-\begin{frame}{AlphaFold-Multimer}
-  \begin{itemize}
-    \item AlphaFold2 retrained on \textbf{complexes}: several chains
-      folded jointly
-    \item Scores the interface with \textbf{ipTM} (and pTM / PAE) on top of
-      per-residue pLDDT
-    \item \textbf{AlphaPulldown}: bait $\times$ prey list from UniProt
-      IDs $\to$ one multimer prediction per pair $\to$ ranked interface
-      scores -- an \emph{in silico} pulldown
-    \item Cost: one multimer inference per pair, plus MSA building
-      (below) $\Rightarrow$ GPU cluster
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{The AlphaFold2 pipeline -- it all starts with an MSA}
+\begin{frame}{The AlphaFold2 breakthrough}
   \centering
   {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=0.93\textwidth]{af2_pipeline.png}}}\\[0.2em]
-  {\tiny\color{muted} Jumper \textit{et al.}\ 2021, \textit{Nature} (Fig.~1e, cropped);
-  Wikimedia Commons, CC BY 4.0}
+  {\tiny\color{muted} Fig.~1e, cropped; Wikimedia Commons, CC BY 4.0 \citep{jumper2021}\footnote{\bibentry{jumper2021}}}
 
   \vspace{0.3em}
-  {\footnotesize
-  \textcolor{substrate}{\textbf{Genetic database search $\to$ MSA (+ pairing for
-  complexes, + templates)}} is the first and the slowest step: the
-  Evoformer reads co-evolution from it.}
+  { 
+  $\Rightarrow$ AF2 multimer is a \textbf{protein-protein docking engine} 
+  with confidence scores}
+\end{frame}
+
+\begin{frame}{AlphaPulldown: the workflow}
+  \centering
+  {\setlength{\fboxsep}{3pt}\colorbox{white}{\includegraphics[width=0.78\textwidth]{alphapulldown.jpg}}}\\[0.2em]
+  {\tiny\color{muted} Fig.~1 of the paper; CC BY 4.0 \citep{yu2023}\footnote{\bibentry{yu2023}}}
+
+    \vspace{0.3em}
+  { 
+  $\Rightarrow$ AlphaPulldown automates identification of direct binding partners through the \textbf{in silico pulldown} with AF2-Multimer
+  }
+\end{frame}
+
+% ---- Part 2: Problem statement ------------------------------------------------
+\subsection{Problem statement}
+
+\begin{frame}{Problem statement}
+  \begin{itemize}
+    \item AlphaPulldown is \textbf{great}, but it assumes:
+      \begin{itemize}
+        \item access to a GPU cluster : 
+        \begin{itemize}
+          \item Unmanageable to give access to a large number of users
+          \item Pangloss (ibmp cluster) does not have high-end GPUs for a full screen
+          \item High-end GPUs are expensive (around 12k EUR) currently not available through public procurement
+        \end{itemize}
+        \item MSA building :
+        \begin{itemize}
+          \item Typically a slow process with Jackhmmer and HHblits
+          \item Requires large sequence databases (UniRef90, MGnify, BFD, PDB70, etc.)
+          \item Not feasible on a laptop
+        \end{itemize}
+        \item AlphaFold models as docking engine :
+        \begin{itemize}
+          \item  AF2 multimer is no longer State-of-the-Art (SOTA) for protein-protein docking
+          \item  AF3 weights are available on demand but have specific licensing restrictions
+        \end{itemize}
+      \end{itemize}
+    \item[$\Rightarrow$] Can we run the same screen on a single MacStudio (range price : 3k-9k EUR)?
+  \end{itemize}
 \end{frame}
 
 % ---- Part 3: language-model folding ---------------------------------------
 \subsection{Language-model folding}
 
-\begin{frame}{ESMFold vs.\ AF2-Multimer: two ways to use evolution}
-  \small
+\begin{frame}{Protein LM as alternative folding engines}
+  \normalsize
   \centering
-  \begin{tabular}{@{}p{2.6cm}p{5.6cm}p{5.6cm}@{}}
+  {\small Protein LMs (e.g.\ ESMFold, \citealp{lin2023}\footnote{\bibentry{lin2023}}):
+  \textbf{LLM-style transformers} trained on proteins.}
+
+  \vspace{0.8em}
+  \renewcommand{\arraystretch}{1.15}
+  \begin{tabular}{@{\hspace{0.6em}}c|c|c@{\hspace{0.6em}}}
     \toprule
-     & \textbf{AF2-Multimer} & \textbf{ESMFold-type (protein LM)} \\
+     & \cc{\textbf{AF2-Multimer}} & \cc{\textbf{ESMFold-type (protein LM)}} \\
     \midrule
-    Input & sequence + \textbf{MSA} + templates & \textbf{single sequence} \\
-    Evolutionary signal & read explicitly from the alignment at inference
-      & \textbf{learned in the weights} of a language model during
-      pre-training \\
-    Pre-processing & database searches (slow, heavy) & none \\
-    Structure head & Evoformer + structure module & folding trunk on LM
-      embeddings $\to$ structure module / diffusion \\
-    Weak spot & few homologs $\Rightarrow$ poor MSA & orphan / rapidly
-      evolving sequences: relies on what the LM memorized \\
+    \cc{Input} & \cc{sequence + \textbf{MSA} + templates}
+      & \cc{\textbf{single sequence}} \\
+    \midrule
+    \cc{Evolutionary\\signal} & \cc{read from the alignment\\at inference}
+      & \cc{\textbf{learned in the weights}\\during pre-training} \\
+    \midrule
+    \cc{Pre-processing} & \cc{database searches (slow, heavy)} & \cc{none} \\
+    \midrule
+    % Structure head & Evoformer + structure module & folding trunk on LM
+    %   embeddings $\to$ structure module / diffusion \\
+    \cc{Weak spot} & \cc{few homologs $\Rightarrow$ poor MSA}
+      & \cc{orphan / novel sequences} \\
     \bottomrule
   \end{tabular}
 \end{frame}
 
-\begin{frame}{Zoom on ESMFold2-Fast}
-  \small
-  Candido, Hayes, Derry, Rao, Lin, Verkuil \textit{et al.}, Biohub /
-  EvolutionaryScale -- \textit{Language Modeling Materializes a World Model
-  of Protein Biology} (bioRxiv, 2026)
-  \begin{itemize}
-    \item \textbf{ESMFold2}: recurrent folding trunk on \textbf{frozen
-      ESMC} representations (pooled over all layers), diffusion
-      transformer for atomic coordinates
-    \item \textbf{Fast variant}: 24 folding layers instead of 48, built for
-      high-throughput screening and design
-    \item \textbf{No MSA}: sequence-only prediction competitive with
-      MSA-based methods
-    \item Reported: protein--protein 68\,$\pm$\,1\,\% pass rate;
-      antibody--antigen 50\,$\pm$\,2\,\% (AF3: 47\,\%)
+\begin{frame}{ESMFold2-Fast}
+  \footnotesize
+  \centering
+  {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=0.85\textwidth]{esmfold2_arch.png}}}\\[0.1em]
+  {\tiny\color{muted} Fig.~2A, cropped, CC BY 4.0 \citep{candido2026}\footnote{\bibentry{candido2026}}}
+
+  \raggedright
+  \begin{itemize}\scriptsize
+    \item \textbf{ESMFold2-Fast} is designed for \textbf{high-throughput screening} and \textbf{design} of protein sequences
+    \item \textbf{Simplified architecture}: 24 folding layers instead of 48 to reduce memory footprint and inference time
+    \item \textbf{No MSA}: sequence-only prediction competitive with MSA-based methods (slightly worse than AF3)
     \item $\sim$9.4~s for 1\,024 residues on one H100 (reported 1.3$\times$
       faster than AF3)
     \item[$\Rightarrow$] \textcolor{substrate}{\textbf{This is what makes a
-      laptop pulldown screen feasible}}
+      high-throughput pulldown screen on a Mac Studio feasible}}
   \end{itemize}
 \end{frame}
 
-\subsection{Motivation}
+\subsection{Project Overview}
 \begin{frame}{Motivation}
   \begin{itemize}
     \item A pulldown / IP-MS experiment returns a \textbf{long list} of
       candidate interactors -- which of them bind the bait \emph{directly}?
     \item Worked case: \textbf{BPM6} (AT3G43700, CUL3 substrate adaptor),
       GFP-IP in \textit{A.\ thaliana} (PXD013906, Chico \textit{et al.}\
-      2020) -- 1 bait $\times$ $\sim$1\,500 prey candidates
+      2020), 1 bait $\times$ $\sim$1\,500 prey candidates
     \item AlphaPulldown's UniProt-ID-driven bait/prey strategy answers
       this, but assumes AlphaFold-multimer/AF3, MSAs and a GPU cluster
     \item[$\Rightarrow$] Can we run the same screen \textbf{on one laptop}?
@@ -302,7 +341,7 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   {\footnotesize\textcolor{substrate}{\textbf{Everything runs on one machine, in one Snakemake call.}}}\par
 \end{frame}
 
-\begin{frame}{Stage 1 -- Preprocessing}
+\begin{frame}{Stage 1 - Preprocessing}
   \begin{itemize}
     \item \textbf{Pair expansion}: \texttt{configs/baits.txt} $\times$
       \texttt{configs/preys.txt} (AlphaPulldown syntax:
@@ -316,11 +355,11 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
     \item Annotation runs \textbf{once per unique sequence} (cached) with
       polite, ramped rate limits on the public APIs
     \item[$\Rightarrow$] proposed \texttt{domains:} block, curated
-      \textbf{whenever convenient} -- it never blocks folding
+      \textbf{whenever convenient} - it never blocks folding
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Stage 2 -- Folding}
+\begin{frame}{Stage 2 : Folding}
   \begin{itemize}
     \item \textbf{ESMFold2-Fast} (\texttt{biohub/ESMFold2-Fast}), MLX on
       Metal: 10 loops, 100 sampling steps, 1 seed, 1 diffusion sample
@@ -445,10 +484,10 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 \gdef\currentsubsectionname{}
 \sectiondivider{Caveats and next steps}
 
-\begin{frame}{Assumptions still to confirm -- be honest}
+\begin{frame}{Assumptions still to confirm}
   \begin{itemize}
     \item \textbf{MLX path}: assumed to fill \texttt{result.pae} /
-      \texttt{pair\_chains\_iptm} like the Torch/CUDA path -- to check
+      \texttt{pair\_chains\_iptm} like the Torch/CUDA path to check
       against a live run
     \item \textbf{AIUPred CLI} (\texttt{-i/-t/-o}) and the \textbf{InterProScan
       v6 MATCH} endpoint: to confirm against current docs
@@ -477,5 +516,8 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \centering
   \Huge Questions?
 \end{frame}
+
+% register citations for \citep (and run bibtex) without printing a reference list
+\setbox0\vbox{\bibliography{refs}}
 
 \end{document}
