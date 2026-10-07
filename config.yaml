@@ -1677,6 +1677,8 @@ minimize:
   divergence_factor: 100.0     # energy rising by more than this x its running min = diverged
   probe_steps: 200
   max_steps: 2000
+  trace_interval: 50           # record energy every N iterations (-> sample_<i>_energy.parquet)
+  convergence_delta: 1.0e-3    # kJ/mol: stop early if a chunk changes energy by less than this
   # ChimeraX `clashes` defaults, used by scripts/count_clashes.py to compare
   # raw vs minimized structures (heavy atoms only -- see that script).
   clashes:

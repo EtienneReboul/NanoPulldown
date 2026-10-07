@@ -12,8 +12,8 @@ hydrogens at pH 7) -> OpenMM ForceField (amber14-all + a GBSA/implicit-
 solvent term, from config.yaml's `minimize.forcefield`) -> a short probe
 minimization to screen for divergence (mirrors the ChimeraX script's
 probe-then-continue guard, scripts/minimize_cif.py:156-188) -> a longer
-minimization to convergence -> minimized PDB + a 3-point energy trace CSV
-(initial / post-probe / final) for scripts/plot_minimize_energy.py.
+minimization to convergence -> minimized PDB + an energy trace parquet
+(one point every `minimize.trace_interval` iterations) for scripts/plot_minimize_energy.py.
 
 Platform: tries `minimize.platform_preference` in order (OpenCL first, for
 Mac Metal-backed GPU acceleration, then CPU) -- confirm OpenCL actually
@@ -23,7 +23,6 @@ safe fallback.
 from __future__ import annotations
 
 import argparse
-import csv
 import sys
 from pathlib import Path
 
@@ -89,48 +88,62 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     trace.append((0, e0))
     print(f"[minimize] initial energy: {e0:.1f} kJ/mol")
 
-    print(f"[minimize] probe ({mz['probe_steps']} iterations)...")
-    LocalEnergyMinimizer.minimize(simulation.context, maxIterations=int(mz["probe_steps"]))
-    e_probe = energy_kj()
-    trace.append((int(mz["probe_steps"]), e_probe))
+    # Minimize in chunks of `trace_interval` iterations, recording the energy
+    # after each one (L-BFGS restarts per call, which is harmless here). The
+    # divergence guard runs on every chunk; the stricter probe check (energy
+    # blowing up relative to the start) runs once, when probe_steps is reached.
+    interval = max(1, int(mz.get("trace_interval", 50)))
+    max_steps = int(mz["max_steps"])
+    probe_steps = int(mz["probe_steps"])
+    max_abs = float(mz["max_abs_energy"])
+    done, probed, prev = 0, False, e0
+    while done < max_steps:
+        n = min(interval, max_steps - done)
+        LocalEnergyMinimizer.minimize(simulation.context, maxIterations=n)
+        done += n
+        e = energy_kj()
+        trace.append((done, e))
 
-    diverged = (
-        e_probe != e_probe                                    # NaN check
-        or abs(e_probe) > float(mz["max_abs_energy"])
-        or (e0 < 0 and e_probe > 0 and abs(e_probe) > float(mz["divergence_factor"]) * abs(e0))
-    )
-    if diverged:
-        raise RuntimeError(
-            f"Minimization diverged during the probe (initial={e0:.1f}, "
-            f"post-probe={e_probe:.1f} kJ/mol) — refusing to continue or save "
-            "a garbage structure."
-        )
-    print(f"[minimize] probe energy looks sane ({e_probe:.1f} kJ/mol) — continuing to convergence")
-
-    remaining = max(0, int(mz["max_steps"]) - int(mz["probe_steps"]))
-    if remaining:
-        LocalEnergyMinimizer.minimize(simulation.context, maxIterations=remaining)
-    e_final = energy_kj()
-    trace.append((int(mz["max_steps"]), e_final))
-
-    if e_final != e_final or abs(e_final) > float(mz["max_abs_energy"]):
-        raise RuntimeError(
-            f"Minimization diverged during the full run (final={e_final:.1f} "
-            "kJ/mol) — refusing to save a garbage structure."
-        )
+        bad = e != e or abs(e) > max_abs
+        if not probed and done >= probe_steps:
+            probed = True
+            bad = bad or (e0 < 0 and e > 0 and abs(e) > float(mz["divergence_factor"]) * abs(e0))
+            if not bad:
+                print(f"[minimize] probe energy looks sane ({e:.1f} kJ/mol) — continuing to convergence")
+        if bad:
+            raise RuntimeError(
+                f"Minimization diverged at step {done} (initial={e0:.1f}, "
+                f"current={e:.1f} kJ/mol) — refusing to continue or save a garbage structure."
+            )
+        # A chunk that moves nothing means L-BFGS converged before its cap.
+        if done < max_steps and abs(e - prev) < float(mz.get("convergence_delta", 1e-3)):
+            print(f"[minimize] converged at step {done}")
+            break
+        prev = e
+    e_final = trace[-1][1]
 
     state = simulation.context.getState(getPositions=True)
     with open(pdb_path, "w") as fh:
         PDBFile.writeFile(modeller.topology, state.getPositions(), fh)
     print(f"[minimize] saved: {pdb_path.name} (final energy {e_final:.1f} kJ/mol)")
 
-    energy_csv = pdb_path.with_name(pdb_path.stem + "_energy.csv")
-    with open(energy_csv, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["step", "energy_kJ_mol"])
-        writer.writeheader()
-        for step, energy in trace:
-            writer.writerow({"step": step, "energy_kJ_mol": energy})
-    print(f"[minimize] energy trace -> {energy_csv.name}")
+    import pandas as pd
+    from parquet_utils import write_parquet_with_metadata
+
+    energy_pq = pdb_path.with_name(pdb_path.stem + "_energy.parquet")
+    df = pd.DataFrame(trace, columns=["step", "energy_kJ_mol"])
+    write_parquet_with_metadata(
+        df, energy_pq,
+        table_description=(
+            "Potential-energy trace of one OpenMM minimization (one diffusion "
+            "sample): one row per recorded point, from the unminimized start "
+            "to the final step. Read by scripts/plot_minimize_energy.py."),
+        column_descriptions={
+            "step": "Cumulative L-BFGS iterations performed so far (0 = initial structure).",
+            "energy_kJ_mol": "Potential energy of the system at that step, kJ/mol.",
+        },
+    )
+    print(f"[minimize] energy trace ({len(df)} points) -> {energy_pq.name}")
 
 
 def main() -> int:

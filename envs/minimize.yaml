@@ -12,4 +12,6 @@ dependencies:
   - openmm>=8.1
   - pdbfixer>=1.9
   - numpy>=1.26
+  - pandas>=2.0
+  - pyarrow>=15.0   # energy trace parquet (scripts/parquet_utils.py)
   - pyyaml>=6.0   # scripts/minimize_openmm.py imports lib_pipeline.load_config

@@ -32,7 +32,7 @@ straight into folding.
       compress_metadata  -> results/metadata/<pair>/{model_metadata.parquet,arrays.h5}
       compute_metrics    ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM ->
                          results/<pair>/interface_metrics.parquet
-      minimize_cif       OpenMM energy minimization (+ *_energy.csv trace),
+      minimize_cif       OpenMM energy minimization (+ *_energy.parquet trace),
                          no ChimeraX / antechamber
       run_plip           PLIP (docker) on each minimized sample, bait_chains
                          vs prey_chains -> per-sample TXT report
