@@ -25,7 +25,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import annotation_cache_dir, atomic_write, seq_md5  # noqa: E402
-from annotate_disorder_aiupred import CFG, run_aiupred_batch  # noqa: E402
+from annotate_disorder_aiupred import CFG, cache_is_current, run_aiupred_batch  # noqa: E402
 
 
 def main() -> int:
@@ -41,7 +41,7 @@ def main() -> int:
         for ch in yaml.safe_load(Path(f).read_text())["sequences"]:
             seqs.add(ch["sequence"])
     cache = annotation_cache_dir(CFG, "disorder")
-    todo = sorted((s for s in seqs if not (cache / f"{seq_md5(s)}.json").exists()), key=len)
+    todo = sorted((s for s in seqs if not cache_is_current(cache / f"{seq_md5(s)}.json")), key=len)
     print(f"[disorder_batch] {len(seqs)} unique sequence(s), {len(todo)} to run, chunks of {chunk}",
           flush=True)
 
@@ -53,7 +53,7 @@ def main() -> int:
         print(f"[disorder_batch] {min(i + chunk, len(todo))}/{len(todo)} ({time.time() - t0:.0f}s)",
               flush=True)
 
-    missing = sum(not (cache / f"{seq_md5(s)}.json").exists() for s in seqs)
+    missing = sum(not cache_is_current(cache / f"{seq_md5(s)}.json") for s in seqs)
     if missing:
         print(f"[disorder_batch] WARNING: {missing} sequence(s) not cached; per-pair jobs will "
               "fall back to single-sequence runs", file=sys.stderr)

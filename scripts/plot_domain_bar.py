@@ -30,7 +30,7 @@ KIND_COLOR = {
     "disordered": "#dd8452",
     "morf": "#55a868",
 }
-TRACK_COLOR = {"disorder": "#c44e52", "binding": "#55a868"}
+TRACK_COLOR = {"disorder": "#c44e52", "binding": "#55a868", "linker": "#8172b3"}
 
 
 def main() -> int:
@@ -78,11 +78,11 @@ def main() -> int:
                                  color="#dd8452", alpha=0.15, label=f"disordered (>= {args.cutoff:g})")
             for t in wide.columns:
                 axc.plot(wide.index, wide[t], color=TRACK_COLOR.get(t, "#333333"), lw=1.2,
-                         label=f"AIUPred {t}")
+                         ls="--" if t == "linker" else "-", label=f"AIUPred {t}")
             axc.axhline(args.cutoff, color="grey", lw=.7, ls=":")
-            axc.legend(loc="upper right", fontsize=7, ncol=3, frameon=False)
+            axc.legend(loc="upper center", fontsize=7, ncol=4, frameon=False)
         axc.set_ylim(0, 1); axc.set_ylabel("AIUPred score")
-        axc.set_title(f"chain {args.chain} — AIUPred disorder / binding and domain map ({source_label})",
+        axc.set_title(f"chain {args.chain} — AIUPred disorder / binding / linker and domain map ({source_label})",
                       fontsize=9)
     else:
         fig, ax = plt.subplots(figsize=(9, 1.9), constrained_layout=True)

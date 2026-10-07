@@ -8,7 +8,7 @@ list, folded locally with ESMFold2-Fast (one seed,
 * **Domain map** — curated (``annotation_reviewed: true``) segment map per
   chain: domain / linker / disordered / MoRF, from Stage 1's
   ScanProsite + InterProScan v6 annotation.
-* **Disorder / binding** — AIUPred's disorder and binding(MoRF) tracks per
+* **Disorder / binding** — AIUPred's disorder, binding(MoRF) and linker tracks per
   chain.
 * **Domain x domain confidence heatmaps** — one panel per diffusion sample,
   cell = mean inverse-PAE between each bait-domain x prey-domain pair

@@ -15,7 +15,7 @@ never a raw predictor output here (or in ab_initio_pipeline) -- it stays a
 human call made in configs/<pair>.yaml's `domains:` during curation.
 
 Output: long-format TSV  chain  resi  restype  track  score
-        track is one of: disorder, binding
+        track is one of: disorder, binding, linker
 
 Container contract (confirmed against ghcr.io/doszilab/aiupred:cpu v2.1.0,
 2026-09-30 -- the image sets no ENTRYPOINT/CMD, so it must be invoked as
@@ -24,7 +24,7 @@ Container contract (confirmed against ghcr.io/doszilab/aiupred:cpu v2.1.0,
 `-b/--binding` adds a 4th column to the SAME output file rather than
 needing a second run -- one docker invocation per chain covers both
 tracks. Output: `#`-prefixed header/citation lines, then one row per
-residue: `resi<TAB>restype<TAB>disorder_score[<TAB>binding_score]`.
+residue: `resi<TAB>restype<TAB>disorder_score[<TAB>binding_score<TAB>linker_score]`.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def _run_aiupred_container(seq: str, cfg: dict) -> dict[str, list[float]] | None
             image,
             "-m", "aiupred.cli",
             "-i", "/work/input.fasta", "-o", "/work/aiupred.tsv",
-            "-b", *cpu_args,
+            "-b", "-l", *cpu_args,
         ]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -81,6 +81,7 @@ def _run_aiupred_container(seq: str, cfg: dict) -> dict[str, list[float]] | None
 def _parse_aiupred_output(text: str, expected_len: int) -> dict[str, list[float]] | None:
     disorder: list[float] = []
     binding: list[float] = []
+    linker: list[float] = []
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -90,6 +91,8 @@ def _parse_aiupred_output(text: str, expected_len: int) -> dict[str, list[float]
             disorder.append(float(parts[2]))
             if len(parts) >= 4:
                 binding.append(float(parts[3]))
+            if len(parts) >= 5:
+                linker.append(float(parts[4]))
         except (ValueError, IndexError):
             continue
     if len(disorder) != expected_len:
@@ -100,6 +103,8 @@ def _parse_aiupred_output(text: str, expected_len: int) -> dict[str, list[float]
         tracks["disorder"] = disorder
     if binding:
         tracks["binding"] = binding
+    if linker:
+        tracks["linker"] = linker
     return tracks or None
 
 
@@ -119,7 +124,7 @@ def run_aiupred_batch(seqs: list[str], cfg: dict, timeout: int = 3600) -> dict[s
         (td / "input.fasta").write_text("".join(f">{m}\n{q}\n" for m, q in by_md5.items()))
         cmd = ["docker", "run", "--rm", *platform_args, *gpu_args, "-v", f"{td}:/work",
                "--entrypoint", "python3", image, "-m", "aiupred.cli",
-               "-i", "/work/input.fasta", "-o", "/work/aiupred.tsv", "-b", *cpu_args]
+               "-i", "/work/input.fasta", "-o", "/work/aiupred.tsv", "-b", "-l", *cpu_args]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
@@ -144,11 +149,19 @@ def run_aiupred_batch(seqs: list[str], cfg: dict, timeout: int = 3600) -> dict[s
         return results
 
 
+def cache_is_current(path: Path) -> bool:
+    """A cache entry from before the linker track was added lacks it -> recompute."""
+    try:
+        return "linker" in json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+
+
 def get_tracks(seq: str, acfg: dict) -> dict[str, list[float]]:
     """Per-sequence tracks, cached on disk by md5(sequence); falls back to a
     single-sequence container run on a miss (and caches that)."""
     cache = annotation_cache_dir(CFG, "disorder") / f"{seq_md5(seq)}.json"
-    if cache.exists():
+    if cache_is_current(cache):
         return json.loads(cache.read_text())
     tracks = _run_aiupred_container(seq, acfg) or {}
     if tracks:
