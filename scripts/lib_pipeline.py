@@ -39,12 +39,17 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 
 def load_config(repo_root: Path | str = REPO_ROOT) -> dict:
-    """config.yaml with config.local.yaml deep-merged on top when present."""
+    """config.yaml with config.local.yaml deep-merged on top when present,
+    then the per-run overlay named by $NANOPULLDOWN_RUN_CONFIG (e.g.
+    config_q9m548_e3_fbox.yaml: its own `pairs:` and `dirs:`) when set."""
     root = Path(repo_root)
     cfg = yaml.safe_load((root / "config.yaml").read_text())
     local = root / "config.local.yaml"
     if local.exists():
         cfg = _deep_merge(cfg, yaml.safe_load(local.read_text()) or {})
+    run_cfg = os.environ.get("NANOPULLDOWN_RUN_CONFIG")
+    if run_cfg:
+        cfg = _deep_merge(cfg, yaml.safe_load((root / run_cfg).read_text()) or {})
     return cfg
 
 

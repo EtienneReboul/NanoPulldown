@@ -13,3 +13,8 @@ __pycache__/
 # example stays tracked as the schema template (see configs/_schema.md).
 configs/*.yaml
 !configs/example_toy__example_toy.yaml
+# Per-run output dirs from run overlays (config_<run>.yaml sets dirs: to
+# results_<run>/, reports_<run>/, logs_<run>/)
+results_*/
+reports_*/
+logs_*/
