@@ -120,7 +120,6 @@ rule all:
     input:
         [str(ANN / p / "annotation.yaml") for p in PAIRS],
         chain_figs("domain_bar"),
-        chain_figs("disorder"),
         [str(POST / p / "interface_metrics.parquet") for p in PAIRS],
         [str(FOLD_REP / p / "domain_heatmap.svg") for p in PAIRS],
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
@@ -249,25 +248,10 @@ rule fig_domain_bar:
     input:
         spec=str(REPO / "configs" / "{pair}.yaml"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
-    output:
-        str(PRE_REP / "{pair}" / "domain_bar_{chain}.svg"),
-    conda:
-        "envs/report.yaml"
-    params:
-        fmts=",".join(CFG["report"]["figure_formats"]),
-    shell:
-        r"""
-        python scripts/plot_domain_bar.py \
-          --spec {input.spec} --annotation {input.annotation} --chain {wildcards.chain} \
-          --out {output[0]} --formats {params.fmts}
-        """
-
-
-rule fig_disorder:
-    input:
         disorder=str(ANN / "{pair}" / "disorder.tsv"),
     output:
-        str(PRE_REP / "{pair}" / "disorder_{chain}.svg"),
+        report(str(PRE_REP / "{pair}" / "domain_bar_{chain}.svg"),
+               category="Domain map + AIUPred", labels={"pair": "{pair}", "chain": "{chain}"}),
     conda:
         "envs/report.yaml"
     params:
@@ -275,9 +259,10 @@ rule fig_disorder:
         cutoff=CFG["annotate"]["consensus"]["disorder_cutoff"],
     shell:
         r"""
-        python scripts/plot_disorder.py \
-          --disorder {input.disorder} --chain {wildcards.chain} \
-          --cutoff {params.cutoff} --out {output[0]} --formats {params.fmts}
+        python scripts/plot_domain_bar.py \
+          --spec {input.spec} --annotation {input.annotation} --chain {wildcards.chain} \
+          --disorder {input.disorder} --cutoff {params.cutoff} \
+          --out {output[0]} --formats {params.fmts}
         """
 
 

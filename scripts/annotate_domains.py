@@ -231,7 +231,8 @@ def _parse_ips_tsv(txt: str) -> list[dict]:
         hits.append({
             "source": "InterProScan", "db": p[3],
             "accession": p[4],
-            "name": (p[11] if len(p) > 11 and p[11] not in ("", "-") else p[4]),
+            "name": next((x for x in (p[12] if len(p) > 12 else "", p[5] if len(p) > 5 else "", p[4])
+                          if x not in ("", "-")), p[4]),
             "start": start, "end": stop,
             "score": p[8] if len(p) > 8 else "",
             "description": (p[12] if len(p) > 12 else p[5] if len(p) > 5 else ""),
@@ -281,7 +282,7 @@ def interpro_by_accession(accession: str, seq_len: int, cfg: dict) -> list[dict]
                         hits.append({
                             "source": "InterPro", "db": _IPR_DB.get(db, meta["source_database"]),
                             "accession": meta["accession"],
-                            "name": meta.get("integrated") or meta["accession"],
+                            "name": meta.get("name") or meta["accession"],
                             "start": int(fr["start"]), "end": int(fr["end"]),
                             "score": "" if loc.get("score") is None else loc["score"],
                             "description": meta.get("name") or "",

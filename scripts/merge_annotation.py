@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -39,6 +40,18 @@ from lib_pipeline import load_config, load_pair, protein_chains  # noqa: E402
 
 CFG = load_config()
 DOMAIN_DBS_PREFERRED = ("PfamA", "Pfam", "PROSITEProfiles", "PROSITE_profiles", "SMART", "Gene3D")
+
+
+_ACCESSION_RE = re.compile(r"^(IPR\d+|PF\d+|SM\d+|PS\d+|PTHR\d+|G3DSA:.*|cd\d+)$")
+
+
+def _label(h: dict) -> str:
+    """Human-readable hit name. Older cached/raw hits carry an accession
+    (IPRxxxxxx, PFxxxxx, ...) in `name`; the readable text is in `description`."""
+    name = (h.get("name") or "").strip()
+    if name and not _ACCESSION_RE.match(name):
+        return name
+    return (h.get("description") or "").strip() or name or h["accession"]
 
 
 def _read_tsv(path: Path) -> list[dict]:
@@ -86,9 +99,9 @@ def _binding_segments(dis_rows: list[dict], threshold: float, min_len: int) -> l
 
 def _chain_segments(seqlen, dom_hits, dis_rows, acfg):
     # folded domains from hits
-    pref = [(int(h["start"]), int(h["end"]), h["name"] or h["accession"])
+    pref = [(int(h["start"]), int(h["end"]), _label(h))
             for h in dom_hits if h["db"] in DOMAIN_DBS_PREFERRED]
-    allh = [(int(h["start"]), int(h["end"]), h["name"] or h["accession"]) for h in dom_hits]
+    allh = [(int(h["start"]), int(h["end"]), _label(h)) for h in dom_hits]
     domains = _merge_intervals(pref or allh)
 
     # disorder mask (single AIUPred "disorder" track)
@@ -109,7 +122,7 @@ def _chain_segments(seqlen, dom_hits, dis_rows, acfg):
             segs.append({"name": f"region{di}", "start": cursor, "end": s - 1,
                          "kind": "disordered" if frac >= 0.5 else "linker"})
             di += 1
-        segs.append({"name": name[:24] or f"dom{di}", "start": s, "end": e, "kind": "domain"})
+        segs.append({"name": name[:40] or f"dom{di}", "start": s, "end": e, "kind": "domain"})
         cursor = e + 1
     if cursor <= seqlen:
         gap_res = range(cursor, seqlen + 1)
