@@ -9,6 +9,12 @@ datasets:
   minimize_failures:
     path: "minimize_failure_rate.csv"
     separator: ","
+  clash_stats:
+    path: "clash_test_stats.csv"
+    separator: ","
+  clash_counts:
+    path: "clash_counts.csv"
+    separator: ","
 
 views:
   results:
@@ -68,3 +74,54 @@ views:
           label: "failed"
         failure_rate:
           label: "failure rate"
+
+  clash_stats:
+    dataset: clash_stats
+    desc: |
+      Paired Wilcoxon signed-rank test, raw vs OpenMM-minimized structures
+      (H1: raw > minimized by default). `rank_biserial` is the matched-pairs
+      effect size.
+    render-table:
+      columns:
+        metric:
+          label: "metric"
+        alternative:
+          label: "H1"
+        n_pairs:
+          label: "n units"
+        n_nonzero:
+          label: "n non-zero diffs"
+        median_raw:
+          label: "median raw"
+        median_minimized:
+          label: "median minimized"
+        median_diff:
+          label: "median diff"
+        n_improved:
+          label: "improved"
+        n_worse:
+          label: "worse"
+        statistic:
+          label: "W"
+        p_value:
+          label: "p-value"
+        rank_biserial:
+          label: "rank-biserial"
+
+  clash_counts:
+    dataset: clash_counts
+    desc: |
+      Clash counts per (pair, sample) unit with both a raw and a minimized
+      structure; `metric` is `n_clashes` (all) or `n_clashes_interchain`.
+    render-table:
+      columns:
+        metric:
+          label: "metric"
+        pair:
+          label: "pair"
+        sample:
+          label: "sample"
+        raw:
+          label: "raw"
+        minimized:
+          label: "minimized"

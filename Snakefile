@@ -126,8 +126,9 @@ rule all:
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
         [str(POST / p / "plip" / f"sample_{i}_report" / f"sample_{i}.cxc")
          for p in PAIRS for i in SAMPLE_IDX],
-        str(FOLD_REP / "clash_test.svg"),
+        str(FOLD_REP / "clash_test"),
         str(FOLD_REP / "clash_test_stats.csv"),
+        str(FOLD_REP / "clash_counts.csv"),
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "metric_violins_interactive"),
@@ -621,18 +622,19 @@ rule fig_clash_test:
     input:
         [str(POST / p / "clashes.csv") for p in PAIRS],
     output:
-        svg=report(str(FOLD_REP / "clash_test.svg"),
-                   category="Minimization clashes"),
-        stats=report(str(FOLD_REP / "clash_test_stats.csv"),
-                     category="Minimization clashes"),
+        html=report(directory(str(FOLD_REP / "clash_test")),
+                    category="Minimization clashes", htmlindex="index.html"),
+        stats=str(FOLD_REP / "clash_test_stats.csv"),
+        counts=str(FOLD_REP / "clash_counts.csv"),
     conda:
         "envs/report.yaml"
     params:
-        fmts=FMTS, alt=CL["alternative"],
+        alt=CL["alternative"],
     shell:
         r"""
-        python scripts/plot_clash_test.py --tables {input} --out {output.svg} \
-          --out-stats {output.stats} --formats {params.fmts} --alternative {params.alt}
+        python scripts/plot_clash_test.py --tables {input} --outdir {output.html} \
+          --out-stats {output.stats} --out-counts {output.counts} \
+          --alternative {params.alt}
         """
 
 
@@ -687,6 +689,8 @@ rule datavzrd_folding:
         css=str(REPO / "scripts" / "datavzrd-dark.css"),
         results=str(FOLD_REP / "results_table.csv"),
         failures=str(FOLD_REP / "minimize_failure_rate.csv"),
+        clash_stats=str(FOLD_REP / "clash_test_stats.csv"),
+        clash_counts=str(FOLD_REP / "clash_counts.csv"),
     output:
         report(directory(str(FOLD_REP / "tables")),
                category="Interactive tables", htmlindex="index.html"),
