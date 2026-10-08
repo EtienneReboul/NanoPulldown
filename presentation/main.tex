@@ -142,10 +142,10 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \footnotesize
   \begin{columns}[t]
     \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={1,2,3}]
+      \tableofcontents[sections={1}]
     \end{column}
     \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={4,5,6}]
+      \tableofcontents[sections={2,3}]
     \end{column}
   \end{columns}
 \end{frame}
@@ -285,40 +285,52 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \end{itemize}
 \end{frame}
 
-\subsection{Project Overview}
-\begin{frame}{Motivation}
+\subsection{Project Outline}
+\begin{frame}{Goal}
   \begin{itemize}
-    \item A pulldown / IP-MS experiment returns a \textbf{long list} of
-      candidate interactors -- which of them bind the bait \emph{directly}?
-    \item Worked case: \textbf{BPM6} (AT3G43700, CUL3 substrate adaptor),
-      GFP-IP in \textit{A.\ thaliana} (PXD013906, Chico \textit{et al.}\
-      2020), 1 bait $\times$ $\sim$1\,500 prey candidates
-    \item AlphaPulldown's UniProt-ID-driven bait/prey strategy answers
-      this, but assumes AlphaFold-multimer/AF3, MSAs and a GPU cluster
-    \item[$\Rightarrow$] Can we run the same screen \textbf{on one laptop}?
+    \item Primary goal: Running a pulldown screen with ESMFold2-Fast on a single Apple Silicon Mac Studio
+    \item Secondary technical goals:
+    \begin{itemize}
+      \item Reproducable and scalable pipeline using Snakemake (workflow management system)
+      \item Easy-to-use configuration for adding new bait/prey pairs
+      \item Easy-to-run on a single machine (no cluster, no HPC scheduler)
+      \item Easy-to-read report with all the relevant metrics and figures
+    \end{itemize}
+    \item Test case: BPM6 screen over the PXD013906 prey list and compare ranking against the PNAS Dataset~S1 known / significant interactors \citep{chico2020}\footnote{\bibentry{chico2020}}
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Design choices}
-  \begin{enumerate}
-    \item \textbf{ESMFold2-Fast} (MLX/Metal): no MSA, no templates, no
-      cluster
-    \item \textbf{Protein--protein only}: one seed, 1 diffusion sample per
-      pair, no pose clustering
-    \item \textbf{One command, one report}: a single Snakemake
-      \texttt{rule all} from sequence annotation to the final report
-    \item Adding pairs = a bait list + a prey list; pair specs are
-      \textbf{generated}, not hand-written
-  \end{enumerate}
-\end{frame}
+
 
 % ---------------------------------------------------------------------
-\section{The pipeline}
+\section{Pipeline}
 % ---------------------------------------------------------------------
 \gdef\currentsubsectionname{}
-\sectiondivider{The pipeline}
+\sectiondivider{Pipeline}
 
-\begin{frame}{Two stages, one diagram}
+\subsection{Pipeline overview}
+\begin{frame}{Test case: what the BPM6 pulldown found}
+  \footnotesize
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+      \centering
+      {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=\linewidth]{chico_fig1d.png}}}\\[0.1em]
+      {\tiny\color{muted} Reproduction of Fig.~1D from Dataset~S1 data, CC BY \citep{chico2020}\footnote{\bibentry{chico2020}}}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \begin{itemize}\scriptsize
+        \item \textbf{Experiment}: GFP-BPM6 immuno-precipitation from \textit{A.\ thaliana} seedlings, LC-MS/MS (PXD013906)
+        \item \textbf{Volcano plot}: x = $\log_2$ fold change (BPM6 / control), y = $-\log_{10}$ adjusted $p$ (spectral counts, $n=3$ vs $3$)
+        \item Dashed lines: FC $<0.5$ or $>2$, adjusted $p<0.05$
+        \item \textcolor{substrate}{\textbf{Green}}: BPM paralogs (bait BPM6, BPM1/2/4/5) $\to$ heterodimers
+        \item \textcolor{red}{\textbf{Red}}: MYC2, MYC3, MYC4, JAZ1, NINJA $\to$ candidate substrates
+        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Our benchmark}:  can we find the same top interactants in the \texttt{in silico} screen?}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{}
   \centering
   \begin{tikzpicture}[
       every node/.style={text=fgtext},
@@ -327,71 +339,189 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
       arr/.style={-{Stealth[length=2.5mm]}, thick, draw=accent},
       lbl/.style={font=\tiny, text=muted, align=left}
     ]
-    \node[stage, fill=blue!25!bgdark] (pre)  {\textbf{Stage 1 -- Preprocessing} (local, needs internet)\\
+    \node[stage, fill=blue!25!bgdark] (pre)  {\textbf{Stage 1 : Preprocessing} (local, needs internet)\\
                                         UniProt fetch $\to$ domains (ScanProsite, InterPro) $\to$ disorder + MoRF (AIUPred)};
-    \node[stage, fill=orange!25!bgdark, below=1.05cm of pre] (fold) {\textbf{Stage 2 -- Folding} (Apple Silicon GPU, MLX/Metal)\\
+    \node[stage, fill=orange!25!bgdark, below=1.05cm of pre] (fold) {\textbf{Stage 2 : Folding} (Apple Silicon GPU, MLX/Metal)\\
                                         ESMFold2-Fast $\to$ metadata compression $\to$ OpenMM minimization};
     \node[stage, fill=green!25!bgdark, below=1.05cm of fold] (post) {\textbf{Rescoring \& report} (local)\\
                                         ipSAE / iLIS / Pinc $\to$ PLIP contacts $\to$ \texttt{reports/report.zip}};
-    \draw[arr] (pre) -- (fold) node[midway, right, lbl] {\texttt{annotation.yaml}\\(not blocking)};
-    \draw[arr] (fold) -- (post) node[midway, right, lbl] {\texttt{arrays.h5},\\\texttt{model\_metadata.parquet}};
+    \draw[arr] (pre) -- (fold);
+    \draw[arr] (fold) -- (post);
   \end{tikzpicture}
 
   \vspace{0.5em}
   {\footnotesize\textcolor{substrate}{\textbf{Everything runs on one machine, in one Snakemake call.}}}\par
 \end{frame}
 
-\begin{frame}{Stage 1 - Preprocessing}
+\subsection{Input}
+\begin{frame}{Input: bait and prey lists}
+  \begin{columns}[c]
+    \begin{column}{0.46\textwidth}
+      \centering
+      \begin{tikzpicture}
+        \node[draw=muted, rounded corners, fill=black!35!bgdark, inner sep=8pt,
+              text=fgtext, font=\ttfamily\scriptsize, align=left] {%
+          {\color{muted}\$ head configs/preys.txt}\\[0.3em]
+          A0A1I9LLD2\\ A0A1I9LMI7\\ A0A1I9LNN0\\ A0A1I9LPP1\\
+          A0A1I9LPQ2\\ A0A1I9LPZ1\\ A0A1I9LQ33\\ A0A1I9LR66\\
+          {\color{muted}\dots}
+        };
+      \end{tikzpicture}\\[0.3em]
+      {\tiny\color{muted} \texttt{configs/preys.txt}: one UniProt accession per line}
+    \end{column}
+    \begin{column}{0.52\textwidth}
+      \begin{itemize}\small
+        \item two text files with UniProt accessions:
+        \begin{itemize}
+          \item \texttt{configs/baits.txt} $\to$ one bait per line
+          \item \texttt{configs/preys.txt} $\to$ one prey per line
+        \end{itemize}
+        \item a script generates all the bait $\times$ prey pairs config files (yaml)
+        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{simple input files and one liner to add a new screen}}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\subsection{Preprocessing}
+\begin{frame}{Preprocessing: domains, disorder and binding regions}
+  \begin{columns}[c]
+    \begin{column}{0.60\textwidth}
+      \centering
+      {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=\linewidth]{pipe_domain_bar_B.png}}}\\[0.1em]
+      {\tiny\color{muted} F4HR18 (prey of Q9M548): AIUPred disorder / binding / linker + domain map}
+    \end{column}
+    \begin{column}{0.38\textwidth}
+      \begin{itemize}\scriptsize
+        \item Automatic preprocessing of all unique sequences (baits + preys) : Domain annotation and  IDR / MoRF prediction
+        \item  \textbf{IDR:} intrinsically disordered regions (long, flexible)
+        \item  \textbf{MoRF:} short disordered regions that fold upon binding
+        \item[$\Rightarrow$]  sequence are annotated to characterize the binding regions in interface analysis
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\subsection{Folding}
+\begin{frame}{Folding with ESMFold2-Fast on Apple Silicon}
   \begin{itemize}
-    \item \textbf{Pair expansion}: \texttt{configs/baits.txt} $\times$
-      \texttt{configs/preys.txt} (AlphaPulldown syntax:
-      \texttt{ID}, \texttt{ID:N}, \texttt{ID:start-stop}) $\to$
-      \texttt{configs/<bait>\_\_<prey>.yaml}; pairs over
-      \texttt{esmfold2.max\_tokens} are skipped and listed
-    \item \textbf{Domain annotation}: ScanProsite + InterPro API (fast
-      path by accession; InterProScan v6 MATCH as fallback)
-    \item \textbf{Disorder + MoRF}: AIUPred (docker), one container run per
-      200 sequences
-    \item Annotation runs \textbf{once per unique sequence} (cached) with
-      polite, ramped rate limits on the public APIs
-    \item[$\Rightarrow$] proposed \texttt{domains:} block, curated
-      \textbf{whenever convenient} - it never blocks folding
+    \item Folding with \textbf{ESMFold2-Fast} with lower computational requirements:
+     \begin{itemize}
+       \item 10 loops
+       \item 100 sampling steps
+       \item 1 seed
+       \item 1 diffusion sample
+     \end{itemize}
+    \item \textbf{Memory usage} is the main bottleneck for folding on Apple Silicon (M1/M2/M4)
+    \item force a \textbf{Token limit}: peak memory grows $\sim n^{2.2}$; on a 36~GB
+      M4 Max, 1\,000 tokens $\approx$ 29~GB, 145~s (\texttt{max\_tokens: 1000})
+    \item Metadata compression to reduce disk footprint
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Stage 2 : Folding}
+\subsection{Postprocessing}
+\begin{frame}{Minimization removes the steric clashes}
+  \begin{columns}[c]
+    \begin{column}{0.56\textwidth}
+      \centering
+      {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=\linewidth]{pipe_clash_test.png}}}\\[0.1em]
+      {\tiny\color{muted} Clash count per model, raw vs.\ minimized (n=1\,243)}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}\scriptsize
+        \item Done with \textbf{OpenMM} (\texttt{amber14} + GBn2 implicit solvent;
+          OpenCL with CPU fallback)
+        \item Automatic Quality Control : check for divergence, NaN, or energy increase $\to$ discard the sample
+        \item Clashes drop to $\approx 0$ for nearly all models, inter-chain
+          included (Wilcoxon $p<10^{-190}$)
+        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Prevent false positives induced by steric clashes in the contact analysis}}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Rescoring the interface}
+  \begin{columns}[c]
+    \begin{column}{0.60\textwidth}
+      \centering
+      \includegraphics[width=\linewidth]{pipe_metric_violins.png}\\[0.1em]
+      {\tiny\color{muted} Metric distributions over all pairs, samples and chain pairs}
+    \end{column}
+    \begin{column}{0.38\textwidth}
+      \begin{itemize}\scriptsize
+        \item  implemented SOTA interface metrics: ipSAE, iLIS, Pinc, pair ipTM
+        \item Most pairs sit near 0: only a \textbf{small tail} of preys
+          scores high
+        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Used to rank preys per bait}}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{PLIP contacts, domain-aware}
+  \begin{columns}[c]
+    \begin{column}{0.46\textwidth}
+      \centering
+      {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=\linewidth]{pipe_plip_contacts.png}}}\\[0.1em]
+      {\tiny\color{muted} BPM6 $\times$ BPM5 (top interactor): PLIP domain $\times$ domain contacts}
+    \end{column}
+    \begin{column}{0.52\textwidth}
+      \begin{itemize}\small
+        \item \textbf{PLIP} (docker, \texttt{linux/amd64} under Rosetta):
+          bait $\leftrightarrow$ prey contacts per minimized sample
+        \item Merged into \texttt{plip\_summary.csv} per pair
+        \item Aggregated per \textbf{domain pair}, using the  automatically annotated domains
+        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Here: BPM6 and BPM5 BTB/POZ
+          domains contact each other (6 contacts)}}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{MYCs: enriched in the pulldown, mid-pack in the models}
+  \begin{columns}[T]
+    \begin{column}{0.54\textwidth}
+      \centering
+      {\setlength{\fboxsep}{2pt}\colorbox{white}{\includegraphics[width=\linewidth]{myc_rank_vs_pulldown.png}}}\\[0.1em]
+      {\tiny\color{muted} 1\,243 BPM6 $\times$ prey pairs; enrichment from \citep{chico2020}}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{itemize}\scriptsize
+        \item \textbf{Pulldown}: MYC2/3/4 strongly enriched ($\log_2$FC $\approx 6$)
+        \item \textbf{Models}: mean rank MYC3 351, MYC2 474, MYC4 606; none in the
+          top 50 on any metric; ipSAE = iLIS = 0 for all three
+        \item PLIP contacts mid-pack (26--37, median 28); top counts: BPM paralogs
+        \item \textcolor{substrate}{\textbf{Possible explanation, untested}}:
+          BPM6 binds MYC2/3 only \emph{very weakly} in yeast two-hybrid
+          \citep{chico2020}; the co-IP may be bridged by other BPMs
+        \item \textbf{Caveats}: Y2H is limited by MYC/BPM toxicity in yeast;
+          MBP pulldown still detects BPM6--MYC. Only BPM6 run as bait
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\subsection{Reporting}
+\begin{frame}{One report, zipped}
+  \centering
   \begin{itemize}
-    \item \textbf{ESMFold2-Fast} (\texttt{biohub/ESMFold2-Fast}), MLX on
-      Metal: 10 loops, 100 sampling steps, 1 seed, 1 diffusion sample
-    \item Memory-bound, not compute-bound: $\sim$25~GB model load in
-      unified memory $\Rightarrow$ \texttt{--resources gpu=1} is
-      \textbf{mandatory}
-    \item \textbf{Batched folding}: 50 pairs per model load, so the model
-      is loaded once per chunk, not once per pair
-    \item \textbf{Token limit}: peak memory grows $\sim n^{2.2}$; measured
-      on a 36~GB M4 Max, 1\,000 tokens $\approx$ 29~GB, 145~s
-      (\texttt{max\_tokens: 1000})
-    \item Metadata compression: pair ipTM / PAE $\to$ \texttt{arrays.h5} +
-      \texttt{model\_metadata.parquet}
+    \item  All the plots shown in the previous slides are generated automatically and saved in a single \texttt{report.zip} file
+    \item Everything is packaged in a single \textbf{Zip} that is unpacked to html + figures + tables for easy browsing 
+    \item Contents:
+    \begin{itemize}
+      \item domain / disorder / MoRF summary plots
+      \item results table across pairs
+      \item contact heatmaps
+      \item minimization energy plots 
+      \item Statics about the runtime
+    \end{itemize}
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Minimization, rescoring and contacts}
-  \begin{enumerate}
-    \item \textbf{OpenMM minimization} (\texttt{amber14} + GBn2 implicit
-      solvent; OpenCL with CPU fallback; divergence detection and failure
-      table)
-    \item \textbf{Rescoring}: ipSAE, iLIS, Pinc (PAE cutoff 12~\AA, C$\beta$
-      contact cutoff 8~\AA) next to ESMFold2's own pair ipTM
-    \item \textbf{PLIP} (docker, \texttt{linux/amd64} under Rosetta):
-      bait $\leftrightarrow$ prey contacts per minimized sample, merged
-      into \texttt{plip\_summary.csv} per pair
-    \item PAE-based \textbf{domain $\times$ domain confidence heatmap} per
-      sample
-  \end{enumerate}
-\end{frame}
+\begin{frame}[fragile]{Running it}
 
-\begin{frame}{Running it}
+  Running the pipeline is a single Snakemake command, after creating the conda env and generating the pair configs:
+  \vspace{0.4em}
   \small
   {\ttfamily\scriptsize
   \begin{flushleft}
@@ -402,113 +532,43 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \end{flushleft}
   }
   \vspace{0.4em}
-  \begin{itemize}
-    \item \texttt{gpu=1}: caps \texttt{run\_esmfold2} at one model load --
-      nothing else guards against concurrent loads (OOM)
-    \item \texttt{docker\_heavy=N}: keeps minimization / PLIP containers
-      from running during a model load, then lets $N$ run in parallel
-    \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Output: one
+  $\Rightarrow$ \textcolor{substrate}{\textbf{Output: one
       \texttt{reports/report.zip}}}
-  \end{itemize}
+
 \end{frame}
 
 % ---------------------------------------------------------------------
-\section{Config and reuse}
+\section{Conclusion \& perspective}
 % ---------------------------------------------------------------------
 \gdef\currentsubsectionname{}
-\sectiondivider{Config and reuse}
+\sectiondivider{Conclusion \& perspective}
 
-\begin{frame}{Adding a new screen}
-  \small Edit \textbf{only}: the bait/prey lists, then one line per pair in
-  \texttt{config.yaml}'s \texttt{pairs:}.
-  \textcolor{substrate}{\textbf{No script edits.}}
-
-  \vspace{0.6em}
-  \begin{center}
-  \footnotesize
-  \begin{tabular}{@{}ll@{}}
-    \toprule
-    file & role \\
-    \midrule
-    \texttt{config.yaml} & shared defaults, both stages \\
-    \texttt{config.local.yaml} & per-machine overrides (gitignored): InterPro e-mail, \texttt{max\_tokens} \\
-    \texttt{configs/baits.txt}, \texttt{preys.txt} & one protein spec per line \\
-    \texttt{configs/<bait>\_\_<prey>.yaml} & chain spec + curated domains (generated) \\
-    \texttt{envs/} & one conda env per rule group (\texttt{--use-conda}) \\
-    \bottomrule
-  \end{tabular}
-  \end{center}
-\end{frame}
-
-\begin{frame}{Reused from \texttt{ab\_initio\_pipeline}}
+\subsection{Conclusion}
+\begin{frame}{Conclusion}
   \begin{itemize}
-    \item Vendored \textbf{ipSAE} and \textbf{Pinc} (\texttt{tools/}),
-      unchanged
-    \item Same dark \texttt{custom.css} report theme and \texttt{datavzrd}
-      tables
-    \item Same annotation logic (domains, disorder), adapted:
-      AIUPred replaces IUPred3/ANCHOR2 \textbf{and} MoRFchibi2 in one step
-    \item \textbf{Replaced}: no HPC scheduler, no ABCfold backends, no MSA,
-      no ChimeraX / antechamber (OpenMM instead), no pose clustering
+    \item A \textbf{local, MSA-free pulldown pipeline}: Snakemake, one
+      machine, no cluster, no scheduler
+    \item Preprocessing $\to$ ESMFold2-Fast $\to$ OpenMM $\to$ rescoring
+      $\to$ PLIP, summarized in a single zipped report
+    \item 1\,243 BPM6 $\times$ prey pairs folded and minimized end to end
+    \item Adding a screen = editing the bait / prey lists
+    \item \textcolor{substrate}{\textbf{Ranking quality against the PNAS
+      interactors is still to be benchmarked}}
   \end{itemize}
 \end{frame}
 
-% ---------------------------------------------------------------------
-\section{Report}
-% ---------------------------------------------------------------------
-\gdef\currentsubsectionname{}
-\sectiondivider{Report}
-
-\begin{frame}{One report, zipped}
+\subsection{Perspective}
+\begin{frame}{Perspective}
   \begin{itemize}
-    \item Snakemake report, \textbf{SVG/PDF figures only}, dark theme
-      (\texttt{report/custom.css})
-    \item \textbf{Zip, not bare \texttt{.html}}: browsers block the
-      \texttt{data:} URLs needed to embed interactive \texttt{datavzrd}
-      tables $\to$ unzip, open \texttt{report.html}
-    \item Contents:
-      \begin{itemize}
-        \item results table across all pairs (ipSAE / iLIS / Pinc / pair ipTM)
-        \item PLIP contact heatmaps, domain-aware
-        \item PAE domain $\times$ domain confidence heatmaps
-        \item minimization energy plots + failure table
-      \end{itemize}
-    \item Stage-1 figures (domain map, disorder / binding) are kept as
-      plain SVGs under \texttt{data/annotation/<pair>/}
-  \end{itemize}
-\end{frame}
-
-% ---------------------------------------------------------------------
-\section{Caveats and next steps}
-% ---------------------------------------------------------------------
-\gdef\currentsubsectionname{}
-\sectiondivider{Caveats and next steps}
-
-\begin{frame}{Assumptions still to confirm}
-  \begin{itemize}
-    \item \textbf{MLX path}: assumed to fill \texttt{result.pae} /
-      \texttt{pair\_chains\_iptm} like the Torch/CUDA path to check
-      against a live run
-    \item \textbf{AIUPred CLI} (\texttt{-i/-t/-o}) and the \textbf{InterProScan
-      v6 MATCH} endpoint: to confirm against current docs
-    \item \textbf{OpenMM OpenCL} on Metal: CPU fallback exists, but
-      initialization is untested on other Macs
-    \item \textbf{PLIP on Apple Silicon}: amd64 emulation is slow and
-      needs Rosetta in Docker Desktop
-    \item \textbf{Memory}: 3 concurrent PLIP containers once caused a
-      swap/OOM crash $\Rightarrow$ start with \texttt{docker\_heavy=2}
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{Roadmap}
-  \begin{itemize}
-    \item Complete the BPM6 screen over the PXD013906 prey list and compare
-      ranking against the PNAS Dataset~S1 known / significant interactors
-    \item Benchmark ESMFold2-Fast ranking metrics (ipSAE, iLIS, pair ipTM)
-      on known positives vs.\ random preys
+    \item Compare the BPM6 ranking with PNAS Dataset~S1 known /
+      significant interactors; benchmark ipSAE, iLIS, pair ipTM on known
+      positives vs.\ random preys
     \item Tune \texttt{max\_tokens} and \texttt{pairs\_per\_load} per machine
       (\texttt{notebooks/esmfold2\_memory\_model.ipynb})
     \item Optional: re-fold top hits with AF3 / ABCfold for confirmation
+    \item To confirm: MLX \texttt{pae} / \texttt{pair\_chains\_iptm} outputs,
+      OpenMM OpenCL on other Macs, PLIP under Rosetta (start with
+      \texttt{docker\_heavy=2}: 3 concurrent containers once caused OOM)
   \end{itemize}
 \end{frame}
 
