@@ -441,24 +441,14 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 \end{frame}
 
 \begin{frame}{Rescoring the interface}
-  \begin{columns}[c]
-    \begin{column}{0.60\textwidth}
-      \centering
-      \includegraphics[width=\linewidth]{pipe_metric_violins.png}\\[0.1em]
-      {\tiny\color{muted} Metric distributions over all pairs, samples and chain pairs}
-    \end{column}
-    \begin{column}{0.38\textwidth}
-      \begin{itemize}\scriptsize
-        \item  implemented SOTA interface metrics: ipSAE, iLIS, Pinc, pair ipTM
-        \item Most pairs sit near 0: only a \textbf{small tail} of preys
-          scores high
-        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Used to rank preys per bait}}
-      \end{itemize}
-    \end{column}
-  \end{columns}
+  \begin{center}
+    \includegraphics[height=0.62\textheight,width=\linewidth,keepaspectratio]{pipe_metric_violins.png}\\[0.1em]
+    {\tiny\color{muted} Distributions of the implemented SOTA interface metrics (ipSAE, iLIS, Pinc, pair ipTM, \dots) over all pairs, samples and chain pairs}\\[0.6em]
+    {\small $\Rightarrow$ \textcolor{substrate}{\textbf{Used to rank preys per bait}}}
+  \end{center}
 \end{frame}
 
-\begin{frame}{PLIP contacts, domain-aware}
+\begin{frame}{Characterizing the interface with PLIP}
   \begin{columns}[c]
     \begin{column}{0.46\textwidth}
       \centering
@@ -467,18 +457,15 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
     \end{column}
     \begin{column}{0.52\textwidth}
       \begin{itemize}\small
-        \item \textbf{PLIP} (docker, \texttt{linux/amd64} under Rosetta):
-          bait $\leftrightarrow$ prey contacts per minimized sample
-        \item Merged into \texttt{plip\_summary.csv} per pair
-        \item Aggregated per \textbf{domain pair}, using the  automatically annotated domains
-        \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Here: BPM6 and BPM5 BTB/POZ
-          domains contact each other (6 contacts)}}
+        \item \textbf{PLIP} : Protein-Ligand Interaction Profiler, detects non-covalent contacts in protein-protein interfaces
+        \item Aggregated per \textbf{domain pair}, using the  automatically annotated domains from the preprocessing stage
+        \item \textbf{Contact types}: hydrogen bonds, hydrophobic contacts, salt bridges
       \end{itemize}
     \end{column}
   \end{columns}
 \end{frame}
 
-\begin{frame}{MYCs: enriched in the pulldown, mid-pack in the models}
+\begin{frame}{In silico pulldown results vs. BPM6 pulldown}
   \begin{columns}[T]
     \begin{column}{0.54\textwidth}
       \centering
@@ -501,7 +488,7 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \end{columns}
 \end{frame}
 
-\subsection{Reporting}
+
 \begin{frame}{One report, zipped}
   \centering
   \begin{itemize}
@@ -546,30 +533,72 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 \subsection{Conclusion}
 \begin{frame}{Conclusion}
   \begin{itemize}
-    \item A \textbf{local, MSA-free pulldown pipeline}: Snakemake, one
-      machine, no cluster, no scheduler
-    \item Preprocessing $\to$ ESMFold2-Fast $\to$ OpenMM $\to$ rescoring
+    \item A \textbf{local, MSA-free pulldown pipeline}: run on a single Apple Silicon Mac Studio, no cluster required
+    \item A \textbf{complete workflow}: Preprocessing $\to$ ESMFold2-Fast $\to$ OpenMM $\to$ rescoring
       $\to$ PLIP, summarized in a single zipped report
-    \item 1\,243 BPM6 $\times$ prey pairs folded and minimized end to end
-    \item Adding a screen = editing the bait / prey lists
-    \item \textcolor{substrate}{\textbf{Ranking quality against the PNAS
-      interactors is still to be benchmarked}}
+    \item 1\,243 BPM6 $\times$ prey pairs folded and minimized end to end in $\sim$ 2.5 days on a M4 Max (36~GB) with 4 CPU cores + 1 GPU
+    \item Adding a screen = editing the bait / prey lists + 2 or 3 commands
   \end{itemize}
 \end{frame}
 
 \subsection{Perspective}
 \begin{frame}{Perspective}
   \begin{itemize}
-    \item Compare the BPM6 ranking with PNAS Dataset~S1 known /
-      significant interactors; benchmark ipSAE, iLIS, pair ipTM on known
-      positives vs.\ random preys
-    \item Tune \texttt{max\_tokens} and \texttt{pairs\_per\_load} per machine
-      (\texttt{notebooks/esmfold2\_memory\_model.ipynb})
-    \item Optional: re-fold top hits with AF3 / ABCfold for confirmation
-    \item To confirm: MLX \texttt{pae} / \texttt{pair\_chains\_iptm} outputs,
-      OpenMM OpenCL on other Macs, PLIP under Rosetta (start with
-      \texttt{docker\_heavy=2}: 3 concurrent containers once caused OOM)
+    \item Confirm with different bait / prey pairs, and with other known interactors
+    \item  An experimental validation of novel interactors is needed to confirm the predictions
+    \item To expand the pipeline capabilities, we need better hardware (more GPU memory, more CPU cores) to run larger screens and longer sequences
   \end{itemize}
+\end{frame}
+
+\gdef\currentsubsectionname{}
+\begin{frame}{Thank you for your attention}
+  \tiny
+  \begin{columns}[T]
+    \begin{column}{0.27\textwidth}
+      \centering
+      \includegraphics[width=\linewidth]{team_dinner.jpg}
+    \end{column}
+    \begin{column}{0.28\textwidth}
+      {\scriptsize\color{accent}\textbf{Team members}}\\[0.4em]
+      Patrick ACHARD\\
+      Jean-Michel DAVIÈRE\\
+      Lali ACHARD\\
+      Olivia LEDIEU\\
+      Hans RIOS\\
+      Antoine DAVID\\
+      Étienne REBOUL\\[1.2em]
+      {\scriptsize\color{accent}\textbf{IBMP bioinformatic facility}}\\[0.4em]
+      Valérie COGNAT\\
+      David PFIEGER\\
+      Stéfanie GRAINDORGE
+    \end{column}
+    \begin{column}{0.41\textwidth}
+      {\scriptsize\color{accent}\textbf{Collaborators}}\\[0.4em]
+      {\color{muted}Team: Rôle de l'ubiquitine dans la régulation cellulaire}\\[0.3em]
+      \begin{minipage}[t]{0.5\linewidth}
+        Filippo BATTAGLIA\\
+        Cyriaque CRETON\\
+        Marie-Claire CRIQUI\\
+        Pascal GENSCHIK\\
+        Esther LECHNER\\
+        Sandra NOIR
+      \end{minipage}\hfill
+      \begin{minipage}[t]{0.5\linewidth}
+        Thomas POTUSCHAK\\
+        Marlène SCHIAFFINI\\
+        Wen Hui SHEN\\
+        Vishal VARSHNEY\\
+        Agathe VERCELLETTO
+      \end{minipage}
+    \end{column}
+  \end{columns}
+  \vspace{1.2em}
+  \begin{center}
+    \includegraphics[height=0.7cm]{cnrs-white.png}\hspace{1.2em}%
+    {\setlength{\fboxsep}{3pt}\colorbox{white}{\includegraphics[height=0.5cm]{ibmp-color.png}}}\hspace{1.2em}%
+    {\setlength{\fboxsep}{3pt}\colorbox{white}{\includegraphics[height=0.5cm]{unistra.png}}}\hspace{1.2em}%
+    \includegraphics[height=0.85cm]{ifb-white.png}
+  \end{center}
 \end{frame}
 
 \begin{frame}
