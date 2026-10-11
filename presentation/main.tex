@@ -14,6 +14,7 @@
 % centered (horizontally + vertically) multi-line table cell, no array.sty needed
 \newcommand{\cc}[1]{\begin{tabular}[c]{@{}c@{}}#1\end{tabular}}
 \usepackage{graphicx}
+\usepackage{multicol}
 \setbeamerfont{footnote}{size=\tiny}
 \setbeamercolor{footnote}{fg=muted}
 % author-year style footnotes: no number, muted tiny text
@@ -140,14 +141,9 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 
 \begin{frame}{Outline}
   \footnotesize
-  \begin{columns}[t]
-    \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={1}]
-    \end{column}
-    \begin{column}{0.48\textwidth}
-      \tableofcontents[sections={2,3}]
-    \end{column}
-  \end{columns}
+  \begin{multicols}{2}
+    \tableofcontents
+  \end{multicols}
 \end{frame}
 }
 
@@ -320,8 +316,7 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
     \begin{column}{0.44\textwidth}
       \begin{itemize}\scriptsize
         \item \textbf{Experiment}: GFP-BPM6 immuno-precipitation from \textit{A.\ thaliana} seedlings, LC-MS/MS (PXD013906)
-        \item \textbf{Volcano plot}: x = $\log_2$ fold change (BPM6 / control), y = $-\log_{10}$ adjusted $p$ (spectral counts, $n=3$ vs $3$)
-        \item Dashed lines: FC $<0.5$ or $>2$, adjusted $p<0.05$
+        \item \textbf{Tested}: 1243 of the 1642 proteins in Dataset~S1 paired with BPM6 (pairs $>1000$ residues excluded)
         \item \textcolor{substrate}{\textbf{Green}}: BPM paralogs (bait BPM6, BPM1/2/4/5) $\to$ heterodimers
         \item \textcolor{red}{\textbf{Red}}: MYC2, MYC3, MYC4, JAZ1, NINJA $\to$ candidate substrates
         \item[$\Rightarrow$] \textcolor{substrate}{\textbf{Our benchmark}:  can we find the same top interactants in the \texttt{in silico} screen?}
@@ -366,16 +361,15 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
           A0A1I9LPQ2\\ A0A1I9LPZ1\\ A0A1I9LQ33\\ A0A1I9LR66\\
           {\color{muted}\dots}
         };
-      \end{tikzpicture}\\[0.3em]
-      {\tiny\color{muted} \texttt{configs/preys.txt}: one UniProt accession per line}
+      \end{tikzpicture}
     \end{column}
     \begin{column}{0.52\textwidth}
       \begin{itemize}\small
-        \item two text files with UniProt accessions:
-        \begin{itemize}
-          \item \texttt{configs/baits.txt} $\to$ one bait per line
-          \item \texttt{configs/preys.txt} $\to$ one prey per line
-        \end{itemize}
+        \item two text files of UniProt accessions: \texttt{baits.txt}, \texttt{preys.txt}
+        \item prey list from an \textbf{IP-MS experiment} or from a \textbf{UniProt filter}
+          \begin{itemize}\footnotesize
+            \item under investigation with Filippo BATTAGLIA: DRM2 vs.\ nuclear E3 ligases + F-box proteins
+          \end{itemize}
         \item a script generates all the bait $\times$ prey pairs config files (yaml)
         \item[$\Rightarrow$] \textcolor{substrate}{\textbf{simple input files and one liner to add a new screen}}
       \end{itemize}
@@ -489,21 +483,7 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
 \end{frame}
 
 
-\begin{frame}{One report, zipped}
-  \centering
-  \begin{itemize}
-    \item  All the plots shown in the previous slides are generated automatically and saved in a single \texttt{report.zip} file
-    \item Everything is packaged in a single \textbf{Zip} that is unpacked to html + figures + tables for easy browsing 
-    \item Contents:
-    \begin{itemize}
-      \item domain / disorder / MoRF summary plots
-      \item results table across pairs
-      \item contact heatmaps
-      \item minimization energy plots 
-      \item Statics about the runtime
-    \end{itemize}
-  \end{itemize}
-\end{frame}
+\sectiondivider{Interactive demo}
 
 \begin{frame}[fragile]{Running it}
 
@@ -596,7 +576,7 @@ Institut de Biologie Moléculaire des Plantes (IBMP), Strasbourg}
   \begin{center}
     \includegraphics[height=0.7cm]{cnrs-white.png}\hspace{1.2em}%
     {\setlength{\fboxsep}{3pt}\colorbox{white}{\includegraphics[height=0.5cm]{ibmp-color.png}}}\hspace{1.2em}%
-    {\setlength{\fboxsep}{3pt}\colorbox{white}{\includegraphics[height=0.5cm]{unistra.png}}}\hspace{1.2em}%
+    \includegraphics[height=0.7cm]{anr-white.png}\hspace{1.2em}%
     \includegraphics[height=0.85cm]{ifb-white.png}
   \end{center}
 \end{frame}
