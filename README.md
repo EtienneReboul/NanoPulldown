@@ -81,6 +81,43 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 # affects domain-map figures, never blocks a run
 ```
 
+## Fragment mode (domain x domain, as in yeast two-hybrid)
+
+Set `fragments.enabled: true` in a run overlay (see `config_drm2_fragments.yaml`)
+and every bait and prey is cut into its annotated domains before pairing:
+the screen folds bait domain x prey domain instead of full length x full
+length, the way two-hybrid constructs are made. Proteins too long to fold
+whole under `esmfold2.max_tokens` become screenable by domain (DRM2's
+interactors AGO4/AGO6/TPR2/CYP65 are skipped full length, folded as fragments).
+
+```bash
+# preview the cuts (nothing written)
+NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/fragment_domains.py Q9M548 Q9ZVD5
+#   Q9ZVD5:57-458   402 aa  interpro  Protein argonaute, N-terminal + Argonaute, linker 1 domain + PAZ domain
+#   Q9ZVD5:462-924  463 aa  interpro  Argonaute-like, PIWI domain + Piwi domain
+NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/expand_pairs.py   # or --fragments
+NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=2
+```
+
+- Domains are the ones the domain-map figures show (InterPro representative
+  set, `scripts/merge_annotation.py`). Domains close together are merged
+  (`merge_gap`), short blocks dropped (`min_length`), and `padding` residues
+  added each side. `configs/fragment_domains.yaml` replaces them by hand per
+  accession, e.g. with the constructs of a published screen.
+- `sides:` picks which side is cut. `include_full_length:` adds the whole
+  protein as a control. `without_domains:` keeps (`full_length`) or drops
+  (`skip`) proteins with no domain. Specs that already give regions
+  (`ID:start-stop`) are kept as given.
+- Each fragment is an ordinary region pair (`Q9M548x285-626__Q9ZVD5x462-924`),
+  so the rest of the pipeline is unchanged. The fragment's domain name is
+  stored in `configs/pairs.parquet`, shown in figure labels, and added as
+  `bait_fragment` / `prey_fragment` columns in the results table. Every
+  fragment is listed in `configs/fragments_<run>.parquet`.
+- Fragment chains are numbered from 1 in structures and figures, not in
+  full-length numbering: add the fragment start minus 1 to map back.
+  Their domain annotation is the full-length entry's, projected onto the
+  fragment. No per-fragment InterProScan submission is made.
+
 ## Layout
 
 | Path                                         | What                                                                                             |
@@ -93,6 +130,8 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 | `configs/inputs_<run>.parquet`             | which input source picked each protein, plus IP-MS columns (generated)                           |
 | `configs/protein_names.yaml`               | hand overrides of display names, by accession (tracked)                                          |
 | `configs/curated_domains.yaml`             | hand-curated domain maps, by pair (tracked)                                                      |
+| `configs/fragment_domains.yaml`            | fragment mode: hand-picked domain fragments, by accession (tracked)                              |
+| `configs/fragments_<run>.parquet`          | fragment mode: every bait/prey fragment a run pairs (generated)                                  |
 | `envs/`                                    | one conda env per rule group, built by`--use-conda`                                            |
 | `tools/`                                   | vendored:`ipsae`, `pinc` (both from ab_initio_pipeline, unchanged)                           |
 | `scripts/`                                 | see each script's own docstring for what it reuses/adapts/replaces from ab_initio_pipeline       |

@@ -1661,6 +1661,28 @@ annotate:
   consensus:
     disorder_cutoff: 0.5
 
+# ── Stage 1a: fragment mode (scripts/fragment_domains.py) ──────────────────
+# Cut baits and preys into their annotated domains before pairing, and fold
+# bait domain x prey domain instead of full length x full length -- the way
+# yeast two-hybrid constructs are made. Each fragment is an ordinary region
+# spec (Q9M548:285-626), so everything downstream runs unchanged; proteins too
+# long for esmfold2.max_tokens at full length can be screened by domain.
+# Domains are the ones the reports show (InterPro representative set,
+# scripts/merge_annotation.py); configs/fragment_domains.yaml overrides them
+# per accession. Preview: python scripts/fragment_domains.py <ACC> [<ACC> ...]
+# Turn on in a run overlay (see config_drm2_fragments.yaml), then rerun
+# scripts/expand_pairs.py.
+fragments:
+  enabled: false
+  sides: [bait, prey]            # which side(s) get cut; the other stays full length
+  merge_gap: 20                  # domains at most this many residues apart -> one fragment
+                                 # (tandem repeats, a domain split across two signatures)
+  min_length: 30                 # drop merged domain blocks shorter than this (before padding)
+  padding: 10                    # residues added on each side of a block (clipped to the protein)
+  without_domains: full_length   # full_length: keep a protein with no domain whole | skip: drop it
+  include_full_length: false     # also pair each fragmented protein whole (full-length control)
+  overrides: configs/fragment_domains.yaml   # {accession: [{name, start, end}]}, hand-curated
+
 # ── Stage 2a: ESMFold2-Fast folding ─────────────────────────────────────────
 esmfold2:
   checkpoint: "biohub/ESMFold2-Fast"

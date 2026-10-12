@@ -18,13 +18,23 @@ Every column is documented in the file's own schema metadata (Data Wrangler,
 | `chains`                        | `list<struct<id, name, role, sequence>>`   | ESMFold2 input order; ids A, B, C... bait copies then prey    |
 | `bait_chains` / `prey_chains`   | `list<string>`                             | chain ids of each side                                        |
 | `n_tokens`                      | `int32`                                    | total residues ESMFold2 folds (vs `esmfold2.max_tokens`)      |
+| `bait_fragment` / `prey_fragment` | `string`, nullable                       | fragment mode: the region's domain name(s); null otherwise    |
+
+Schema `pairs/2` adds the two `*_fragment` columns. Tables written as
+`pairs/1` load with them null. Fragment names are display only: they are left
+out of the spec digest, so naming a fragment never re-folds a pair. In fragment
+mode, `scripts/expand_pairs.py` also writes `configs/fragments_<run>.parquet`,
+with one row per fragment: accession, role, spec, fragment, start/end in
+full-length numbering, length, source (interpro | override | full_length |
+as_given), and the merged domain names. Hand-picked fragments go in
+`configs/fragment_domains.yaml` (`{accession: [{name, start, end}]}`).
 
 Protein-protein only: no RNA/DNA/ligand chains.
 
 Scripts never read the table directly: `scripts/lib_pipeline.load_pair(pair)`
-returns the spec as a dict (`name`, `bait`/`prey` `{uniprot, copies, regions}`,
-`sequences` = the chains, `bait_chains`, `prey_chains`, `annotation_reviewed`,
-`domains`), with the curated domains below merged in.
+returns the spec as a dict (`name`, `bait`/`prey` `{uniprot, copies, regions,
+fragment}`, `sequences` = the chains, `bait_chains`, `prey_chains`,
+`annotation_reviewed`, `domains`), with the curated domains below merged in.
 
 ## Curated domains — `configs/curated_domains.yaml` (hand-edited, tracked)
 

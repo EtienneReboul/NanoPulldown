@@ -82,6 +82,8 @@ PAIRS_COLUMNS = {
     "prey_uniprot": "Prey UniProt accession",
     "prey_copies": "Number of prey copies (chains)",
     "prey_regions": "Prey residue regions [[start, stop], ...] (1-based, inclusive); null = full length",
+    "bait_fragment": "Fragment-mode bait domain name (scripts/fragment_domains.py); null = not a domain fragment",
+    "prey_fragment": "Fragment-mode prey domain name (scripts/fragment_domains.py); null = not a domain fragment",
     "chains": "Chains in ESMFold2 input order: {id, name, role (bait|prey), sequence}",
     "bait_chains": "Chain ids of the bait copies",
     "prey_chains": "Chain ids of the prey copies",
@@ -99,11 +101,11 @@ def _pairs_schema():
              "bait_regions": regions, "prey_uniprot": pa.string(), "prey_copies": pa.int32(),
              "prey_regions": regions, "chains": pa.list_(chain),
              "bait_chains": pa.list_(pa.string()), "prey_chains": pa.list_(pa.string()),
-             "n_tokens": pa.int32()}
+             "n_tokens": pa.int32(), "bait_fragment": pa.string(), "prey_fragment": pa.string()}
     return pa.schema([pa.field(k, t, metadata={b"description": PAIRS_COLUMNS[k].encode()})
                       for k, t in types.items()],
                      metadata={b"description": PAIRS_TABLE_DESCRIPTION.encode(),
-                               b"schema": b"pairs/1"})
+                               b"schema": b"pairs/2"})
 
 
 def _regions(r):
@@ -122,6 +124,8 @@ def spec_to_row(spec: dict) -> dict:
     row["bait_chains"] = list(spec.get("bait_chains", []))
     row["prey_chains"] = list(spec.get("prey_chains", []))
     row["n_tokens"] = pair_tokens(spec)
+    for role in ("bait", "prey"):
+        row[f"{role}_fragment"] = (spec.get(role) or {}).get("fragment")
     return row
 
 
@@ -129,7 +133,8 @@ def _row_to_spec(row: dict) -> dict:
     spec = {"name": row["pair"]}
     for role in ("bait", "prey"):
         spec[role] = {"uniprot": row[f"{role}_uniprot"], "copies": row[f"{role}_copies"],
-                      "regions": _regions(row[f"{role}_regions"])}
+                      "regions": _regions(row[f"{role}_regions"]),
+                      "fragment": row.get(f"{role}_fragment")}
     spec["sequences"] = [dict(c) for c in row["chains"]]
     spec["bait_chains"] = list(row["bait_chains"])
     spec["prey_chains"] = list(row["prey_chains"])
@@ -196,8 +201,8 @@ def spec_digest(spec: dict, part: str = "spec") -> str:
     sequences, roles), part="curation" = annotation_reviewed + domains."""
     if part == "curation":
         d = {"r": spec.get("annotation_reviewed", False), "d": spec.get("domains") or {}}
-    else:
-        d = spec_to_row(spec)
+    else:   # fragment names are display only (label_digest), and pairs/1 rows had none
+        d = {k: v for k, v in spec_to_row(spec).items() if not k.endswith("_fragment")}
     return hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]
 
 
@@ -354,7 +359,13 @@ def protein_name(acc: str, proteins: dict, kind: str = "short") -> str:
     return (r.get("long_name") or short) if kind == "long" else short
 
 
+def _short_fragment(name: str, width: int = 32) -> str:
+    return name if len(name) <= width else name[:width - 1].rstrip() + "…"
+
+
 def _adorn(name: str, ent: dict) -> str:
+    if ent.get("fragment"):
+        name += f" [{_short_fragment(ent['fragment'])}]"
     regions = ent.get("regions")
     if regions:
         name += " (" + ", ".join(f"{a}-{b}" for a, b in regions) + ")"
@@ -401,9 +412,13 @@ def identity_columns(spec: dict, proteins: dict) -> dict:
     """Name columns a report table puts next to `pair`, in display order."""
     lb = pair_labels(spec, proteins)
     prey = proteins.get(lb["prey_uniprot"]) or {}
-    return {"bait": lb["bait"], "prey": lb["prey"], "prey_name": lb["prey_long"],
-            "prey_locus": prey.get("locus"), "bait_uniprot": lb["bait_uniprot"],
-            "prey_uniprot": lb["prey_uniprot"]}
+    out = {"bait": lb["bait"], "prey": lb["prey"], "prey_name": lb["prey_long"],
+           "prey_locus": prey.get("locus"), "bait_uniprot": lb["bait_uniprot"],
+           "prey_uniprot": lb["prey_uniprot"]}
+    for role in ("bait", "prey"):       # fragment mode only, so other runs' tables keep their columns
+        if (spec.get(role) or {}).get("fragment"):
+            out[f"{role}_fragment"] = spec[role]["fragment"]
+    return out
 
 
 def label_digest(spec: dict, proteins: dict) -> str:

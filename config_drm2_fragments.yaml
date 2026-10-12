@@ -1,0 +1,34 @@
+# Run overlay: fragment mode of config_drm2_ppi.yaml -- bait DRM2 (Q9M548)
+# x its known PPI-database interactors, both cut into their annotated domains
+# (config.yaml `fragments:`, scripts/fragment_domains.py), so pairs are
+# domain x domain as in a yeast two-hybrid screen. The interactors too long
+# to fold whole in drm2_ppi (AGO4, AGO6, TPR2, CYP65) are screened by domain.
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/fragment_domains.py Q9M548   # preview
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+
+run_name: "drm2_fragments"
+
+esmfold2:
+  max_tokens: 1200
+
+fragments:
+  enabled: true
+
+dirs:
+  annotation:  "data/annotation_drm2_fragments"
+  postproc:    "results_drm2_fragments"
+  reports:     "reports_drm2_fragments"
+  logs:        "logs_drm2_fragments"
+
+inputs:
+  baits:
+    - accessions: [Q9M548]
+  preys:
+    - interactors:
+        name: drm2_ppi          # same snapshot as config_drm2_ppi.yaml (data/interactors/drm2_ppi.tsv)
+        min_databases: 1
+
+pairs_file: configs/pairs_drm2_fragments.txt

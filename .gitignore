@@ -15,9 +15,11 @@ configs/pairs.parquet
 # expand_pairs.py output); hand name overrides (protein_names.yaml) are tracked.
 configs/proteins.parquet
 configs/inputs_*.parquet
+configs/fragments_*.parquet
 configs/*.yaml
 !configs/curated_domains.yaml
 !configs/protein_names.yaml
+!configs/fragment_domains.yaml
 # Per-run output dirs from run overlays (config_<run>.yaml sets dirs: to
 # results_<run>/, reports_<run>/, logs_<run>/)
 results_*/

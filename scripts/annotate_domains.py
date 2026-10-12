@@ -30,6 +30,14 @@ domains_v2/<md5>.json) holds {"version": 2, "hits": [...], "features": {...}}:
             InterPro's extra features (MobiDB-lite, COILS, SignalP/Phobius,
             TMbed/Phobius) -- the tracks InterPro's protein viewer shows
 
+Region chains (`ID:start-stop` specs, and every fragment-mode chain -- see
+scripts/fragment_domains.py) are not looked up on their own: InterPro has no
+precomputed matches for a fragment, so they would each fall back to an
+InterProScan submission. They get the FULL-LENGTH entry's cached record
+instead, projected onto fragment numbering (project_record): hits clipped to
+the regions and shifted, a hit straddling a fragment edge kept as the part
+inside it.
+
 TSV output columns:
   chain  source  db  accession  name  start  end  score  description  type  ipr  representative
 
@@ -52,6 +60,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import (annotation_cache_dir, atomic_write, load_config, load_pair,  # noqa: E402
                           protein_chains, seq_md5)
+from fetch_uniprot import apply_regions, fetch_sequence  # noqa: E402
 
 CFG = load_config()
 _email = (CFG["annotate"]["interproscan"].get("email") or "").strip()
@@ -458,6 +467,67 @@ def seq_accessions(spec: dict) -> dict[str, str]:
     return out
 
 
+def region_source(spec: dict, ch: dict) -> tuple[str, str, list] | None:
+    """(full-length sequence, accession, regions) when chain `ch` is a region
+    fragment of a plain UniProt entry -- its annotation is then the
+    full-length record's, projected (project_record) -- else None."""
+    ent = spec.get(ch.get("role") or "", {}) or {}
+    acc, regions = ent.get("uniprot") or "", ent.get("regions")
+    if not (acc and regions) or "-" in acc:
+        return None
+    full = fetch_sequence(acc, CFG)
+    if apply_regions(full, regions) != ch["sequence"]:   # UniProt sequence changed since expansion
+        return None
+    return full, acc, [tuple(r) for r in regions]
+
+
+def project_span(start: int, end: int, regions: list) -> list[list[int]]:
+    """Full-length span [start, end] -> its pieces in the concatenated
+    regions' numbering (1-based, inclusive); [] when outside every region."""
+    out, off = [], 0
+    for a, b in regions:
+        s, e = max(start, a), min(end, b)
+        if s <= e:
+            ps, pe = s - a + 1 + off, e - a + 1 + off
+            if out and ps == out[-1][1] + 1:
+                out[-1][1] = pe
+            else:
+                out.append([ps, pe])
+        off += b - a + 1
+    return out
+
+
+def project_record(rec: dict, regions: list) -> dict:
+    hits = [{**h, "start": s, "end": e} for h in rec.get("hits", [])
+            for s, e in project_span(int(h["start"]), int(h["end"]), regions)]
+    feats = {k: [p for a, b in v for p in project_span(int(a), int(b), regions)]
+             for k, v in (rec.get("features") or {}).items()}
+    return {**rec, "hits": hits, "features": {k: v for k, v in feats.items() if v}}
+
+
+def annotation_targets(spec: dict) -> dict[str, str | None]:
+    """{sequence to annotate: UniProt accession or None} for a pair -- the
+    full-length entry in place of each region chain -- for the batch rule."""
+    accs, out = seq_accessions(spec), {}
+    for ch in protein_chains(spec):
+        src = region_source(spec, ch)
+        if src:
+            out[src[0]] = src[1]
+        else:
+            out.setdefault(ch["sequence"], accs.get(ch["sequence"]))
+    return out
+
+
+def chain_record(spec: dict, ch: dict, acfg: dict, email: str, accs: dict, log=print) -> dict:
+    """One chain's annotation record: its own, or for a region chain the
+    full-length entry's, projected onto the fragment."""
+    src = region_source(spec, ch)
+    if src:
+        full, acc, regions = src
+        return project_record(annotate_sequence(full, acfg, email, log, accession=acc), regions)
+    return annotate_sequence(ch["sequence"], acfg, email, log, accession=accs.get(ch["sequence"]))
+
+
 def interproscan_email(acfg: dict) -> str:
     email = (acfg["interproscan"].get("email") or "").strip()
     if not email:
@@ -483,14 +553,15 @@ def pair_domain_rows(spec: dict) -> list[dict]:
     # identical chains (homodimers etc.) share one lookup; the on-disk cache
     # (pre-filled by scripts/annotate_domains_batch.py) makes the bait, which
     # is in every pair, a free lookup after the first.
-    by_seq: dict[str, list[str]] = {}
+    by_seq: dict[str, list[dict]] = {}
     for ch in protein_chains(spec):
-        by_seq.setdefault(ch["sequence"], []).append(ch["id"])
+        by_seq.setdefault(ch["sequence"], []).append(ch)
 
     accs = seq_accessions(spec)
-    for seq, cids in by_seq.items():
-        hits = annotate_sequence(seq, acfg, email, log=lambda m: print(m, file=sys.stderr),
-                                 accession=accs.get(seq))["hits"]
+    for seq, chs in by_seq.items():
+        cids = [ch["id"] for ch in chs]
+        hits = chain_record(spec, chs[0], acfg, email, accs,
+                            log=lambda m: print(m, file=sys.stderr))["hits"]
         print(f"[annotate_domains] chains {cids} ({len(seq)} aa): {len(hits)} hit(s)", flush=True)
         for cid in cids:
             for h in hits:
@@ -504,8 +575,7 @@ def pair_domain_features(spec: dict) -> dict[str, dict[str, list[list[int]]]]:
     acfg, accs, out = CFG["annotate"], seq_accessions(spec), {}
     email = (acfg["interproscan"].get("email") or "").strip()
     for ch in protein_chains(spec):
-        rec = annotate_sequence(ch["sequence"], acfg, email, log=lambda m: print(m, file=sys.stderr),
-                                accession=accs.get(ch["sequence"]))
+        rec = chain_record(spec, ch, acfg, email, accs, log=lambda m: print(m, file=sys.stderr))
         out[ch["id"]] = rec.get("features") or {}
     return out
 

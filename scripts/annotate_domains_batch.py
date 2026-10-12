@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import annotation_cache_dir, load_pairs, seq_md5  # noqa: E402
 from annotate_domains import (CFG, DOMAIN_CACHE, STOP, annotate_sequence,  # noqa: E402
-                              interproscan_email, seq_accessions)
+                              annotation_targets, interproscan_email)
 
 
 def main() -> int:
@@ -39,14 +39,16 @@ def main() -> int:
     workers = a.workers or int(acfg.get("web_workers", 4))
     email = interproscan_email(acfg)
 
+    # region chains are annotated through their full-length entry
+    # (annotate_domains.region_source), so that is what gets cached
     seqs: set[str] = set()
     accs: dict[str, str] = {}
     specs = load_pairs()
     for p in a.pairs:
-        spec = specs[p]
-        accs.update(seq_accessions(spec))
-        for ch in spec["sequences"]:
-            seqs.add(ch["sequence"])
+        for seq, acc in annotation_targets(specs[p]).items():
+            seqs.add(seq)
+            if acc:
+                accs[seq] = acc
     cache = annotation_cache_dir(CFG, DOMAIN_CACHE)
     todo = sorted((s for s in seqs if not (cache / f"{seq_md5(s)}.json").exists()), key=len)
     print(f"[domains_batch] {len(seqs)} unique sequence(s), {len(todo)} to annotate, "

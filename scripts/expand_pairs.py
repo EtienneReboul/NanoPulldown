@@ -20,6 +20,12 @@ Alongside the pairs it writes, for the reports:
                                      configs/pairs_<run>.txt), which the
                                      Snakefile runs when `pairs_file:` is set
 
+Fragment mode (config `fragments.enabled: true`, or --fragments): every bait
+and prey is first cut into its annotated domains (scripts/fragment_domains.py),
+and the pairs are bait fragment x prey fragment, each an ordinary region pair
+(`Q9M548x120-345__O22607x10-160`) carrying its domain names for the reports.
+The fragments are listed in configs/fragments_<run>.parquet.
+
 Pairs whose total token count (sum of all chain lengths) exceeds
 `--max-tokens` (default: config's `esmfold2.max_tokens`, 0 = no limit) are NOT
 added: ESMFold2 memory grows ~quadratically with tokens, and past the Metal
@@ -32,6 +38,7 @@ Usage:
     python scripts/expand_pairs.py --baits configs/baits.txt --preys configs/preys.txt
     python scripts/expand_pairs.py --max-tokens 1500    # override the config limit
     python scripts/expand_pairs.py --refresh-queries    # re-run UniProt queries
+    NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/expand_pairs.py   # fragment mode
 """
 from __future__ import annotations
 
@@ -44,6 +51,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import (PAIRS_TABLE, REPO_ROOT, inputs_table_path, load_config, load_pairs,  # noqa: E402
                           pair_tokens, update_proteins, write_pairs)
 from fetch_uniprot import fetch_metadata, fetch_sequence, parse_protein_spec  # noqa: E402
+from fragment_domains import (Fragment, fragment_config, load_overrides, protein_fragments,  # noqa: E402
+                              write_fragments_table)
 from resolve_inputs import Resolved, read_specs, resolve_inputs, write_inputs_table  # noqa: E402
 
 
@@ -53,7 +62,10 @@ def slug(spec: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "x", spec)
 
 
-def build_pair_spec(bait_spec: str, prey_spec: str, cfg: dict) -> dict:
+def build_pair_spec(bait_spec: str, prey_spec: str, cfg: dict,
+                    fragments: tuple[str | None, str | None] = (None, None)) -> dict:
+    """One pair's spec. `fragments` = (bait, prey) fragment-mode domain names
+    (None = not a fragment); a fragment's chains are named after its region."""
     cache_dir = Path(cfg["dirs"]["sequences"])
     bait_ps = parse_protein_spec(bait_spec)
     prey_ps = parse_protein_spec(prey_spec)
@@ -63,22 +75,25 @@ def build_pair_spec(bait_spec: str, prey_spec: str, cfg: dict) -> dict:
     sequences = []
     chain_ids = iter("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     bait_chains, prey_chains = [], []
-    for role, ps, seq, prefix in (
-        ("bait", bait_ps, bait_seq, "bait"),
-        ("prey", prey_ps, prey_seq, "prey"),
+    for role, ps, seq, prefix, frag in (
+        ("bait", bait_ps, bait_seq, "bait", fragments[0]),
+        ("prey", prey_ps, prey_seq, "prey", fragments[1]),
     ):
+        stem = f"{prefix}_{ps.uniprot}"
+        if frag and ps.regions:
+            stem += "_" + "_".join(f"{a}-{b}" for a, b in ps.regions)
         for copy_i in range(ps.copies):
             cid = next(chain_ids)
-            name = f"{prefix}_{ps.uniprot}" + (f"_{copy_i + 1}" if ps.copies > 1 else "")
+            name = stem + (f"_{copy_i + 1}" if ps.copies > 1 else "")
             sequences.append({"id": cid, "name": name, "sequence": seq, "role": role})
             (bait_chains if role == "bait" else prey_chains).append(cid)
 
     return {
         "name": f"{slug(bait_spec)}__{slug(prey_spec)}",
         "bait": {"uniprot": bait_ps.uniprot, "copies": bait_ps.copies,
-                 "regions": bait_ps.regions},
+                 "regions": bait_ps.regions, "fragment": fragments[0]},
         "prey": {"uniprot": prey_ps.uniprot, "copies": prey_ps.copies,
-                 "regions": prey_ps.regions},
+                 "regions": prey_ps.regions, "fragment": fragments[1]},
         "sequences": sequences,
         "bait_chains": bait_chains,
         "prey_chains": prey_chains,
@@ -98,6 +113,9 @@ def main() -> int:
     ap.add_argument("--pairs-out", default=None,
                     help="write this run's pair list here (default: config pairs_file, "
                          "else configs/pairs_<run_name>.txt)")
+    ap.add_argument("--fragments", action="store_true",
+                    help="fragment mode: pair domain fragments (config `fragments:`), "
+                         "even when fragments.enabled is false")
     a = ap.parse_args()
 
     cfg = load_config(REPO_ROOT)
@@ -118,11 +136,31 @@ def main() -> int:
 
     out_dir = Path(a.configs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    run = cfg.get("run_name") or "main"
+
+    # one Fragment per protein as given, or its domain fragments in fragment mode
+    fcfg = fragment_config(cfg)
+    fragment_mode = a.fragments or bool(fcfg["enabled"])
+    if fragment_mode:
+        overrides = load_overrides(fcfg)
+        sides = {}
+        for role, role_specs in (("bait", baits), ("prey", preys)):
+            per_spec = [protein_fragments(s, role, cfg, fcfg, overrides) for s in role_specs]
+            sides[role] = [f for frags in per_spec for f in frags]
+            skipped_specs = [s for s, frags in zip(role_specs, per_spec) if not frags]
+            print(f"[expand_pairs] fragment mode: {len(role_specs)} {role}(s) -> {len(sides[role])} fragment(s)"
+                  + (f"; no domain, skipped: {', '.join(skipped_specs)}" if skipped_specs else ""))
+        frag_table = write_fragments_table(sides["bait"] + sides["prey"], out_dir / f"fragments_{run}.parquet")
+        print(f"[expand_pairs] fragments -> {frag_table}")
+    else:
+        sides = {"bait": [Fragment(s, "", "bait", None, 0, 0, "as_given", []) for s in baits],
+                 "prey": [Fragment(s, "", "prey", None, 0, 0, "as_given", []) for s in preys]}
+
     specs = load_pairs(REPO_ROOT)
     written, skipped, too_long, run_pairs = 0, 0, [], []
-    for bait_spec in baits:
-        for prey_spec in preys:
-            pair = build_pair_spec(bait_spec, prey_spec, cfg)
+    for bf in sides["bait"]:
+        for pf in sides["prey"]:
+            pair = build_pair_spec(bf.spec, pf.spec, cfg, (bf.name, pf.name))
             n_tok = pair_tokens(pair)
             if max_tokens and n_tok > max_tokens:
                 too_long.append((pair["name"], n_tok))
@@ -146,10 +184,11 @@ def main() -> int:
     print(f"[expand_pairs] {len(accs)} protein(s) -> {update_proteins(meta.values(), REPO_ROOT)}")
     print(f"[expand_pairs] inputs -> {write_inputs_table(res, inputs_table_path(cfg, REPO_ROOT))}")
 
-    run = cfg.get("run_name") or "main"
     pairs_out = Path(a.pairs_out or cfg.get("pairs_file") or out_dir / f"pairs_{run}.txt")
     pairs_out.parent.mkdir(parents=True, exist_ok=True)
-    pairs_out.write_text(f"# {run}: {len(baits)} bait(s) x {len(preys)} prey(s), "
+    mode = (f" = {len(sides['bait'])} x {len(sides['prey'])} domain fragment(s)"
+            if fragment_mode else "")
+    pairs_out.write_text(f"# {run}: {len(baits)} bait(s) x {len(preys)} prey(s){mode}, "
                          f"written by scripts/expand_pairs.py\n" + "".join(f"{p}\n" for p in run_pairs))
     print(f"[expand_pairs] {len(run_pairs)} pair(s) for this run -> {pairs_out}"
           + ("" if cfg.get("pairs_file") else f"  (set `pairs_file: {pairs_out}` to run them)"))
@@ -163,7 +202,9 @@ def main() -> int:
         print(f"[expand_pairs] {len(too_long)} pair(s) over max_tokens={max_tokens} NOT written "
               f"-> {skip_tsv}")
     print(f"[expand_pairs] {written} new pair(s), {skipped} already in {PAIRS_TABLE} "
-          f"({len(baits)} bait(s) x {len(preys)} prey(s) = {len(baits) * len(preys)} combination(s))")
+          f"({len(sides['bait'])} bait x {len(sides['prey'])} prey "
+          f"{'fragment' if fragment_mode else 'protein'}(s) = "
+          f"{len(sides['bait']) * len(sides['prey'])} combination(s))")
     return 0
 
 
