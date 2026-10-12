@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -20,6 +21,9 @@ import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib_pipeline import load_pair, load_proteins, pair_labels  # noqa: E402
 
 
 def main() -> int:
@@ -49,7 +53,12 @@ def main() -> int:
         n_ok += 1
     ax.set_xlabel("minimization step")
     ax.set_ylabel("potential energy (kJ/mol)")
-    ax.set_title(f"{a.pair}: minimization energy ({n_ok}/{a.num_samples} sample(s))")
+    try:
+        label = pair_labels(load_pair(a.pair), load_proteins())["label"]
+    except KeyError:
+        label = a.pair
+    ax.set_title(f"{label}: minimization energy ({n_ok}/{a.num_samples} sample(s))\n[{a.pair}]",
+                 fontsize=9)
     if n_ok:
         ax.legend(fontsize=7, frameon=False)
     else:

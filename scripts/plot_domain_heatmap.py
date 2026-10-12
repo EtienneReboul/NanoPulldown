@@ -13,8 +13,10 @@ from ab_initio_pipeline's scripts/plot_plip_heatmaps.py `domain_map()`, with
 PLIP contact counts swapped for PAE confidence since nanopulldown has no
 PLIP step.
 
-Axes = domain names from configs/curated_domains.yaml `domains:`; a chain with no
-curated domains falls back to 50-residue buckets (same fallback as
+Axes = domain names from configs/curated_domains.yaml `domains:`, else the
+proposed ones from data/annotation/<pair>/annotation.yaml (--annotation),
+ordered by residue position; a chain with neither falls back to 50-residue
+buckets (same fallback as
 plot_plip_heatmaps.py, minus its RNA/DNA nt-bucket branch -- protein-protein
 only).
 """
@@ -31,20 +33,23 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import yaml  # noqa: E402
 from fold_io import read_fold  # noqa: E402
-from lib_pipeline import load_pair  # noqa: E402
+from lib_pipeline import chain_labels, load_pair, load_proteins, pair_labels  # noqa: E402
 
 
-def domain_map(spec, chain):
+def domain_map(spec, chain, label=None):
+    """resnr -> '<protein>:<domain>' (label = the chain's display name)."""
+    label = label or chain
     segs = (spec.get("domains") or {}).get(chain)
     if segs:
         def _lookup(resnr):
             for d in segs:
                 if int(d["start"]) <= resnr <= int(d["end"]) and d["kind"] != "morf":
-                    return f"{chain}:{d['name']}"
-            return f"{chain}:?"
+                    return f"{label}:{d['name']}"
+            return f"{label}:?"
         return _lookup
-    return lambda r: f"{chain}:{((r - 1) // 50) * 50 + 1}"
+    return lambda r: f"{label}:{((r - 1) // 50) * 50 + 1}"
 
 
 def one_heatmap(ax, pae, chain_ids, res_idx, bait_chains, prey_chains, dmap, pae_cutoff, title):
@@ -59,8 +64,12 @@ def one_heatmap(ax, pae, chain_ids, res_idx, bait_chains, prey_chains, dmap, pae
         elif c in prey_chains:
             lbl = dmap[c](int(r))
             col_of.setdefault(lbl, []).append(i)
-    row_labels = sorted(row_of)
-    col_labels = sorted(col_of)
+    # sequence order (chain, then first residue), not alphabetical -- "A:101"
+    # must not sort before "A:51"
+    def _order(groups):
+        return sorted(groups, key=lambda l: (chain_ids[groups[l][0]], int(res_idx[groups[l][0]])))
+    row_labels = _order(row_of)
+    col_labels = _order(col_of)
     if not row_labels or not col_labels:
         ax.text(0.5, 0.5, "no bait/prey residues found", ha="center", transform=ax.transAxes)
         ax.set_title(title, fontsize=8)
@@ -71,13 +80,17 @@ def one_heatmap(ax, pae, chain_ids, res_idx, bait_chains, prey_chains, dmap, pae
         for ci, cl in enumerate(col_labels):
             jj = col_of[cl]
             mat[ri, ci] = conf[np.ix_(ii, jj)].mean()
-    im = ax.imshow(mat, cmap="magma", aspect="auto", vmin=0, vmax=1)
-    ax.set_xticks(range(len(col_labels))); ax.set_xticklabels(col_labels, rotation=60, ha="right", fontsize=6)
-    ax.set_yticks(range(len(row_labels))); ax.set_yticklabels(row_labels, fontsize=6)
+    # single-hue light -> dark: 0 (no confident relative placement, the common
+    # case for a non-binder) is near-white, not black
+    im = ax.imshow(mat, cmap="Blues", aspect="auto", vmin=0, vmax=1)
+    def _short(lbl, n=28):                      # long InterPro names squash the grid
+        return lbl if len(lbl) <= n else lbl[:n - 1] + "…"
+    ax.set_xticks(range(len(col_labels))); ax.set_xticklabels([_short(l) for l in col_labels], rotation=60, ha="right", fontsize=7)
+    ax.set_yticks(range(len(row_labels))); ax.set_yticklabels([_short(l) for l in row_labels], fontsize=7)
     ax.set_title(title, fontsize=8)
     for (i, j), v in np.ndenumerate(mat):
-        ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=5,
-                color="white" if v < mat.max() * 0.6 else "black")
+        ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=6,
+                color="white" if v >= 0.55 else "#1f2937")
     return im
 
 
@@ -85,15 +98,24 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
     ap.add_argument("--fold", required=True, help="results/<pair>/raw/fold.parquet")
+    ap.add_argument("--annotation", default=None,
+                    help="data/annotation/<pair>/annotation.yaml; proposed domains used "
+                         "for chains the spec has no curated `domains:` for")
     ap.add_argument("--pae-cutoff", type=float, default=12.0)
     ap.add_argument("--out", required=True)
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
 
     spec = load_pair(a.pair)
+    if a.annotation and Path(a.annotation).exists():
+        proposed = (yaml.safe_load(Path(a.annotation).read_text()) or {}).get("domains") or {}
+        spec["domains"] = {**proposed, **(spec.get("domains") or {})}
     bait_chains = set(spec.get("bait_chains", []))
     prey_chains = set(spec.get("prey_chains", []))
-    dmap = {c: domain_map(spec, c) for c in bait_chains | prey_chains}
+    proteins = load_proteins()
+    clabel = chain_labels(spec, proteins)
+    names = pair_labels(spec, proteins)
+    dmap = {c: domain_map(spec, c, clabel.get(c)) for c in bait_chains | prey_chains}
 
     panels = []
     for r in read_fold(Path(a.fold)):
@@ -101,31 +123,41 @@ def main() -> int:
             continue
         n = r["pae"].shape[0]
         chain_ids = r["token_chain"] if len(r["token_chain"]) == n else np.array([""] * n)
-        panels.append((f"sample {r['sample_index']}", r["pae"], chain_ids, r["residue_index"]))
+        # ESMFold2's residue_index is 0-based per chain; domains are 1-based
+        res_idx = np.asarray(r["residue_index"], dtype=int).copy()
+        for c in np.unique(chain_ids):
+            m = chain_ids == c
+            if m.any() and res_idx[m].min() == 0:
+                res_idx[m] += 1
+        panels.append((f"sample {r['sample_index']}", r["pae"], chain_ids, res_idx))
 
     if not panels:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         fig, ax = plt.subplots(figsize=(4, 2))
-        ax.text(0.5, 0.5, f"{a.pair}: no PAE arrays available", ha="center")
+        ax.text(0.5, 0.5, f"{names['label']}: no PAE arrays available", ha="center")
         for fmt in a.formats.split(","):
             fig.savefig(f"{Path(a.out).with_suffix('')}.{fmt.strip()}")
         return 0
 
     ncol = min(3, len(panels))
     nrow = int(np.ceil(len(panels) / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(4.4 * ncol, 3.8 * nrow),
+    fig, axes = plt.subplots(nrow, ncol, figsize=(max(6.5, 4.4 * ncol), 3.8 * nrow + 0.4),
                              squeeze=False, constrained_layout=True)
+    im = None
     for k, (title, pae, chain_ids, res_idx) in enumerate(panels):
-        one_heatmap(axes[k // ncol][k % ncol], pae, chain_ids, res_idx,
-                    bait_chains, prey_chains, dmap, a.pae_cutoff, title)
+        im = one_heatmap(axes[k // ncol][k % ncol], pae, chain_ids, res_idx,
+                         bait_chains, prey_chains, dmap, a.pae_cutoff, title) or im
     for k in range(len(panels), nrow * ncol):
         axes[k // ncol][k % ncol].axis("off")
-    fig.suptitle(f"{a.pair}: bait x prey domain confidence (1 - PAE/{a.pae_cutoff:g}), per diffusion sample")
+    if im is not None:
+        fig.colorbar(im, ax=axes, shrink=0.6, label=f"1 - PAE/{a.pae_cutoff:g}")
+    fig.suptitle(f"{names['label']}  —  bait x prey domain confidence (1 - PAE/{a.pae_cutoff:g})\n"
+                 f"{names['long']}  [{a.pair}]", fontsize=9)
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     for fmt in a.formats.split(","):
-        fig.savefig(f"{out.with_suffix('')}.{fmt.strip()}")
+        fig.savefig(f"{out.with_suffix('')}.{fmt.strip()}", bbox_inches="tight")
     plt.close(fig)
     print(f"[plot_domain_heatmap] -> {out}")
     return 0

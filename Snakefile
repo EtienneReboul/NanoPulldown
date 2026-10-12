@@ -18,9 +18,9 @@ straight into folding.
                           proposed `domains:` block; hand-curate it into
                           configs/curated_domains.yaml whenever convenient
                           (see configs/_schema.md), it isn't required to proceed
-      report figures (domain map, disorder/binding) -- viewed directly as
-      SVGs, not packaged into a report (nanopulldown's one report.zip comes
-      from folding, below).
+      report figures (domain map + AIUPred) -- one per distinct protein,
+      filed under Baits / Preys in the one report.zip (built after folding,
+      below).
 
   2. folding (Apple Silicon GPU via MLX/Metal)
     ESMFold2-Fast folding (one seed, esmfold2.num_diffusion_samples
@@ -48,12 +48,15 @@ Usage (one command, both stages):
   snakemake --use-conda --cores 4
 """
 import hashlib
+import json
 import sys
 from pathlib import Path
 
 REPO = Path(workflow.basedir)
 sys.path.insert(0, str(REPO / "scripts"))
-from lib_pipeline import load_config, load_pairs, pair_tokens, protein_chains, spec_digest  # noqa: E402
+from lib_pipeline import (inputs_table_path, label_digest, load_config, load_pairs,  # noqa: E402
+                          load_proteins, pair_labels, pair_tokens, protein_chains,
+                          protein_name, spec_digest)
 
 configfile: str(REPO / "config.yaml")
 if (REPO / "config.local.yaml").exists():
@@ -73,8 +76,15 @@ MAX_TOKENS = int(EF.get("max_tokens", 0))
 # ~quadratically with tokens and an over-limit fold aborts the whole process
 # on the Metal buffer cap. 0 = no limit.
 _ALL_SPECS = load_pairs(REPO)
+# `pairs_file:` (written by scripts/expand_pairs.py from the config's
+# `inputs:`) takes precedence over an inline `pairs:` list.
+if CFG.get("pairs_file"):
+    _PAIR_LIST = [ln.split("#", 1)[0].strip() for ln in (REPO / CFG["pairs_file"]).read_text().splitlines()]
+    _PAIR_LIST = [p for p in _PAIR_LIST if p]
+else:
+    _PAIR_LIST = CFG.get("pairs") or []
 PAIRS, SPECS, _no_spec, _too_long = [], {}, [], []
-for _p in CFG["pairs"]:
+for _p in _PAIR_LIST:
     if _p not in _ALL_SPECS:
         _no_spec.append(_p)
         continue
@@ -90,7 +100,6 @@ if _no_spec:
 if _too_long:
     print(f"[Snakefile] {len(_too_long)} pair(s) exceed esmfold2.max_tokens={MAX_TOKENS} and are ignored",
           file=sys.stderr)
-CHAIN_IDS = {p: [c["id"] for c in protein_chains(SPECS[p])] for p in PAIRS}
 
 # Rules don't take a spec FILE as input any more (one shared table would make
 # every job look outdated whenever a pair is added). Instead they carry content
@@ -99,6 +108,19 @@ CHAIN_IDS = {p: [c["id"] for c in protein_chains(SPECS[p])] for p in PAIRS}
 # annotation see), CUR_KEY = curated domains (what the figures also use).
 SPEC_KEY = {p: spec_digest(SPECS[p]) for p in PAIRS}
 CUR_KEY = {p: spec_digest(SPECS[p], "curation") for p in PAIRS}
+
+# Display names (configs/proteins.parquet + configs/protein_names.yaml): paths
+# stay accession-keyed, names only label figures/tables. LABEL_KEY reruns a
+# pair's figures when one of its proteins is renamed.
+PROTEINS = load_proteins(REPO)
+LABELS = {p: pair_labels(SPECS[p], PROTEINS) for p in PAIRS}
+LABEL_KEY = {p: label_digest(SPECS[p], PROTEINS) for p in PAIRS}
+INPUTS_TABLE = inputs_table_path(CFG, REPO)
+
+
+def pair_report_labels(wc):
+    lb = LABELS[wc.pair]
+    return {"bait": lb["bait"], "prey": lb["prey"], "prey name": lb["prey_long"], "pair": wc.pair}
 
 # ── stage 1: preprocessing ───────────────────────────────────────────────
 ANN = Path(DIRS["annotation"])
@@ -122,16 +144,39 @@ N_SAMPLES = int(EF["num_diffusion_samples"])
 SAMPLE_IDX = list(range(N_SAMPLES))
 
 
-def chain_figs(kind):
-    return [str(PRE_REP / p / f"{kind}_{cid}.svg")
-            for p in PAIRS for cid in CHAIN_IDS[p]]
+# Domain map + AIUPred figures are per distinct PROTEIN, not per pair x chain:
+# the bait is in every pair (and a homo-oligomer repeats its chain), so a
+# per-chain figure repeated the same bait plot hundreds of times. A protein is
+# (role, sequence, curated domains) -- the same UniProt with other regions or
+# another pair's curation gets its own figure. Each is drawn from the first
+# pair it occurs in; the report files them under Baits / Preys.
+def _domain_proteins():
+    prots, seen = {}, {}
+    for p in PAIRS:
+        reviewed = SPECS[p].get("annotation_reviewed", False)
+        for c in protein_chains(SPECS[p]):
+            cur = (SPECS[p].get("domains") or {}).get(c["id"]) if reviewed else None
+            key = (c["role"], c["sequence"], json.dumps(cur, sort_keys=True))
+            if key in seen:
+                prots[seen[key]]["pairs"].append(p)
+                continue
+            slug = c.get("name") or f"{c['role']}_{p}_{c['id']}"
+            if slug in prots:
+                slug = f"{slug}_{hashlib.sha1(repr(key).encode()).hexdigest()[:6]}"
+            seen[key] = slug
+            acc = SPECS[p][c["role"]]["uniprot"]
+            prots[slug] = {"role": c["role"], "pair": p, "chain": c["id"], "pairs": [p], "uniprot": acc}
+    return prots
+
+
+DOMAIN_PROTEINS = _domain_proteins()
 
 
 rule all:
     default_target: True
     input:
         [str(ANN / p / "annotation.yaml") for p in PAIRS],
-        chain_figs("domain_bar"),
+        [str(PRE_REP / "domain_bar" / f"{prot}.svg") for prot in DOMAIN_PROTEINS],
         [str(POST / p / "interface_metrics.parquet") for p in PAIRS],
         [str(FOLD_REP / p / "domain_heatmap.svg") for p in PAIRS],
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
@@ -225,21 +270,30 @@ rule merge_annotation:
 
 rule fig_domain_bar:
     input:
-        annotation=str(ANN / "{pair}" / "annotation.yaml"),
+        annotation=lambda wc: str(ANN / DOMAIN_PROTEINS[wc.protein]["pair"] / "annotation.yaml"),
     output:
-        report(str(PRE_REP / "{pair}" / "domain_bar_{chain}.svg"),
-               category="Domain map + AIUPred", labels={"pair": "{pair}", "chain": "{chain}"}),
+        report(str(PRE_REP / "domain_bar" / "{protein}.svg"),
+               category="Domain map + AIUPred",
+               subcategory=lambda wc: "Baits" if DOMAIN_PROTEINS[wc.protein]["role"] == "bait" else "Preys",
+               labels=lambda wc: {
+                   "protein": protein_name(DOMAIN_PROTEINS[wc.protein]["uniprot"], PROTEINS),
+                   "name": protein_name(DOMAIN_PROTEINS[wc.protein]["uniprot"], PROTEINS, "long"),
+                   "UniProt": DOMAIN_PROTEINS[wc.protein]["uniprot"],
+                   "pairs": str(len(DOMAIN_PROTEINS[wc.protein]["pairs"]))}),
     conda:
         "envs/report.yaml"
     params:
         fmts=",".join(CFG["report"]["figure_formats"]),
         cutoff=CFG["annotate"]["consensus"]["disorder_cutoff"],
-        spec=lambda wc: SPEC_KEY[wc.pair],
-        curation=lambda wc: CUR_KEY[wc.pair],
+        pair=lambda wc: DOMAIN_PROTEINS[wc.protein]["pair"],
+        chain=lambda wc: DOMAIN_PROTEINS[wc.protein]["chain"],
+        spec=lambda wc: SPEC_KEY[DOMAIN_PROTEINS[wc.protein]["pair"]],
+        curation=lambda wc: CUR_KEY[DOMAIN_PROTEINS[wc.protein]["pair"]],
+        labels=lambda wc: LABEL_KEY[DOMAIN_PROTEINS[wc.protein]["pair"]],
     shell:
         r"""
         python scripts/plot_domain_bar.py \
-          --pair {wildcards.pair} --annotation {input.annotation} --chain {wildcards.chain} \
+          --pair {params.pair} --annotation {input.annotation} --chain {params.chain} \
           --cutoff {params.cutoff} \
           --out {output[0]} --formats {params.fmts}
         """
@@ -477,13 +531,14 @@ rule fig_plip_contacts:
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
     output:
         report(str(FOLD_REP / "{pair}" / "plip_contacts.svg"),
-               category="PLIP contacts", labels={"pair": "{pair}"}),
+               category="PLIP contacts", labels=pair_report_labels),
     conda:
         "envs/report.yaml"
     params:
         fmts=FMTS,
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
+        labels=lambda wc: LABEL_KEY[wc.pair],
     shell:
         r"""
         python scripts/plot_plip_heatmap.py --pair {wildcards.pair} \
@@ -496,20 +551,22 @@ rule fig_plip_contacts:
 rule fig_domain_heatmap:
     input:
         fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
+        annotation=str(ANN / "{pair}" / "annotation.yaml"),
     output:
         report(str(FOLD_REP / "{pair}" / "domain_heatmap.svg"),
                category="Bait x prey domain confidence",
-               labels={"pair": "{pair}"}),
+               labels=pair_report_labels),
     conda:
         "envs/report.yaml"
     params:
         pae=MET["pae_cutoff"], fmts=FMTS,
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
+        labels=lambda wc: LABEL_KEY[wc.pair],
     shell:
         r"""
         python scripts/plot_domain_heatmap.py --pair {wildcards.pair} \
-          --fold {input.fold} \
+          --fold {input.fold} --annotation {input.annotation} \
           --pae-cutoff {params.pae} --out {output[0]} --formats {params.fmts}
         """
 
@@ -519,12 +576,13 @@ rule fig_minimize_energy:
         energy=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}_energy.parquet"), s=SAMPLE_IDX),
     output:
         svg=report(str(FOLD_REP / "{pair}" / "minimize_energy.svg"),
-                   category="Minimization energy", labels={"pair": "{pair}"}),
+                   category="Minimization energy", labels=pair_report_labels),
         table=str(FOLD_REP / "{pair}" / "minimize_failure_rate.csv"),
     conda:
         "envs/report.yaml"
     params:
         n=N_SAMPLES, maxe=MZ["max_abs_energy"], fmts=FMTS,
+        labels=lambda wc: LABEL_KEY[wc.pair],
     shell:
         r"""
         python scripts/plot_minimize_energy.py --pair {wildcards.pair} \
@@ -584,10 +642,13 @@ rule collect_results_table:
         "envs/report.yaml"
     params:
         pairs=" ".join(PAIRS),
+        inputs=str(INPUTS_TABLE),
+        labels=hashlib.sha1(" ".join(LABEL_KEY[p] for p in PAIRS).encode()).hexdigest()[:12],
+        inputs_mtime=INPUTS_TABLE.stat().st_mtime if INPUTS_TABLE.exists() else 0,
     shell:
         r"""
         python scripts/collect_results_table.py --pairs {params.pairs} \
-          --results-root {POST} --out {output[0]}
+          --results-root {POST} --inputs {params.inputs} --out {output[0]}
         """
 
 
@@ -613,6 +674,8 @@ rule collect_minimize_failures:
         str(FOLD_REP / "minimize_failure_rate.csv"),
     conda:
         "envs/report.yaml"
+    params:
+        labels=hashlib.sha1(" ".join(LABEL_KEY[p] for p in PAIRS).encode()).hexdigest()[:12],
     shell:
         r"""
         python scripts/collect_minimize_failures.py --tables {input} --out {output[0]}

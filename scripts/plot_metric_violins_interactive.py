@@ -3,7 +3,7 @@
 scripts/plot_metric_violins_interactive.py — Stage 2g report figure (interactive)
 ============================================================
 Plotly twin of plot_metric_violins.py: one violin panel per metric with every
-point hoverable (pair, sample, chain pair, value). Written as a directory with
+point hoverable (bait × prey names, pair, sample, chain pair, value). Written as a directory with
 a self-contained index.html (plotly.js inlined) so `snakemake --report` can
 embed it via report(directory(...), htmlindex="index.html") and it works
 offline.
@@ -44,14 +44,17 @@ def main() -> int:
                         horizontal_spacing=0.06, vertical_spacing=0.12)
     chain = (df["chain_i"].astype(str) + "-" + df["chain_j"].astype(str)
              if "chain_i" in df else pd.Series("", index=df.index))
+    # 'BPM6 × MYC2' when the results table carries display names
+    name = (df["bait"].astype(str) + " × " + df["prey"].astype(str)
+            if {"bait", "prey"} <= set(df.columns) else df["pair"].astype(str))
     for k, m in enumerate(present):
         sub = df[df[m].notna()]
         fig.add_trace(go.Violin(
             y=sub[m], name=m, box_visible=True, meanline_visible=True,
             points="all", jitter=0.4, pointpos=0, marker_size=3, showlegend=False,
-            customdata=list(zip(sub["pair"], sub["sample_index"], chain[sub.index])),
-            hovertemplate=(f"{m}=%{{y:.4g}}<br>pair=%{{customdata[0]}}"
-                           "<br>sample=%{customdata[1]}<br>chains=%{customdata[2]}<extra></extra>"),
+            customdata=list(zip(name[sub.index], sub["pair"], sub["sample_index"], chain[sub.index])),
+            hovertemplate=(f"<b>%{{customdata[0]}}</b><br>{m}=%{{y:.4g}}<br>pair=%{{customdata[1]}}"
+                           "<br>sample=%{customdata[2]}<br>chains=%{customdata[3]}<extra></extra>"),
         ), row=k // ncols + 1, col=k % ncols + 1)
     fig.update_xaxes(showticklabels=False)
     fig.update_layout(height=340 * nrows, template="plotly_dark",

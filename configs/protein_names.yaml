@@ -1,0 +1,8 @@
+# Hand overrides of the display names the reports use, keyed by UniProt
+# accession: `short` (axes, titles, pair labels) and/or `long` (protein name
+# in subtitles, tables, tooltips). Everything else comes from UniProt via
+# configs/proteins.parquet (gene > source name > gene-like protein name >
+# AGI locus > accession) -- see configs/_schema.md. Edits take effect on the
+# next run: only the figures/tables of affected pairs are redrawn.
+Q9LMA8: {short: JAZ1}     # UniProt primary gene name: TIFY10A
+Q9SV55: {short: NINJA}    # UniProt primary gene name: AFPH2

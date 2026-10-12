@@ -11,8 +11,13 @@ __pycache__/
 # from configs/baits.txt + configs/preys.txt, so not tracked. Hand-curated
 # domains (configs/curated_domains.yaml) ARE tracked (see configs/_schema.md).
 configs/pairs.parquet
+# ... as are the proteins/names table and each run's inputs table (also
+# expand_pairs.py output); hand name overrides (protein_names.yaml) are tracked.
+configs/proteins.parquet
+configs/inputs_*.parquet
 configs/*.yaml
 !configs/curated_domains.yaml
+!configs/protein_names.yaml
 # Per-run output dirs from run overlays (config_<run>.yaml sets dirs: to
 # results_<run>/, reports_<run>/, logs_<run>/)
 results_*/

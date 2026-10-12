@@ -50,10 +50,15 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 # 0. controller env (once)
 conda env create -f envs/controller.yaml && conda activate nanopulldown
 
-# 1. define bait/prey lists (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop)
-#    edit configs/baits.txt and configs/preys.txt, then:
-python scripts/expand_pairs.py          # adds rows to configs/pairs.parquet; skips pairs over esmfold2.max_tokens (configs/skipped_too_long.tsv)
-#    edit config.yaml's `pairs:` list to include the new <bait>__<prey> names
+# 1. declare where baits/preys come from in a run config's `inputs:` block --
+#    list files (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop),
+#    inline accessions, UniProt GO/InterPro queries, IP-MS tables; see
+#    scripts/resolve_inputs.py and config_bpm6_curated.yaml -- then:
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
+#    -> configs/pairs.parquet rows (skips pairs over esmfold2.max_tokens),
+#       configs/proteins.parquet (UniProt names), configs/inputs_<run>.parquet,
+#       and the run's pair list (point the config's `pairs_file:` at it)
+#    (no `inputs:` block: configs/baits.txt x configs/preys.txt, as before)
 
 # 2. run the whole pipeline (Apple Silicon GPU via MLX/Metal for folding)
 #    --resources gpu=1 is REQUIRED (see above) -- --cores alone doesn't
@@ -80,8 +85,11 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `config.yaml`                              | all shared defaults, both stages                                                                 |
 | `config.local.yaml`                        | per-machine overrides (gitignored; copy`.example`) — set `annotate.interproscan.email` here |
-| `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; expanded into pairs by`scripts/expand_pairs.py`                     |
+| `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; a `list:` input source (or the default lists) for`scripts/expand_pairs.py` |
 | `configs/pairs.parquet`                    | every expanded pair's chain spec, one row per pair (generated; schema in `configs/_schema.md`)   |
+| `configs/proteins.parquet`                 | UniProt names / gene / AGI locus per accession, and the display names reports use (generated)   |
+| `configs/inputs_<run>.parquet`             | which input source picked each protein, plus IP-MS columns (generated)                           |
+| `configs/protein_names.yaml`               | hand overrides of display names, by accession (tracked)                                          |
 | `configs/curated_domains.yaml`             | hand-curated domain maps, by pair (tracked)                                                      |
 | `envs/`                                    | one conda env per rule group, built by`--use-conda`                                            |
 | `tools/`                                   | vendored:`ipsae`, `pinc` (both from ab_initio_pipeline, unchanged)                           |

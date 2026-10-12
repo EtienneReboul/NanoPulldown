@@ -9,6 +9,11 @@ screened pair -- AlphaPulldown's "Results table with confidence scores and
 interaction metrics" (its README's stated output), built from
 ab_initio_pipeline's own rescoring stack instead of AlphaJudge.
 
+Each row also carries the pair's display names (bait / prey short labels,
+prey protein name and locus, both accessions -- lib_pipeline.identity_columns)
+and, from the run's configs/inputs_<run>.parquet, the input sources that
+picked the prey plus any IP-MS columns they carry (<source>_<column>).
+
 Output: reports/folding/results_table.csv (fed to the datavzrd view in
 report/datavzrd/nanopulldown.datavzrd.yaml)
 """
@@ -22,12 +27,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fold_io import FOLD_FILE, read_fold_scalars  # noqa: E402
+from lib_pipeline import identity_columns, load_pairs, load_proteins  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pairs", nargs="+", required=True)
     ap.add_argument("--results-root", default="results")
+    ap.add_argument("--inputs", default=None, help="configs/inputs_<run>.parquet (optional)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -55,6 +62,18 @@ def main() -> int:
         df = pd.DataFrame(columns=["pair", "sample_index", "chain_i", "chain_j", "ptm", "iptm",
                                     "mean_plddt", "lis", "clis", "ilis", "pinc", "ipsae",
                                     "pdockq", "pdockq2", "pair_iptm", "note"])
+
+    specs, proteins = load_pairs(), load_proteins()
+    ident = pd.DataFrame([{"pair": p, **identity_columns(specs[p], proteins)}
+                          for p in a.pairs if p in specs])
+    if not ident.empty:
+        df = ident.merge(df, on="pair", how="right")
+    if a.inputs and Path(a.inputs).exists() and not df.empty:
+        inp = pd.read_parquet(a.inputs)
+        inp = inp[inp["role"] == "prey"].drop(columns="role")
+        inp["sources"] = inp["sources"].map(lambda v: ", ".join(v) if v is not None else "")
+        inp = inp.rename(columns={"accession": "prey_uniprot", "sources": "prey_sources"})
+        df = df.merge(inp, on="prey_uniprot", how="left")
     df.to_csv(out, index=False)
     print(f"[collect_results_table] {len(df)} row(s) across {len(a.pairs)} pair(s) -> {out}")
     return 0

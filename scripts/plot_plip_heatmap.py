@@ -28,19 +28,21 @@ import pandas as pd  # noqa: E402
 import yaml  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import load_pair  # noqa: E402
+from lib_pipeline import chain_labels, load_pair, load_proteins, pair_labels  # noqa: E402
 
 
-def domain_map(spec, chain):
+def domain_map(spec, chain, label=None):
+    """resnr -> '<protein>:<domain>' (label = the chain's display name)."""
+    label = label or chain
     segs = (spec.get("domains") or {}).get(chain)
     if segs:
         def _lookup(resnr):
             for d in segs:
                 if int(d["start"]) <= resnr <= int(d["end"]) and d["kind"] != "morf":
-                    return f"{chain}:{d['name']}"
-            return f"{chain}:?"
+                    return f"{label}:{d['name']}"
+            return f"{label}:?"
         return _lookup
-    return lambda r: f"{chain}:{((r - 1) // 50) * 50 + 1}"
+    return lambda r: f"{label}:{((r - 1) // 50) * 50 + 1}"
 
 
 def main() -> int:
@@ -55,6 +57,9 @@ def main() -> int:
     a = ap.parse_args()
 
     spec = load_pair(a.pair)
+    proteins = load_proteins()
+    clabel = chain_labels(spec, proteins)
+    names = pair_labels(spec, proteins)
     df = pd.read_parquet(a.contacts)
     if a.annotation and Path(a.annotation).exists():
         proposed = (yaml.safe_load(Path(a.annotation).read_text()) or {}).get("domains") or {}
@@ -65,12 +70,12 @@ def main() -> int:
     fig, ax = plt.subplots(figsize=(5, 4.2), constrained_layout=True)
 
     if df.empty:
-        ax.text(0.5, 0.5, f"{a.pair}: no PLIP contacts", ha="center", transform=ax.transAxes)
+        ax.text(0.5, 0.5, f"{names['label']}: no PLIP contacts", ha="center", transform=ax.transAxes)
         ax.axis("off")
     else:
         n_samples = max(df["sample"].nunique(), 1)
         chains = sorted(set(df["reschain"]) | set(df["reschain_lig"]))
-        dmap = {c: domain_map(spec, c) for c in chains}
+        dmap = {c: domain_map(spec, c, clabel.get(c)) for c in chains}
         df = df.assign(
             rdom=df.apply(lambda x: dmap[x["reschain"]](int(x["resnr"])), axis=1),
             ldom=df.apply(lambda x: dmap[x["reschain_lig"]](int(x["resnr_lig"])), axis=1),
@@ -88,7 +93,7 @@ def main() -> int:
                         color="white" if v < piv.values.max() * 0.6 else "black")
         fig.colorbar(im, ax=ax, label=f"mean contacts / sample (n={n_samples})")
 
-    ax.set_title(f"{a.pair}: PLIP domain x domain contacts", fontsize=9)
+    ax.set_title(f"{names['label']}: PLIP domain x domain contacts\n[{a.pair}]", fontsize=9)
     for fmt in a.formats.split(","):
         fig.savefig(f"{out.with_suffix('')}.{fmt.strip()}")
     plt.close(fig)

@@ -18,5 +18,8 @@ dependencies:
   - datavzrd>=2.36
   - pyyaml>=6.0
   - pyarrow>=15.0   # the Snakefile reads configs/pairs.parquet
+  - pandas>=2.0     # scripts/expand_pairs.py: IP-MS input tables
+  - openpyxl>=3.1   # ... when they are .xlsx
+  - requests>=2.31  # scripts/fetch_uniprot.py
   - conda
   - mamba

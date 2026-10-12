@@ -2,14 +2,23 @@
 """
 scripts/expand_pairs.py — Stage 1a
 ====================================
-AlphaPulldown's bait-file x prey-file combinatorial screen, adapted:
-reads `configs/baits.txt` and `configs/preys.txt` (one protein spec per
-line, AlphaPulldown syntax: `ID`, `ID:N`, `ID:start-stop`, `ID:N:start-stop`,
-blank lines and `#` comments ignored), fetches every unique accession via
-scripts/fetch_uniprot.py, and adds one row per combination to
-configs/pairs.parquet (see configs/_schema.md). Pairs already in the table are
-left untouched; hand-curated domains live in configs/curated_domains.yaml and
-are never touched here.
+AlphaPulldown's bait-file x prey-file combinatorial screen, adapted. Baits
+and preys come from the run config's `inputs:` block (list files, inline
+accessions, UniProt GO/InterPro queries, IP-MS tables -- see
+scripts/resolve_inputs.py), or, without one / with --baits/--preys, from two
+AlphaPulldown-style list files (`ID`, `ID:N`, `ID:start-stop`,
+`ID:N:start-stop`, blank lines and `#` comments ignored). Every unique
+accession is fetched via scripts/fetch_uniprot.py, and one row per
+combination is added to configs/pairs.parquet (see configs/_schema.md).
+Pairs already in the table are left untouched; hand-curated domains live in
+configs/curated_domains.yaml and are never touched here.
+
+Alongside the pairs it writes, for the reports:
+  * configs/proteins.parquet      -- UniProt names/gene/locus per accession
+  * configs/inputs_<run>.parquet  -- which source picked each protein (+ IP-MS columns)
+  * the run's pair list           -- config `pairs_file:` (default
+                                     configs/pairs_<run>.txt), which the
+                                     Snakefile runs when `pairs_file:` is set
 
 Pairs whose total token count (sum of all chain lengths) exceeds
 `--max-tokens` (default: config's `esmfold2.max_tokens`, 0 = no limit) are NOT
@@ -19,8 +28,10 @@ token counts, in `configs/skipped_too_long.tsv` instead. Measure your
 machine's limit with notebooks/esmfold2_memory_model.ipynb.
 
 Usage:
+    NANOPULLDOWN_RUN_CONFIG=config_bpm6_curated.yaml python scripts/expand_pairs.py
     python scripts/expand_pairs.py --baits configs/baits.txt --preys configs/preys.txt
     python scripts/expand_pairs.py --max-tokens 1500    # override the config limit
+    python scripts/expand_pairs.py --refresh-queries    # re-run UniProt queries
 """
 from __future__ import annotations
 
@@ -30,19 +41,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import PAIRS_TABLE, REPO_ROOT, load_config, load_pairs, pair_tokens, write_pairs  # noqa: E402
-from fetch_uniprot import fetch_sequence, parse_protein_spec  # noqa: E402
-
-
-def read_specs(path: Path) -> list[str]:
-    if not path.exists():
-        return []
-    specs = []
-    for line in path.read_text().splitlines():
-        line = line.split("#", 1)[0].strip()
-        if line:
-            specs.append(line)
-    return specs
+from lib_pipeline import (PAIRS_TABLE, REPO_ROOT, inputs_table_path, load_config, load_pairs,  # noqa: E402
+                          pair_tokens, update_proteins, write_pairs)
+from fetch_uniprot import fetch_metadata, fetch_sequence, parse_protein_spec  # noqa: E402
+from resolve_inputs import Resolved, read_specs, resolve_inputs, write_inputs_table  # noqa: E402
 
 
 def slug(spec: str) -> str:
@@ -85,18 +87,31 @@ def build_pair_spec(bait_spec: str, prey_spec: str, cfg: dict) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baits", default="configs/baits.txt")
-    ap.add_argument("--preys", default="configs/preys.txt")
+    ap.add_argument("--baits", help="bait list file (overrides the config's inputs.baits)")
+    ap.add_argument("--preys", help="prey list file (overrides the config's inputs.preys)")
     ap.add_argument("--configs-dir", default="configs")
     ap.add_argument("--max-tokens", type=int, default=None,
                     help="skip pairs with more total tokens than this "
                          "(default: config esmfold2.max_tokens; 0 = no limit)")
+    ap.add_argument("--refresh-queries", action="store_true",
+                    help="re-run uniprot_query sources instead of reusing their snapshots")
+    ap.add_argument("--pairs-out", default=None,
+                    help="write this run's pair list here (default: config pairs_file, "
+                         "else configs/pairs_<run_name>.txt)")
     a = ap.parse_args()
 
     cfg = load_config(REPO_ROOT)
     max_tokens = a.max_tokens if a.max_tokens is not None else int(cfg["esmfold2"].get("max_tokens", 0))
-    baits = read_specs(Path(a.baits))
-    preys = read_specs(Path(a.preys))
+    if cfg.get("inputs") and not (a.baits or a.preys):
+        res = resolve_inputs(cfg, refresh=a.refresh_queries)
+    else:                                   # legacy: two list files
+        res = Resolved()
+        for role, path in (("bait", a.baits or "configs/baits.txt"),
+                           ("prey", a.preys or "configs/preys.txt")):
+            if Path(path).exists():
+                for spec in read_specs(Path(path)):
+                    res.add(role, spec, Path(path).stem)
+    baits, preys = res.specs["bait"], res.specs["prey"]
     if not baits or not preys:
         print(f"[expand_pairs] nothing to expand ({len(baits)} bait(s), {len(preys)} prey(s))")
         return 0
@@ -104,7 +119,7 @@ def main() -> int:
     out_dir = Path(a.configs_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     specs = load_pairs(REPO_ROOT)
-    written, skipped, too_long = 0, 0, []
+    written, skipped, too_long, run_pairs = 0, 0, [], []
     for bait_spec in baits:
         for prey_spec in preys:
             pair = build_pair_spec(bait_spec, prey_spec, cfg)
@@ -112,6 +127,7 @@ def main() -> int:
             if max_tokens and n_tok > max_tokens:
                 too_long.append((pair["name"], n_tok))
                 continue
+            run_pairs.append(pair["name"])
             if pair["name"] in specs:
                 skipped += 1
                 continue
@@ -120,7 +136,25 @@ def main() -> int:
             print(f"[expand_pairs] added {pair['name']} ({n_tok} tokens)")
     if written:
         print(f"[expand_pairs] -> {write_pairs(list(specs.values()), REPO_ROOT)}")
-    skip_tsv = out_dir / "skipped_too_long.tsv"
+
+    # names for the reports + where each protein came from
+    accs = sorted({parse_protein_spec(s).uniprot for s in baits + preys})
+    meta = fetch_metadata(accs, cfg)
+    for acc, name in res.manual_names.items():
+        if acc in meta:
+            meta[acc] = {**meta[acc], "manual_name": name}
+    print(f"[expand_pairs] {len(accs)} protein(s) -> {update_proteins(meta.values(), REPO_ROOT)}")
+    print(f"[expand_pairs] inputs -> {write_inputs_table(res, inputs_table_path(cfg, REPO_ROOT))}")
+
+    run = cfg.get("run_name") or "main"
+    pairs_out = Path(a.pairs_out or cfg.get("pairs_file") or out_dir / f"pairs_{run}.txt")
+    pairs_out.parent.mkdir(parents=True, exist_ok=True)
+    pairs_out.write_text(f"# {run}: {len(baits)} bait(s) x {len(preys)} prey(s), "
+                         f"written by scripts/expand_pairs.py\n" + "".join(f"{p}\n" for p in run_pairs))
+    print(f"[expand_pairs] {len(run_pairs)} pair(s) for this run -> {pairs_out}"
+          + ("" if cfg.get("pairs_file") else f"  (set `pairs_file: {pairs_out}` to run them)"))
+
+    skip_tsv = out_dir / (f"skipped_too_long_{run}.tsv" if cfg.get("run_name") else "skipped_too_long.tsv")
     if too_long:
         skip_tsv.write_text("pair\ttokens\n" + "".join(f"{n}\t{t}\n" for n, t in too_long))
     elif skip_tsv.exists():

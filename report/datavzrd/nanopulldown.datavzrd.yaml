@@ -25,10 +25,33 @@ views:
       `pair_iptm` is ESMFold2's own per-chain-pair ipTM; `ipsae`/`ilis`/
       `pinc`/`pdockq`/`pdockq2` are ab_initio_pipeline's PAE-based rescoring
       stack (ipSAE, LIS-family, Pinc), computed identically here.
+      `bait`/`prey` are display names (gene > source name > locus >
+      accession); `prey sources` are the config `inputs:` that selected the
+      prey, and `<source>_<column>` columns carry IP-MS values from them.
     render-table:
       columns:
         pair:
-          label: "pair"
+          label: "pair id"
+        bait:
+          label: "bait"
+        prey:
+          label: "prey"
+        prey_name:
+          label: "prey protein"
+        prey_locus:
+          label: "prey locus"
+        bait_uniprot:
+          label: "bait UniProt"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        prey_uniprot:
+          label: "prey UniProt"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        prey_sources:
+          label: "prey sources"
         sample_index:
           label: "sample"
         chain_i:
@@ -65,7 +88,13 @@ views:
     render-table:
       columns:
         pair:
-          label: "pair"
+          label: "pair id"
+        bait:
+          label: "bait"
+        prey:
+          label: "prey"
+        prey_name:
+          label: "prey protein"
         num_samples:
           label: "samples"
         num_succeeded:
