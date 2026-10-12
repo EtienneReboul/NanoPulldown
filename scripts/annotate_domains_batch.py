@@ -2,7 +2,7 @@
 """
 scripts/annotate_domains_batch.py — Stage 1b (batch)
 =====================================================
-Fills the per-sequence domain cache (data/annotation/_cache/domains/) for
+Fills the per-sequence domain cache (data/annotation/_cache/domains_v2/) for
 every UNIQUE sequence across all pair specs, with a small thread pool for the
 web calls (ScanProsite + InterPro API by UniProt accession). The per-pair `annotate_domains` rule
 then assembles its TSV from the cache with no network access.
@@ -24,8 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import annotation_cache_dir, load_pairs, seq_md5  # noqa: E402
-from annotate_domains import (CFG, STOP, annotate_sequence, interproscan_email,  # noqa: E402
-                              seq_accessions)
+from annotate_domains import (CFG, DOMAIN_CACHE, STOP, annotate_sequence,  # noqa: E402
+                              interproscan_email, seq_accessions)
 
 
 def main() -> int:
@@ -47,7 +47,7 @@ def main() -> int:
         accs.update(seq_accessions(spec))
         for ch in spec["sequences"]:
             seqs.add(ch["sequence"])
-    cache = annotation_cache_dir(CFG, "domains")
+    cache = annotation_cache_dir(CFG, DOMAIN_CACHE)
     todo = sorted((s for s in seqs if not (cache / f"{seq_md5(s)}.json").exists()), key=len)
     print(f"[domains_batch] {len(seqs)} unique sequence(s), {len(todo)} to annotate, "
           f"{workers} worker(s)", flush=True)

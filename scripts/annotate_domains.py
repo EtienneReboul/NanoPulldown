@@ -17,8 +17,21 @@ UniProt sequences at least once, submitting MD5(sequence) first usually
 returns cached matches immediately with no wait; only a genuine cache miss
 (e.g. a novel fragment/mutant) falls back to a full submit-and-poll run.
 
-No local databases. Output columns:
-  chain  source  db  accession  name  start  end  score  description
+No local databases. Per sequence, the cache (data/annotation/_cache/
+domains_v2/<md5>.json) holds {"version": 2, "hits": [...], "features": {...}}:
+
+  hits      every signature hit, plus the InterPro entries themselves
+            (db "InterPro"), each with: source db accession name start end
+            score description type (member-DB / entry type) ipr ipr_name
+            (the InterPro entry it is integrated in) representative
+            (InterPro's representative-domain/family flag; None when unknown,
+            i.e. hits from the InterProScan fallback or ScanProsite)
+  features  {disorder, coils, signal_peptide, tm}: [[start, end], ...] from
+            InterPro's extra features (MobiDB-lite, COILS, SignalP/Phobius,
+            TMbed/Phobius) -- the tracks InterPro's protein viewer shows
+
+TSV output columns:
+  chain  source  db  accession  name  start  end  score  description  type  ipr  representative
 
 The raw hits are NOT authoritative — scripts/merge_annotation.py turns them
 into a *proposed* `domains:` block for configs/curated_domains.yaml that a human
@@ -216,7 +229,16 @@ def _ips6_submit_and_poll(seq: str, cfg: dict) -> list[dict]:
     return _parse_ips_tsv(out.text)
 
 
+# InterProScan analyses that are feature tracks, not domain signatures
+_IPS_FEATURES = {"mobidblite": "disorder", "mobidb-lite": "disorder", "coils": "coils",
+                 "signalp_euk": "signal_peptide", "signalp": "signal_peptide",
+                 "tmhmm": "tm", "deeptmhmm": "tm", "tmbed": "tm"}
+
+
 def _parse_ips_tsv(txt: str) -> list[dict]:
+    """InterProScan TSV -> hits. No representative flags or entry types in
+    TSV (`representative`/`type` None: merge_annotation selects its own
+    representative set); feature analyses come back as db "feature:<track>"."""
     hits = []
     for line in txt.splitlines():
         p = line.rstrip("\n").split("\t")
@@ -228,14 +250,18 @@ def _parse_ips_tsv(txt: str) -> list[dict]:
             start, stop = int(p[6]), int(p[7])
         except ValueError:
             continue
+        ipr = p[11] if len(p) > 11 and p[11] not in ("", "-") else None
+        feat = _IPS_FEATURES.get(p[3].lower())
         hits.append({
-            "source": "InterProScan", "db": p[3],
+            "source": "InterProScan", "db": f"feature:{feat}" if feat else p[3],
             "accession": p[4],
-            "name": next((x for x in (p[12] if len(p) > 12 else "", p[5] if len(p) > 5 else "", p[4])
-                          if x not in ("", "-")), p[4]),
+            "name": next((x for x in (p[5] if len(p) > 5 else "", p[4]) if x not in ("", "-")), p[4]),
             "start": start, "end": stop,
             "score": p[8] if len(p) > 8 else "",
             "description": (p[12] if len(p) > 12 else p[5] if len(p) > 5 else ""),
+            "type": None, "ipr": ipr,
+            "ipr_name": p[12] if ipr and len(p) > 12 and p[12] not in ("", "-") else None,
+            "representative": None,
         })
     return hits
 
@@ -244,7 +270,7 @@ def _parse_ips_tsv(txt: str) -> list[dict]:
 
 # InterPro API source_database -> the db labels InterProScan's TSV uses, so
 # merge_annotation.py (DOMAIN_DBS_PREFERRED) sees identical values either way.
-_IPR_DB = {"pfam": "Pfam", "smart": "SMART", "profile": "PROSITE profiles",
+_IPR_DB = {"interpro": "InterPro", "pfam": "Pfam", "smart": "SMART", "profile": "PROSITE profiles",
            "prosite": "PROSITE patterns", "cathgene3d": "CATH-Gene3D",
            "cath-gene3d": "CATH-Gene3D", "ssf": "SUPERFAMILY", "cdd": "CDD",
            "panther": "PANTHER", "prints": "PRINTS", "pirsf": "PIRSF",
@@ -253,10 +279,20 @@ _IPR_DB = {"pfam": "Pfam", "smart": "SMART", "profile": "PROSITE profiles",
            "antifam": "AntiFam", "funfam": "CATH-FunFam"}
 
 
+_SITE_TYPES = {"conserved_site", "active_site", "binding_site", "ptm", "site"}
+
+
+def _norm_type(t: str | None) -> str | None:
+    t = (t or "").lower() or None
+    return "site" if t in _SITE_TYPES else t
+
+
 def interpro_by_accession(accession: str, seq_len: int, cfg: dict) -> list[dict] | None:
     """Precomputed InterPro matches for a UniProt accession (one request; the
-    API has no multi-accession form -- a comma list returns 204). Returns the
-    hit list, or None when the API can't answer for THIS sequence (unknown
+    API has no multi-accession form -- a comma list returns 204): every member
+    signature hit AND every InterPro entry (db "InterPro"), with InterPro's
+    `representative` flag and the entry each signature is integrated in.
+    Returns None when the API can't answer for THIS sequence (unknown
     accession / 204 / 404, or protein_length != len(seq), i.e. the pair's
     sequence is not the UniProt entry the matches were computed on) so the
     caller falls back to sequence-based InterProScan."""
@@ -272,23 +308,68 @@ def interpro_by_accession(accession: str, seq_len: int, cfg: dict) -> list[dict]
         for e in data.get("results", []):
             meta = e["metadata"]
             db = meta["source_database"].lower()
-            if db == "interpro":           # aggregate of member signatures, not a signature itself
-                continue
+            ipr = meta.get("integrated")
             for prot in e.get("proteins", []):
                 if int(prot.get("protein_length", seq_len)) != seq_len:
                     return None
                 for loc in prot.get("entry_protein_locations", []):
-                    for fr in loc.get("fragments", []):
-                        hits.append({
-                            "source": "InterPro", "db": _IPR_DB.get(db, meta["source_database"]),
-                            "accession": meta["accession"],
-                            "name": meta.get("name") or meta["accession"],
-                            "start": int(fr["start"]), "end": int(fr["end"]),
-                            "score": "" if loc.get("score") is None else loc["score"],
-                            "description": meta.get("name") or "",
-                        })
+                    frs = loc.get("fragments", [])
+                    if not frs:
+                        continue
+                    hits.append({
+                        "source": "InterPro", "db": _IPR_DB.get(db, meta["source_database"]),
+                        "accession": meta["accession"],
+                        "name": meta.get("name") or meta["accession"],
+                        # discontinuous domains: one span, first to last fragment
+                        "start": int(frs[0]["start"]), "end": int(frs[-1]["end"]),
+                        "score": "" if loc.get("score") is None else loc["score"],
+                        "description": meta.get("name") or "",
+                        "type": _norm_type(meta.get("type")),
+                        "ipr": ipr, "ipr_name": None,
+                        "representative": bool(loc.get("representative")),
+                    })
         url = data.get("next")
+    names = {h["accession"]: h["name"] for h in hits if h["db"] == "InterPro"}
+    for h in hits:
+        if h["ipr"]:
+            h["ipr_name"] = names.get(h["ipr"])
     return hits
+
+
+# InterPro extra-feature source -> track; first source listed wins per track
+_FEATURE_SOURCES = {
+    "disorder": [("mobidblt", None)],
+    "coils": [("coils", None)],
+    "signal_peptide": [("signalp_e", None), ("signalp_g+", None), ("signalp_g-", None),
+                       ("phobius", "SIGNAL_PEPTIDE")],
+    "tm": [("tmbed", "TMhelix"), ("phobius", "TRANSMEMBRANE")],
+}
+
+
+def interpro_features(accession: str, cfg: dict) -> dict[str, list[list[int]]]:
+    """InterPro's extra features of a UniProt entry (the protein viewer's
+    disorder / coiled-coil / signal-peptide / TM tracks) -> {track: [[s, e]]}."""
+    base = cfg.get("api_url", "https://www.ebi.ac.uk/interpro/api")
+    r = http_get(LIM_INTERPRO, f"{base}/protein/uniprot/{accession}?extra_features",
+                 headers={**UA, "Accept": "application/json"}, timeout=60)
+    if r.status_code in (204, 404):
+        return {}
+    r.raise_for_status()
+    found: dict[tuple[str, str], list[list[int]]] = {}
+    for key, v in (r.json() or {}).items():
+        db = (v.get("source_database") or "").lower()
+        for loc in v.get("locations", []):
+            for fr in loc.get("fragments", []):
+                found.setdefault((db, key), []).append([int(fr["start"]), int(fr["end"])])
+    out = {}
+    for track, sources in _FEATURE_SOURCES.items():
+        for db, prefix in sources:
+            locs = [l for (d, k), ls in found.items() if d == db and (prefix is None or k.startswith(prefix))
+                    for l in ls]
+            if locs:
+                out[track] = sorted(map(list, {tuple(l) for l in locs}))
+                break
+    return out
 
 
 def interproscan(seq: str, cfg: dict) -> tuple[list[dict], bool]:
@@ -315,13 +396,25 @@ def _retry(fn, *args, tries: int = 3, backoff: float = 5.0):
             time.sleep(backoff * (i + 1))
 
 
+DOMAIN_CACHE = "domains_v2"          # bump when the cached record's shape changes
+
+
+def _features_from_hits(hits: list[dict]) -> dict[str, list[list[int]]]:
+    out: dict[str, list[list[int]]] = {}
+    for h in hits:
+        if str(h["db"]).startswith("feature:"):
+            out.setdefault(h["db"].split(":", 1)[1], []).append([int(h["start"]), int(h["end"])])
+    return out
+
+
 def annotate_sequence(seq: str, acfg: dict, email: str, log=print,
-                      accession: str | None = None) -> list[dict]:
-    """ScanProsite + InterProScan hits for ONE sequence (no chain id), cached
-    on disk by md5(sequence). Thread-safe (used by the batch pool); an entry
-    is only cached when every service that was queried succeeded, so a
+                      accession: str | None = None) -> dict:
+    """{"version": 2, "hits": [...], "features": {...}} for ONE sequence (no
+    chain id): ScanProsite + InterPro (by accession, else InterProScan),
+    cached on disk by md5(sequence). Thread-safe (used by the batch pool); an
+    entry is only cached when every service that was queried succeeded, so a
     transient failure is retried on the next run instead of frozen in."""
-    cache = annotation_cache_dir(CFG, "domains") / f"{seq_md5(seq)}.json"
+    cache = annotation_cache_dir(CFG, DOMAIN_CACHE) / f"{seq_md5(seq)}.json"
     if cache.exists():
         return json.loads(cache.read_text())
 
@@ -331,22 +424,25 @@ def annotate_sequence(seq: str, acfg: dict, email: str, log=print,
                     acfg["prosite"].get("skip_profiles", False))
     except Exception as e:                           # noqa: BLE001
         log(f"  ScanProsite FAILED: {e}"); ps, ok = [], False
-    ip = None
+    ip, features = None, {}
     if accession:                                    # fast path: precomputed by UniProt accession
         try:
             ip = _retry(interpro_by_accession, accession, len(seq), acfg["interproscan"])
+            if ip is not None:
+                features = _retry(interpro_features, accession, acfg["interproscan"])
         except Exception as e:                       # noqa: BLE001
             log(f"  InterPro API FAILED for {accession}: {e}"); ok = False
     if ip is None and email and ok:                  # slow path: submit the sequence itself
         try:
             ip, _ = _retry(interproscan, seq, acfg["interproscan"])
+            features = _features_from_hits(ip)
+            ip = [h for h in ip if not str(h["db"]).startswith("feature:")]
         except Exception as e:                       # noqa: BLE001
             log(f"  InterProScan FAILED: {e}"); ok = False
-    ip = ip or []
-    hits = ps + ip
+    rec = {"version": 2, "hits": ps + (ip or []), "features": features}
     if ok:
-        atomic_write(cache, json.dumps(hits))
-    return hits
+        atomic_write(cache, json.dumps(rec))
+    return rec
 
 
 def seq_accessions(spec: dict) -> dict[str, str]:
@@ -373,7 +469,8 @@ def interproscan_email(acfg: dict) -> str:
 
 # ── main ────────────────────────────────────────────────────────────────
 
-DOMAIN_COLUMNS = ["chain", "source", "db", "accession", "name", "start", "end", "score", "description"]
+DOMAIN_COLUMNS = ["chain", "source", "db", "accession", "name", "start", "end", "score", "description",
+                  "type", "ipr", "representative"]
 
 
 def pair_domain_rows(spec: dict) -> list[dict]:
@@ -393,12 +490,24 @@ def pair_domain_rows(spec: dict) -> list[dict]:
     accs = seq_accessions(spec)
     for seq, cids in by_seq.items():
         hits = annotate_sequence(seq, acfg, email, log=lambda m: print(m, file=sys.stderr),
-                                 accession=accs.get(seq))
+                                 accession=accs.get(seq))["hits"]
         print(f"[annotate_domains] chains {cids} ({len(seq)} aa): {len(hits)} hit(s)", flush=True)
         for cid in cids:
             for h in hits:
                 rows.append({**h, "chain": cid})
     return sorted(rows, key=lambda x: (x["chain"], x["start"], x["end"]))
+
+
+def pair_domain_features(spec: dict) -> dict[str, dict[str, list[list[int]]]]:
+    """{chain id: {track: [[start, end], ...]}} (see the module docstring),
+    from the same per-sequence cache as pair_domain_rows."""
+    acfg, accs, out = CFG["annotate"], seq_accessions(spec), {}
+    email = (acfg["interproscan"].get("email") or "").strip()
+    for ch in protein_chains(spec):
+        rec = annotate_sequence(ch["sequence"], acfg, email, log=lambda m: print(m, file=sys.stderr),
+                                accession=accs.get(ch["sequence"]))
+        out[ch["id"]] = rec.get("features") or {}
+    return out
 
 
 def main() -> int:

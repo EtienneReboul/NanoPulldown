@@ -7,10 +7,15 @@ list, folded locally with ESMFold2-Fast (one seed,
 
 * **Domain map + AIUPred** — split into **Baits** and **Preys**, one figure
   per distinct protein (not per pair: the bait is drawn once, not once per
-  pair it is in). Each figure stacks AIUPred's disorder / binding (MoRF) /
-  linker tracks over the segment map (domain / linker / disordered / MoRF,
-  from Stage 1's ScanProsite + InterProScan v6 annotation, or the curated
-  ``domains:``). The ``pairs`` label counts the pairs the protein is in.
+  pair it is in), laid out like InterPro's protein viewer: AIUPred's
+  disorder / binding (MoRF) / linker tracks; the protein's family; the
+  **domain map** the heatmaps use; one row per InterPro entry with the member
+  databases that agree on it; unintegrated signatures; MobiDB-lite, coiled
+  coils, signal peptides, TM helices and AIUPred MoRFs. The proposed domain
+  map is InterPro's representative domain set (plus InterPro domain entries
+  it leaves uncovered), each region named after its InterPro domain entry;
+  the curated ``domains:`` replace it once reviewed. The ``pairs`` label
+  counts the pairs the protein is in.
 * **Bait x prey domain confidence** — one panel per diffusion sample,
   cell = mean ``1 - PAE/pae_cutoff`` (clipped at 0) between each bait-domain x
   prey-domain pair (AlphaPulldown-style PAE-derived confidence, domain-aggregated

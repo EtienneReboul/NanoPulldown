@@ -29,7 +29,13 @@ returns the spec as a dict (`name`, `bait`/`prey` `{uniprot, copies, regions}`,
 ## Curated domains — `configs/curated_domains.yaml` (hand-edited, tracked)
 
 Only pairs you have curated appear here. Preprocessing writes a proposal to
-`data/annotation/<pair>/annotation.yaml`. Copy its `domains:` block under the
+`data/annotation/<pair>/annotation.yaml`: InterPro's representative domain set,
+plus any InterPro domain entries that set leaves uncovered, each region named
+after its best-matching InterPro domain entry (see
+`scripts/merge_annotation.py`). The file's `interpro:` block holds the full
+evidence (family, every InterPro entry with its member databases, unintegrated
+signatures, MobiDB-lite / coils / signal peptide / TM tracks) that the domain
+figure draws. Copy its `domains:` block under the
 pair's name and set `annotation_reviewed: true`; report figures then use it
 instead of the proposal. Curation is informational only and never gates
 folding. Editing an entry reruns just that pair's figures: rules carry a digest
