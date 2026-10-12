@@ -31,9 +31,14 @@ args=(-s "$SNAKEFILE" --report "$OUT")
 [[ -f "$CSS" ]] && args+=(--report-stylesheet "$CSS")
 
 if command -v snakemake >/dev/null 2>&1; then
-    ( cd "$REPO" && snakemake "${args[@]}" ) \
-        && echo "[build_report] ok: $OUT" \
-        || echo "[build_report] WARNING: report build failed (non-fatal)" >&2
+    if ( cd "$REPO" && snakemake "${args[@]}" ); then
+        echo "[build_report] ok: $OUT"
+        # dark-theme fixes the stylesheet can't reach (Vega canvas charts, figure cards)
+        ( cd "$REPO" && python scripts/style_report.py "$OUT" ) \
+            || echo "[build_report] WARNING: style_report failed (report left unstyled)" >&2
+    else
+        echo "[build_report] WARNING: report build failed (non-fatal)" >&2
+    fi
 else
     echo "[build_report] WARNING: snakemake not on PATH — skipping report build" >&2
 fi

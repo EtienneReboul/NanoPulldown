@@ -19,8 +19,9 @@ list, folded locally with ESMFold2-Fast (one seed,
 * **Bait x prey domain confidence** — one panel per diffusion sample,
   cell = mean ``1 - PAE/pae_cutoff`` (clipped at 0) between each bait-domain x
   prey-domain pair (AlphaPulldown-style PAE-derived confidence, domain-aggregated
-  the way ab_initio_pipeline aggregates PLIP contacts). White = no confident
-  relative placement, dark blue = confident.
+  the way ab_initio_pipeline aggregates PLIP contacts). Cells fade into the
+  background where there is no confident relative placement and turn bright
+  blue where there is.
 * **Results table** (interactive) — per pair, per sample, per bait-prey
   chain pair: pTM / ipTM / ESMFold2's own pair ipTM, plus ipSAE / iLIS /
   Pinc / pDockQ / pDockQ2 from ab_initio_pipeline's PAE-based rescoring

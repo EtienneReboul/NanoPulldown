@@ -36,6 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402
 from fold_io import read_fold  # noqa: E402
 from lib_pipeline import chain_labels, load_pair, load_proteins, pair_labels  # noqa: E402
+from plot_theme import theme  # noqa: E402
+
+TH = theme()
 
 
 def domain_map(spec, chain, label=None):
@@ -80,9 +83,9 @@ def one_heatmap(ax, pae, chain_ids, res_idx, bait_chains, prey_chains, dmap, pae
         for ci, cl in enumerate(col_labels):
             jj = col_of[cl]
             mat[ri, ci] = conf[np.ix_(ii, jj)].mean()
-    # single-hue light -> dark: 0 (no confident relative placement, the common
-    # case for a non-binder) is near-white, not black
-    im = ax.imshow(mat, cmap="Blues", aspect="auto", vmin=0, vmax=1)
+    # single-hue ramp: 0 (no confident relative placement, the common case for a
+    # non-binder) recedes into the surface, confident cells stand out
+    im = ax.imshow(mat, cmap=TH.cmap(), aspect="auto", vmin=0, vmax=1)
     def _short(lbl, n=28):                      # long InterPro names squash the grid
         return lbl if len(lbl) <= n else lbl[:n - 1] + "…"
     ax.set_xticks(range(len(col_labels))); ax.set_xticklabels([_short(l) for l in col_labels], rotation=60, ha="right", fontsize=7)
@@ -90,7 +93,7 @@ def one_heatmap(ax, pae, chain_ids, res_idx, bait_chains, prey_chains, dmap, pae
     ax.set_title(title, fontsize=8)
     for (i, j), v in np.ndenumerate(mat):
         ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=6,
-                color="white" if v >= 0.55 else "#1f2937")
+                color=TH.cell_ink(v))
     return im
 
 
@@ -106,6 +109,7 @@ def main() -> int:
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
 
+    TH.apply()
     spec = load_pair(a.pair)
     if a.annotation and Path(a.annotation).exists():
         proposed = (yaml.safe_load(Path(a.annotation).read_text()) or {}).get("domains") or {}
@@ -136,7 +140,7 @@ def main() -> int:
         fig, ax = plt.subplots(figsize=(4, 2))
         ax.text(0.5, 0.5, f"{names['label']}: no PAE arrays available", ha="center")
         for fmt in a.formats.split(","):
-            fig.savefig(f"{Path(a.out).with_suffix('')}.{fmt.strip()}")
+            TH.save(fig, f"{Path(a.out).with_suffix('')}.{fmt.strip()}")
         return 0
 
     ncol = min(3, len(panels))
@@ -157,7 +161,7 @@ def main() -> int:
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     for fmt in a.formats.split(","):
-        fig.savefig(f"{out.with_suffix('')}.{fmt.strip()}", bbox_inches="tight")
+        TH.save(fig, f"{out.with_suffix('')}.{fmt.strip()}", bbox_inches="tight")
     plt.close(fig)
     print(f"[plot_domain_heatmap] -> {out}")
     return 0

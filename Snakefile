@@ -137,6 +137,8 @@ CL = MZ["clashes"]
 PLIP = CFG["plip"]
 CXC = PLIP["cxc"]
 RPT = CFG["report"]
+# figure rules carry the theme as a param, so switching it redraws them
+FIG_THEME = f"{RPT.get('figure_theme', 'dark')}/{bool(RPT.get('figure_transparent', False))}"
 DOCKER_HEAVY_POOL = int(CFG["scheduling"]["docker_heavy_pool"])
 DATAVZRD = bool(RPT.get("datavzrd", False))
 FMTS = ",".join(RPT["figure_formats"])
@@ -283,6 +285,7 @@ rule fig_domain_bar:
     conda:
         "envs/report.yaml"
     params:
+        theme=FIG_THEME,
         fmts=",".join(CFG["report"]["figure_formats"]),
         cutoff=CFG["annotate"]["consensus"]["disorder_cutoff"],
         pair=lambda wc: DOMAIN_PROTEINS[wc.protein]["pair"],
@@ -535,6 +538,7 @@ rule fig_plip_contacts:
     conda:
         "envs/report.yaml"
     params:
+        theme=FIG_THEME,
         fmts=FMTS,
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
@@ -559,6 +563,7 @@ rule fig_domain_heatmap:
     conda:
         "envs/report.yaml"
     params:
+        theme=FIG_THEME,
         pae=MET["pae_cutoff"], fmts=FMTS,
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
@@ -581,6 +586,7 @@ rule fig_minimize_energy:
     conda:
         "envs/report.yaml"
     params:
+        theme=FIG_THEME,
         n=N_SAMPLES, maxe=MZ["max_abs_energy"], fmts=FMTS,
         labels=lambda wc: LABEL_KEY[wc.pair],
     shell:

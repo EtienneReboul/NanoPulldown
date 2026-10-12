@@ -24,6 +24,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import load_pair, load_proteins, pair_labels  # noqa: E402
+from plot_theme import theme  # noqa: E402
+
+TH = theme()
 
 
 def main() -> int:
@@ -37,6 +40,7 @@ def main() -> int:
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
 
+    TH.apply()
     base = Path(a.results_root) / a.pair / "minimized"
     fig, ax = plt.subplots(figsize=(5, 4), constrained_layout=True)
     n_ok = 0
@@ -67,7 +71,7 @@ def main() -> int:
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     for fmt in a.formats.split(","):
-        fig.savefig(f"{out.with_suffix('')}.{fmt.strip()}")
+        TH.save(fig, f"{out.with_suffix('')}.{fmt.strip()}")
     plt.close(fig)
 
     table_path = Path(a.out_table)

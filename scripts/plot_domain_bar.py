@@ -37,15 +37,18 @@ import yaml  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import cached_disorder_tracks, chain_by_id, load_config, load_pair, load_proteins  # noqa: E402
+from plot_theme import theme  # noqa: E402
 
-# reference categorical palette (dataviz skill), one hue per entry type
-TYPE_COLOR = {"family": "#6250d6", "domain": "#2a78d6", "homologous_superfamily": "#1baf7a",
-              "repeat": "#eb6834", "site": "#e87ba4", "unintegrated": "#9a9893"}
-KIND_COLOR = {"domain": "#2a78d6", "linker": "#c9c8c3", "disordered": "#f2b8a2"}
-TRACK_COLOR = {"disorder": "#e34948", "binding": "#008300", "linker": "#eda100"}
-FEATURES = [("disorder", "MobiDB-lite", "#e34948"), ("coils", "Coiled coil", "#eda100"),
-            ("signal_peptide", "Signal peptide", "#6250d6"), ("tm", "TM helix", "#008300")]
-INK, INK2, RULE = "#0b0b0b", "#52514e", "#d9d8d4"
+# colours by role, from the report theme (scripts/plot_theme.py; one hue per entry type)
+TH = theme()
+TYPE_COLOR = {k: TH.color(k) for k in
+              ("family", "domain", "homologous_superfamily", "repeat", "site", "unintegrated")}
+KIND_COLOR = {k: TH.region(k) for k in ("domain", "linker", "disordered")}
+TRACK_COLOR = {"disorder": TH.color("disorder"), "binding": TH.color("binding"),
+               "linker": TH.color("linker_track")}
+FEATURES = [("disorder", "MobiDB-lite", TH.color("disorder")), ("coils", "Coiled coil", TH.color("coils")),
+            ("signal_peptide", "Signal peptide", TH.color("signal_peptide")), ("tm", "TM helix", TH.color("tm"))]
+INK, INK2, RULE = TH.ink, TH.ink2, TH.rule
 
 AX_W_IN, LEFT_IN, FIG_W = 6.7, 2.95, 10.0     # fixed geometry: label fitting is computable
 ROW_IN = 0.30
@@ -77,7 +80,7 @@ def _fit(label: str | None, s: int, e: int, seqlen: int, size: float = 6.5) -> s
 def _bar(ax, y, s, e, color, seqlen, label=None, h=0.62, alpha=1.0):
     ax.add_patch(mpatches.FancyBboxPatch(
         (s, y - h / 2), e - s + 1, h, boxstyle="round,pad=0,rounding_size=2",
-        mutation_aspect=0.08, facecolor=color, alpha=alpha, edgecolor="white", lw=1.0))
+        mutation_aspect=0.08, facecolor=color, alpha=alpha, edgecolor=TH.surface, lw=1.0))
     t = _fit(label, s, e, seqlen)
     if t:
         ax.text((s + e) / 2, y, t, ha="center", va="center", fontsize=6.5, color="white")
@@ -164,6 +167,7 @@ def main() -> int:
     seqlen = max([len(chain_seq)] + [int(d["end"]) for d in segs])
     tracks = {} if args.no_disorder or not chain_seq else cached_disorder_tracks(load_config(), chain_seq)
 
+    TH.apply()
     rows = build_rows(segs, ipr, source_label)
     n_extra = sum(0.6 for r in rows if r.get("header") or r.get("gap"))
     top_in, aiu_in, gap_in, bot_in = 0.45, (0 if args.no_disorder else 1.35), 0.35, 0.75
@@ -236,7 +240,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     stem = out.with_suffix("")
     for fmt in args.formats.split(","):
-        fig.savefig(f"{stem}.{fmt.strip()}", dpi=150 if fmt.strip() == "png" else None)
+        TH.save(fig, f"{stem}.{fmt.strip()}", dpi=150 if fmt.strip() == "png" else None)
     plt.close(fig)
     print(f"[plot_domain_bar] -> {out}")
     return 0

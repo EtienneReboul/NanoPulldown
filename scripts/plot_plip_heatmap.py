@@ -29,6 +29,9 @@ import yaml  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import chain_labels, load_pair, load_proteins, pair_labels  # noqa: E402
+from plot_theme import theme  # noqa: E402
+
+TH = theme()
 
 
 def domain_map(spec, chain, label=None):
@@ -56,6 +59,7 @@ def main() -> int:
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
 
+    TH.apply()
     spec = load_pair(a.pair)
     proteins = load_proteins()
     clabel = chain_labels(spec, proteins)
@@ -82,7 +86,8 @@ def main() -> int:
         )
         piv = df.pivot_table(index="rdom", columns="ldom", values="dist",
                              aggfunc="count", fill_value=0) / n_samples
-        im = ax.imshow(piv.values, cmap="magma", aspect="auto")
+        vmax = max(float(piv.values.max()), 1e-9)
+        im = ax.imshow(piv.values, cmap=TH.cmap(), aspect="auto", vmin=0, vmax=vmax)
         ax.set_xticks(range(len(piv.columns)))
         ax.set_xticklabels(piv.columns, rotation=60, ha="right", fontsize=7)
         ax.set_yticks(range(len(piv.index)))
@@ -90,12 +95,12 @@ def main() -> int:
         for (i, j), v in np.ndenumerate(piv.values):
             if v:
                 ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=6,
-                        color="white" if v < piv.values.max() * 0.6 else "black")
+                        color=TH.cell_ink(v / vmax))
         fig.colorbar(im, ax=ax, label=f"mean contacts / sample (n={n_samples})")
 
     ax.set_title(f"{names['label']}: PLIP domain x domain contacts\n[{a.pair}]", fontsize=9)
     for fmt in a.formats.split(","):
-        fig.savefig(f"{out.with_suffix('')}.{fmt.strip()}")
+        TH.save(fig, f"{out.with_suffix('')}.{fmt.strip()}")
     plt.close(fig)
     print(f"[plot_plip_heatmap] -> {out}")
     return 0

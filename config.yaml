@@ -1719,6 +1719,8 @@ scheduling:
 # ── Stage 2e: reports ────────────────────────────────────────────────────────
 report:
   figure_formats: ["svg", "pdf"]   # NEVER png/jpeg
+  figure_theme: "dark"              # dark (matches the report's dark stylesheet) | light (print / slides)
+  figure_transparent: false         # true: no figure background -- sits directly on the report page
   datavzrd: true                    # tabular report items rendered via the datavzrd wrapper
 
 # ── Output directories ──────────────────────────────────────────────────────

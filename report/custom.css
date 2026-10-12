@@ -108,6 +108,8 @@ table:not(.table-auto) tr:nth-child(even) td,
 table:not(.table-auto) tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.03) !important; }
 
 /* ── vega: rule graph, runtimes, timeline ──────────────────────────────── */
+/* These render to <canvas>, so the text rules below only reach an SVG
+   renderer; the real recolouring is done in the specs by scripts/style_report.py. */
 .vega-embed text, #rulegraph text, #runtimes text, #timeline text {
   fill: #e8eef5 !important;
 }
@@ -120,7 +122,9 @@ table:not(.table-auto) tbody tr:nth-child(even) { background: rgba(255, 255, 255
 .vega-actions { background: var(--ab-panel-2) !important; color: var(--ab-fg) !important; }
 .vega-actions a:hover { background: rgba(110, 198, 255, 0.12) !important; }
 
-/* ── figures: matplotlib SVGs bake in a white ground — frame them ───────── */
+/* ── figures: framed on a card the colour of the figures' own surface ─────
+   (--fig-card is set by scripts/style_report.py from report.figure_theme:
+   the dark panel colour for dark figures, white for light ones). */
 /* Let the single-figure view use the whole main column instead of shrink-
    wrapping to the SVG's intrinsic ~880 px (which left the plot small and
    clipped its edge labels). */
@@ -139,10 +143,10 @@ img[src$=".svg"], object[type="image/svg+xml"] {
   height: auto;
   margin: 0 auto;
   box-sizing: border-box;
-  background: #ffffff;
-  /* white "padding" as a border so Chrome's `img { overflow: clip }` can't
-     crop the plot's outer labels/legend. */
-  border: 16px solid #ffffff;
+  background: var(--fig-card, #ffffff);
+  /* card-coloured "padding" as a border so Chrome's `img { overflow: clip }`
+     can't crop the plot's outer labels/legend. */
+  border: 16px solid var(--fig-card, #ffffff);
   border-radius: 10px;
   overflow: visible;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
