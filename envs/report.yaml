@@ -17,6 +17,5 @@ dependencies:
   - pyarrow>=15.0
   - matplotlib>=3.8
   - plotly>=5.18
-  - h5py>=3.10
   - pyyaml>=6.0
   - datavzrd>=2.36

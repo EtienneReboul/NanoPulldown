@@ -123,8 +123,8 @@ def main() -> int:
     base = Path(a.results_root) / a.pair
     rows = []
     for i in range(a.num_samples):
-        for state, path in (("raw", base / "raw" / f"sample_{i}.cif"),
-                            ("minimized", base / "minimized" / f"sample_{i}.pdb")):
+        for state, path in (("raw", base / "raw" / f"sample_{i}.cif.gz"),
+                            ("minimized", base / "minimized" / f"sample_{i}.pdb.gz")):
             if not path.exists():
                 print(f"[count_clashes] missing {path} — skipped")
                 continue

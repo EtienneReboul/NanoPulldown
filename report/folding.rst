@@ -24,6 +24,6 @@ list, folded locally with ESMFold2-Fast (one seed,
 * **Minimization energy** — OpenMM energy trace per diffusion sample, plus a
   failure-rate table for any sample whose minimization diverged.
 
-Pairs with ``annotation_reviewed: false`` are refused at the start of this
-workflow — review ``data/annotation/<pair>/annotation.yaml`` and curate
-``domains:`` in ``configs/<pair>.yaml`` first.
+Domain maps use the curated ``domains:`` of ``configs/curated_domains.yaml``
+for pairs marked ``annotation_reviewed: true``, and the automatic proposal in
+``data/annotation/<pair>/annotation.yaml`` otherwise; curation never blocks a run.

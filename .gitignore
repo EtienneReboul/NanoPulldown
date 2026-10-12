@@ -7,12 +7,12 @@ logs/
 __pycache__/
 *.pyc
 .DS_Store
-# Auto-generated per-pair experiment specs (scripts/expand_pairs.py output) --
-# these accumulate one per bait x prey combination and are reproducible from
-# configs/baits.txt + configs/preys.txt, so they're not tracked. The worked
-# example stays tracked as the schema template (see configs/_schema.md).
+# Auto-generated pair specs (scripts/expand_pairs.py output) -- reproducible
+# from configs/baits.txt + configs/preys.txt, so not tracked. Hand-curated
+# domains (configs/curated_domains.yaml) ARE tracked (see configs/_schema.md).
+configs/pairs.parquet
 configs/*.yaml
-!configs/example_toy__example_toy.yaml
+!configs/curated_domains.yaml
 # Per-run output dirs from run overlays (config_<run>.yaml sets dirs: to
 # results_<run>/, reports_<run>/, logs_<run>/)
 results_*/

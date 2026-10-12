@@ -1,5 +1,5 @@
 name: nanopulldown-pliparser
-# Stage 2e — converts a PLIP TXT report into summary.csv (rule plip_to_csv).
+# Stage 2e — converts a PLIP TXT report into contact CSVs + a ChimeraX .cxc (rule plip_parse).
 channels:
   - conda-forge
   - nodefaults

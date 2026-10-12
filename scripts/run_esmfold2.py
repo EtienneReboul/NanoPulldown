@@ -7,15 +7,13 @@ random seed, `esmfold2.num_diffusion_samples` diffusion samples (5 by
 default), no MSA, no templates -- the -Fast checkpoint ignores an MSA even
 if one were passed, so simply never passing one is the "no MSA" requirement.
 
-Writes, per pair, the same "raw sprawl before compression" shape
-ab_initio_pipeline uses (see compress_abcfold_metadata.py's own docstring
-for the AF3-style precedent this mirrors):
-  results/<pair>/raw/sample_<i>.cif                structure
-  results/<pair>/raw/sample_<i>_confidences.json   ptm, iptm, plddt, pae,
-                                                    pair_chains_iptm, chain_id
-                                                    (per token), chain_lookup
-scripts/compress_esmfold2_metadata.py then turns that sprawl into
-results/metadata/<pair>/{model_metadata.parquet, arrays.h5}.
+Writes, per pair, into --out-dir (results/<pair>/raw/):
+  sample_<i>.cif.gz   structure, gzipped (gemmi / ChimeraX read it as-is)
+  fold.parquet        one row per sample: ptm, iptm, plddt, pae (float16),
+                      per-token chain/residue index, pair_chains_iptm -- the
+                      schema lives in scripts/fold_io.py. Written LAST and
+                      atomically, so it doubles as the "pair folded" marker.
+No intermediate JSON: ESMFold2's result objects go straight to Parquet.
 
 *** IMPLEMENTATION NOTE *** the notebook this is based on
 (/Users/ereboul/projects/esmfold2_test/esmfold2_local_applesilicon.ipynb)
@@ -39,13 +37,14 @@ no-op otherwise. There is no other guard: always pass that flag.
 from __future__ import annotations
 
 import argparse
-import json
+import gzip
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fold_io import FOLD_FILE, fold_row, write_fold  # noqa: E402
 from lib_pipeline import load_config, load_pair, protein_chains  # noqa: E402
 
 
@@ -98,49 +97,44 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
         results = [results]
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    written = []
+    pair = spec["name"]
+    written, rows = [], []
     for i, result in enumerate(results):
-        cif_path = out_dir / f"sample_{i}.cif"
-        cif_path.write_text(result.complex.to_mmcif())
+        cif_path = out_dir / f"sample_{i}.cif.gz"
+        # mtime=0: identical structures give byte-identical files
+        with gzip.GzipFile(cif_path, "wb", mtime=0) as fh:
+            fh.write(result.complex.to_mmcif().encode())
 
-        chain_lookup = dict(result.complex.metadata.chain_lookup)
-        payload = {
-            "sample_index": i,
-            "seed": int(ef_cfg["seed"]),
-            "ptm": result.ptm,
-            "iptm": result.iptm,
-            "plddt": np.asarray(result.plddt).astype(np.float32).tolist(),
-            "pae": (np.asarray(result.pae).astype(np.float32).tolist()
-                    if result.pae is not None else None),
-            "pair_chains_iptm": (np.asarray(result.pair_chains_iptm).astype(np.float32).tolist()
-                                  if result.pair_chains_iptm is not None else None),
-            "chain_id": np.asarray(result.complex.chain_id).astype(int).tolist(),
-            "chain_lookup": {str(k): v for k, v in chain_lookup.items()},
-            "residue_index": (np.asarray(result.residue_index).astype(int).tolist()
-                               if result.residue_index is not None else None),
-        }
-        json_path = out_dir / f"sample_{i}_confidences.json"
-        json_path.write_text(json.dumps(payload))
+        rows.append(fold_row(
+            # always the results/<pair>/raw/ location, even when written to
+            # run_esmfold2_batch.py's cache dir (hard-linked there afterwards)
+            pair, ef_cfg["seed"], i, f"{pair}/raw/{cif_path.name}",
+            ptm=result.ptm, iptm=result.iptm, plddt=result.plddt, pae=result.pae,
+            chain_id=result.complex.chain_id,
+            chain_lookup=dict(result.complex.metadata.chain_lookup),
+            residue_index=result.residue_index,
+            pair_chains_iptm=result.pair_chains_iptm,
+        ))
         written.append(cif_path)
         print(f"[run_esmfold2] sample {i}: ptm={result.ptm:.3f} iptm={result.iptm}"
               if result.ptm is not None else f"[run_esmfold2] sample {i} written")
 
+    write_fold(out_dir / FOLD_FILE, rows, run_params={
+        k: ef_cfg[k] for k in ("checkpoint", "num_loops", "num_sampling_steps",
+                               "num_diffusion_samples", "seed")})
     return written
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
-    ap.add_argument("--spec", required=True)
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--done", required=True, help="sentinel file to touch on success")
     args = ap.parse_args()
 
     cfg = load_config()
-    spec = load_pair(args.pair, Path(args.spec).resolve().parent.parent)
+    spec = load_pair(args.pair)
 
     fold_pair(spec, cfg, Path(args.out_dir))
-    Path(args.done).write_text("ok\n")
     return 0
 
 

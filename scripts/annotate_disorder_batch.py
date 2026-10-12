@@ -11,7 +11,7 @@ container), so a GPU buys nothing here and stays free for ESMFold2.
 Sequences are sent in chunks (annotate.aiupred.batch_size, default 200) so a
 failure costs one chunk, not the run. Incremental: cached sequences are skipped.
 
-Usage: python scripts/annotate_disorder_batch.py --specs configs/*.yaml --done <sentinel>
+Usage: python scripts/annotate_disorder_batch.py --pairs <pair> [<pair> ...] --done <sentinel>
 """
 from __future__ import annotations
 
@@ -21,24 +21,24 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import annotation_cache_dir, atomic_write, seq_md5  # noqa: E402
+from lib_pipeline import annotation_cache_dir, atomic_write, load_pairs, seq_md5  # noqa: E402
 from annotate_disorder_aiupred import CFG, cache_is_current, run_aiupred_batch  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--specs", nargs="+", required=True)
+    ap.add_argument("--pairs", nargs="+", required=True)
     ap.add_argument("--done", required=True)
     a = ap.parse_args()
 
     acfg = CFG["annotate"]["aiupred"]
     chunk = int(acfg.get("batch_size", 200))
     seqs: set[str] = set()
-    for f in a.specs:
-        for ch in yaml.safe_load(Path(f).read_text())["sequences"]:
+    specs = load_pairs()
+    for p in a.pairs:
+        for ch in specs[p]["sequences"]:
             seqs.add(ch["sequence"])
     cache = annotation_cache_dir(CFG, "disorder")
     todo = sorted((s for s in seqs if not cache_is_current(cache / f"{seq_md5(s)}.json")), key=len)

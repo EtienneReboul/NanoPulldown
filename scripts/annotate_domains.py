@@ -21,7 +21,7 @@ No local databases. Output columns:
   chain  source  db  accession  name  start  end  score  description
 
 The raw hits are NOT authoritative — scripts/merge_annotation.py turns them
-into a *proposed* `domains:` block for configs/<pair>.yaml that a human
+into a *proposed* `domains:` block for configs/curated_domains.yaml that a human
 reviews and curates.
 """
 from __future__ import annotations
@@ -373,14 +373,12 @@ def interproscan_email(acfg: dict) -> str:
 
 # ── main ────────────────────────────────────────────────────────────────
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--pair", required=True)
-    ap.add_argument("--spec", required=True)
-    ap.add_argument("--out", required=True)
-    args = ap.parse_args()
+DOMAIN_COLUMNS = ["chain", "source", "db", "accession", "name", "start", "end", "score", "description"]
 
-    spec = load_pair(args.pair, Path(args.spec).resolve().parent.parent)
+
+def pair_domain_rows(spec: dict) -> list[dict]:
+    """Every domain/motif hit of every chain of a pair (DOMAIN_COLUMNS keys),
+    from the per-sequence cache, falling back to a live lookup on a miss."""
     acfg = CFG["annotate"]
     rows: list[dict] = []
     email = interproscan_email(acfg)
@@ -400,14 +398,22 @@ def main() -> int:
         for cid in cids:
             for h in hits:
                 rows.append({**h, "chain": cid})
+    return sorted(rows, key=lambda x: (x["chain"], x["start"], x["end"]))
 
-    cols = ["chain", "source", "db", "accession", "name",
-            "start", "end", "score", "description"]
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--pair", required=True)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    rows = pair_domain_rows(load_pair(args.pair))
+    cols = DOMAIN_COLUMNS
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as fh:
         fh.write("\t".join(cols) + "\n")
-        for r in sorted(rows, key=lambda x: (x["chain"], x["start"], x["end"])):
+        for r in rows:
             fh.write("\t".join(str(r.get(c, "")).replace("\t", " ") for c in cols) + "\n")
     print(f"[annotate_domains] wrote {len(rows)} row(s) -> {out}")
     return 0

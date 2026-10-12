@@ -6,7 +6,7 @@
 # ESMFold2-Fast (no MSA, no templates, no cluster) instead of AlphaFold-
 # multimer/AF3. Adding a new pair should need edits ONLY to:
 #   1. this file's `pairs:` list (one line per bait__prey pair), and
-#   2. a new configs/<pair>.yaml spec (see configs/_schema.md) — generated
+#   2. its row in configs/pairs.parquet (see configs/_schema.md) — added
 #      for you by scripts/expand_pairs.py from configs/baits.txt x
 #      configs/preys.txt.
 # Per-machine / per-user paths go in config.local.yaml (copy
@@ -1591,10 +1591,10 @@ uniprot:
   timeout_s: 30
 
 # ── Stage 1b: sequence annotation (domains / disorder / MoRF) ──────────────
-# Results are written to data/annotation/<pair>/ and a proposed merge into
-# configs/<pair>.yaml is left at data/annotation/<pair>/annotation.yaml for
-# HUMAN REVIEW. Downstream stages read the hand-curated `domains:` block in
-# configs/<pair>.yaml, never the raw annotation directly.
+# Annotation is cached per unique sequence (data/annotation/_cache/); a proposed
+# `domains:` block per pair is left at data/annotation/<pair>/annotation.yaml for
+# HUMAN REVIEW. Curated blocks go in configs/curated_domains.yaml, which report
+# figures prefer over the proposal once `annotation_reviewed: true`.
 annotate:
   web_workers: 4                # thread pool for the ScanProsite/InterPro batch
   # Neither InterPro nor ScanProsite publishes a numeric limit. InterPro asks users to
@@ -1690,14 +1690,14 @@ minimize:
 # ── Stage 2d: PLIP contact analysis (docker + pliparser) ────────────────────
 # Once per minimized sample: PLIP (docker) identifies bait<->prey contacts,
 # treating bait_chains as one interaction partner and prey_chains as the
-# other (--chains); pliparser (scripts/plip_to_csv rule) turns its TXT
-# report into summary.csv, then all of a pair's samples are merged into
-# results/<pair>/plip_summary.csv.
+# other (--chains); pliparser (rule plip_parse) turns its TXT report into a
+# ChimeraX .cxc and a contact table, and all of a pair's samples are merged
+# into results/<pair>/plip_contacts.parquet.
 plip:
   image: "docker.io/pharmai/plip:latest"
   docker_memory: "8g"
   docker_platform: "linux/amd64"   # pharmai/plip has no arm64 build -- required on Apple Silicon
-  # ChimeraX visualization script (rule plip_to_cxc, pliparser csv2cxc)
+  # ChimeraX visualization script (rule plip_parse, pliparser csv2cxc)
   cxc:
     bait_color: "gray"
     prey_color: "cornflowerblue"
@@ -1723,7 +1723,6 @@ report:
 dirs:
   sequences:   "data/sequences"
   annotation:  "data/annotation"
-  metadata:    "results/metadata"
   postproc:    "results"        # per-pair results live at results/<pair>/
   reports:     "reports"
   logs:        "logs"

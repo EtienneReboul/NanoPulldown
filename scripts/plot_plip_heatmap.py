@@ -3,9 +3,9 @@
 scripts/plot_plip_heatmap.py — Stage 2e report figure
 =========================================================
 Domain x domain mean-PLIP-contact heatmap for one pair, from
-results/<pair>/plip_summary.csv (pliparser's common columns -- resnr,
+results/<pair>/plip_contacts.parquet (pliparser's common columns -- resnr,
 restype, reschain, resnr_lig, restype_lig, reschain_lig, dist,
-interaction_type -- plus the `sample` column added by
+interaction_type -- plus the `pair`/`sample` columns added by
 scripts/aggregate_plip_summaries.py). One panel, averaged over all
 esmfold2.num_diffusion_samples minimized samples.
 
@@ -16,6 +16,7 @@ strata don't apply -- just the one "mean contacts per sample" panel.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -25,6 +26,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import yaml  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib_pipeline import load_pair  # noqa: E402
 
 
 def domain_map(spec, chain):
@@ -42,8 +46,7 @@ def domain_map(spec, chain):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
-    ap.add_argument("--spec", required=True)
-    ap.add_argument("--summary", required=True, help="results/<pair>/plip_summary.csv")
+    ap.add_argument("--contacts", required=True, help="results/<pair>/plip_contacts.parquet")
     ap.add_argument("--annotation", default=None,
                     help="data/annotation/<pair>/annotation.yaml; proposed domains used "
                          "for chains the spec has no curated `domains:` for")
@@ -51,8 +54,8 @@ def main() -> int:
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
 
-    spec = yaml.safe_load(Path(a.spec).read_text())
-    df = pd.read_csv(a.summary)
+    spec = load_pair(a.pair)
+    df = pd.read_parquet(a.contacts)
     if a.annotation and Path(a.annotation).exists():
         proposed = (yaml.safe_load(Path(a.annotation).read_text()) or {}).get("domains") or {}
         spec["domains"] = {**proposed, **(spec.get("domains") or {})}

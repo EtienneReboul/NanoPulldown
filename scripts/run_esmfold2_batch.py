@@ -5,22 +5,16 @@ scripts/run_esmfold2_batch.py — Stage 2a (batched)
 Loads ESMFold2-Fast ONCE and folds a list of pairs (one Snakemake "chunk", see
 esmfold2.pairs_per_load) in a loop, instead of one process -- and one ~25 GB
 transient model load, with its swap spike -- per pair. Output per pair is
-identical to scripts/run_esmfold2.py (raw/sample_<i>.cif, *_confidences.json,
-prediction.done).
-
-ONE-TIME MIGRATION: Snakemake deletes the declared outputs of any job it is about
-to (re)run BEFORE the job starts, so per-pair results from earlier runs (raw/
-only, no cache yet) would be wiped before this script could adopt them. Run
-`python scripts/run_esmfold2_batch.py --adopt-only --pairs $(pairs...)` once,
-before the first chunked Snakemake run, to link them into the cache first.
+identical to scripts/run_esmfold2.py (raw/sample_<i>.cif.gz + raw/fold.parquet).
 
 Crash safety: results are written to <out-root>/_fold_cache/<pair>/ first and
 hard-linked into <out-root>/<pair>/raw/. Snakemake deletes a failed job's
 declared outputs (the links) but not the cache, so a rerun after a crash --
 e.g. the Metal allocation abort, a C++ abort no `except` can catch -- relinks
-the finished pairs instantly and only folds the rest. Pairs whose raw/ output
-is already complete (earlier per-pair runs) are adopted, not refolded; an
-incomplete one (marker but no confidences json -- see _complete) is refolded.
+the finished pairs instantly and only folds the rest. The cache holds exactly
+the final outputs and nothing else (hard links: no extra disk), so it costs
+nothing to keep. Results from before the fold.parquet layout are converted by
+scripts/migrate_results_layout.py, not here.
 
 Same one-model-at-a-time rule as run_esmfold2.py: the Snakefile gives each
 chunk gpu=1 and the whole docker_heavy pool.
@@ -36,18 +30,18 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fold_io import FOLD_FILE  # noqa: E402
 from lib_pipeline import REPO_ROOT, load_config, load_pair  # noqa: E402
 from run_esmfold2 import _load_model_and_builder, fold_pair  # noqa: E402
 
 
 def _link_tree(src: Path, dst: Path) -> None:
-    """Make dst hold exactly src's files (hard links): stray sample_* files in dst
-    -- e.g. sample_1/2 left by an earlier 3-sample run, which compress_metadata
-    would otherwise pick up -- are removed first."""
+    """Make dst hold exactly src's files (hard links): stray files in dst -- e.g.
+    sample_1/2 left by an earlier 3-sample run -- are removed first."""
     dst.mkdir(parents=True, exist_ok=True)
     keep = {f.name for f in src.iterdir()}
     for f in dst.iterdir():
-        if f.name.startswith("sample_") and f.name not in keep:
+        if f.is_file() and f.name not in keep:
             f.unlink()
     for f in src.iterdir():
         t = dst / f.name
@@ -59,38 +53,19 @@ def _link_tree(src: Path, dst: Path) -> None:
 
 
 def _complete(d: Path, n_samples: int) -> bool:
-    """prediction.done AND every declared output (cif + confidences json per
-    sample). The done-marker alone is not enough: compress_metadata deletes
-    raw/*_confidences.json (--delete-originals), so a raw/ dir adopted after
-    compression has the marker but not the json, and a chunk job that declares
-    the json as output then fails with MissingOutputException forever."""
-    return (d / "prediction.done").exists() and all(
-        (d / f"sample_{i}.cif").exists() and (d / f"sample_{i}_confidences.json").exists()
-        for i in range(n_samples))
+    """fold.parquet (written last, atomically) AND every sample's structure."""
+    return (d / FOLD_FILE).exists() and all(
+        (d / f"sample_{i}.cif.gz").exists() for i in range(n_samples))
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pairs", nargs="+", required=True)
     ap.add_argument("--out-root", default="results")
-    ap.add_argument("--adopt-only", action="store_true",
-                    help="only link finished raw/ outputs into the cache, then exit (no model)")
     a = ap.parse_args()
 
     root = Path(a.out_root)
     cache_root = root / "_fold_cache"
-    n_samples = int(load_config()["esmfold2"]["num_diffusion_samples"])
-
-    # adopt finished per-pair outputs from earlier runs into the cache
-    adopted = 0
-    for p in a.pairs:
-        raw, cache = root / p / "raw", cache_root / p
-        if not _complete(cache, n_samples) and _complete(raw, n_samples):
-            _link_tree(raw, cache)
-            adopted += 1
-    if a.adopt_only:
-        print(f"[fold_batch] adopted {adopted} finished pair(s) into {cache_root}")
-        return 0
 
     import mlx.core as mx
     clear = getattr(mx, "clear_cache", None) or mx.metal.clear_cache
@@ -98,6 +73,7 @@ def main() -> int:
     reset = getattr(mx, "reset_peak_memory", None) or mx.metal.reset_peak_memory
     active = getattr(mx, "get_active_memory", None) or mx.metal.get_active_memory
     cfg = load_config()
+    n_samples = int(cfg["esmfold2"]["num_diffusion_samples"])
 
     todo = [p for p in a.pairs if not _complete(cache_root / p, n_samples)]
     print(f"[fold_batch] {len(a.pairs)} pair(s) in chunk, {len(todo)} to fold, "
@@ -117,7 +93,6 @@ def main() -> int:
         reset()
         try:
             fold_pair(load_pair(p, REPO_ROOT), cfg, cache, loaded)
-            (cache / "prediction.done").write_text("ok\n")
             print(f"[fold_batch] {i}/{len(todo)} {p}: {time.time() - t0:.0f}s, "
                   f"peak {peak() / 2**30:.1f} GiB", flush=True)
         except Exception:                                  # noqa: BLE001

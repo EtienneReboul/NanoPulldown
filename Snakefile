@@ -8,36 +8,38 @@ straight into folding.
   1. preprocessing (needs internet)
     Sequence annotation. Pairs themselves (bait/prey UniProt sequences
     resolved, chains assigned) come from scripts/expand_pairs.py, run once
-    ahead of Snakemake -- see the README. This stage only annotates
-    configs/<pair>.yaml's already-resolved `sequences:`.
+    ahead of Snakemake, into configs/pairs.parquet -- see the README and
+    configs/_schema.md. This stage only annotates their already-resolved
+    sequences.
       annotate_domains_batch / annotate_disorder_batch
                          once per UNIQUE sequence into data/annotation/_cache/
                          (throttled InterPro API + ScanProsite; one AIUPred container run per 200 seqs)
-      annotate_domains   per pair, assembled from the cache -> domains.raw.tsv
-      annotate_disorder  per pair, assembled from the cache -> disorder.tsv
-      merge_annotation   -> data/annotation/<pair>/annotation.yaml -- a
+      merge_annotation   per pair, straight from the cache -> data/annotation/<pair>/annotation.yaml -- a
                           proposed `domains:` block; hand-curate it into
-                          configs/<pair>.yaml whenever convenient (see
-                          configs/_schema.md), it isn't required to proceed
+                          configs/curated_domains.yaml whenever convenient
+                          (see configs/_schema.md), it isn't required to proceed
       report figures (domain map, disorder/binding) -- viewed directly as
       SVGs, not packaged into a report (nanopulldown's one report.zip comes
       from folding, below).
 
   2. folding (Apple Silicon GPU via MLX/Metal)
     ESMFold2-Fast folding (one seed, esmfold2.num_diffusion_samples
-    diffusion samples, no MSA/templates) -> metadata compression -> OpenMM
-    minimization -> PAE-based rescoring (ipSAE/iLIS/Pinc) -> ONE report.
-      run_esmfold2       one seed, N diffusion samples -> raw/sample_<i>.cif +
-                         sample_<i>_confidences.json
-      compress_metadata  -> results/metadata/<pair>/{model_metadata.parquet,arrays.h5}
+    diffusion samples, no MSA/templates) -> OpenMM minimization -> PAE-based
+    rescoring (ipSAE/iLIS/Pinc) -> ONE report. Structures are stored gzipped
+    (.cif.gz / .pdb.gz -- ChimeraX and gemmi open them as-is).
+      run_esmfold2       one seed, N diffusion samples -> raw/sample_<i>.cif.gz +
+                         raw/fold.parquet (scores, pae/plddt float16, topology;
+                         schema in scripts/fold_io.py)
       compute_metrics    ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM ->
                          results/<pair>/interface_metrics.parquet
-      minimize_cif       OpenMM energy minimization (+ *_energy.parquet trace),
-                         no ChimeraX / antechamber
+      minimize_cif       OpenMM energy minimization -> minimized/sample_<i>.pdb.gz
+                         + sample_<i>_energy.parquet, no ChimeraX / antechamber
       run_plip           PLIP (docker) on each minimized sample, bait_chains
-                         vs prey_chains -> per-sample TXT report
-      plip_to_csv        pliparser -> per-sample summary.csv
-      aggregate_plip     -> results/<pair>/plip_summary.csv (all samples)
+                         vs prey_chains -> per-sample TXT report (the
+                         decompressed input and PLIP's protonated copy are
+                         deleted afterwards)
+      plip_parse         pliparser -> per-sample ChimeraX .cxc (+ temporary contact CSVs)
+      aggregate_plip     -> results/<pair>/plip_contacts.parquet (all samples)
       + report figures (domain x domain confidence heatmaps, minimize energy,
         PLIP contact heatmaps) and reports/report.zip (onsuccess hook; unzip
         -> report.html) -- the ONLY report this pipeline produces.
@@ -45,12 +47,13 @@ straight into folding.
 Usage (one command, both stages):
   snakemake --use-conda --cores 4
 """
+import hashlib
 import sys
 from pathlib import Path
 
 REPO = Path(workflow.basedir)
 sys.path.insert(0, str(REPO / "scripts"))
-from lib_pipeline import load_config, load_pair, pair_tokens, protein_chains  # noqa: E402
+from lib_pipeline import load_config, load_pairs, pair_tokens, protein_chains, spec_digest  # noqa: E402
 
 configfile: str(REPO / "config.yaml")
 if (REPO / "config.local.yaml").exists():
@@ -63,29 +66,39 @@ DIRS = CFG["dirs"]
 EF = CFG["esmfold2"]
 MAX_TOKENS = int(EF.get("max_tokens", 0))
 
-# A pair is dropped (with a warning) when its spec is missing -- expand_pairs
-# does not write specs for pairs over esmfold2.max_tokens -- or when it is
-# over max_tokens anyway (specs expanded before the limit existed): ESMFold2
-# memory grows ~quadratically with tokens and an over-limit fold aborts the
-# whole process on the Metal buffer cap. 0 = no limit.
+# Specs come from configs/pairs.parquet (+ configs/curated_domains.yaml). A
+# pair is dropped (with a warning) when it isn't in the table -- expand_pairs
+# does not add pairs over esmfold2.max_tokens -- or when it is over max_tokens
+# anyway (specs expanded before the limit existed): ESMFold2 memory grows
+# ~quadratically with tokens and an over-limit fold aborts the whole process
+# on the Metal buffer cap. 0 = no limit.
+_ALL_SPECS = load_pairs(REPO)
 PAIRS, SPECS, _no_spec, _too_long = [], {}, [], []
 for _p in CFG["pairs"]:
-    if not (REPO / "configs" / f"{_p}.yaml").exists():
+    if _p not in _ALL_SPECS:
         _no_spec.append(_p)
         continue
-    _spec = load_pair(_p, REPO)
+    _spec = _ALL_SPECS[_p]
     if MAX_TOKENS and pair_tokens(_spec) > MAX_TOKENS:
         _too_long.append(_p)
         continue
     PAIRS.append(_p)
     SPECS[_p] = _spec
 if _no_spec:
-    print(f"[Snakefile] WARNING: {len(_no_spec)} pair(s) in config.yaml have no configs/<pair>.yaml "
+    print(f"[Snakefile] WARNING: {len(_no_spec)} pair(s) in config.yaml are not in configs/pairs.parquet "
           f"(not expanded, or skipped as too long) and are ignored, e.g. {_no_spec[:3]}", file=sys.stderr)
 if _too_long:
     print(f"[Snakefile] {len(_too_long)} pair(s) exceed esmfold2.max_tokens={MAX_TOKENS} and are ignored",
           file=sys.stderr)
 CHAIN_IDS = {p: [c["id"] for c in protein_chains(SPECS[p])] for p in PAIRS}
+
+# Rules don't take a spec FILE as input any more (one shared table would make
+# every job look outdated whenever a pair is added). Instead they carry content
+# digests as params, so Snakemake's params rerun-trigger reruns exactly the
+# jobs whose pair changed: SPEC_KEY = chains/sequences/roles (what folding and
+# annotation see), CUR_KEY = curated domains (what the figures also use).
+SPEC_KEY = {p: spec_digest(SPECS[p]) for p in PAIRS}
+CUR_KEY = {p: spec_digest(SPECS[p], "curation") for p in PAIRS}
 
 # ── stage 1: preprocessing ───────────────────────────────────────────────
 ANN = Path(DIRS["annotation"])
@@ -93,7 +106,6 @@ PRE_REP = Path(DIRS["reports"]) / "preprocessing"
 PRE_LOG = Path(DIRS["logs"]) / "preprocessing"
 
 # ── stage 2: folding ─────────────────────────────────────────────────────
-META = Path(DIRS["metadata"])
 POST = Path(DIRS["postproc"])
 FOLD_REP = Path(DIRS["reports"]) / "folding"
 FOLD_LOG = Path(DIRS["logs"]) / "folding"
@@ -140,7 +152,8 @@ rule all:
 # ═══════════════════════════════════════════════════════════════════════════
 
 ANN_CACHE = ANN / "_cache"
-SPEC_FILES = [str(REPO / "configs" / f"{p}.yaml") for p in PAIRS]
+ALL_PAIRS = " ".join(PAIRS)
+ALL_SPECS_KEY = hashlib.sha1(" ".join(f"{p}:{SPEC_KEY[p]}" for p in PAIRS).encode()).hexdigest()[:12]
 
 
 # Annotation is per UNIQUE SEQUENCE, not per pair: the bait is in every pair,
@@ -150,8 +163,6 @@ SPEC_FILES = [str(REPO / "configs" / f"{p}.yaml") for p in PAIRS]
 # multi-FASTA container runs); the per-pair rules below just assemble from it.
 # They run concurrently with each other and, via `priority`, ahead of folding.
 rule annotate_domains_batch:
-    input:
-        SPEC_FILES,
     output:
         done=str(ANN_CACHE / "domains.done"),
     log:
@@ -159,16 +170,16 @@ rule annotate_domains_batch:
     conda:
         "envs/annotate.yaml"
     priority: 50
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
     shell:
         r"""
-        python scripts/annotate_domains_batch.py --specs {input} --done {output.done} \
+        python scripts/annotate_domains_batch.py --pairs {params.pairs} --done {output.done} \
           > {log} 2>&1
         """
 
 
 rule annotate_disorder_batch:
-    input:
-        SPEC_FILES,
     output:
         done=str(ANN_CACHE / "disorder.done"),
     log:
@@ -176,79 +187,45 @@ rule annotate_disorder_batch:
     conda:
         "envs/annotate.yaml"
     priority: 50
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
     resources:
         # docker_heavy=1: never overlaps a run_esmfold2 model load (that rule
         # claims the whole pool). CPU-only -- no gpu= claim, the GPU stays free.
         docker_heavy=1,
     shell:
         r"""
-        python scripts/annotate_disorder_batch.py --specs {input} --done {output.done} \
+        python scripts/annotate_disorder_batch.py --pairs {params.pairs} --done {output.done} \
           > {log} 2>&1
         """
 
 
-rule annotate_domains:
-    input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
-        cache=str(ANN_CACHE / "domains.done"),
-    output:
-        tsv=str(ANN / "{pair}" / "domains.raw.tsv"),
-    log:
-        str(PRE_LOG / "annotate_domains" / "{pair}.log"),
-    conda:
-        "envs/annotate.yaml"
-    shell:
-        r"""
-        python scripts/annotate_domains.py \
-          --pair {wildcards.pair} --spec {input.spec} --out {output.tsv} \
-          > {log} 2>&1
-        """
-
-
-rule annotate_disorder:
-    input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
-        cache=str(ANN_CACHE / "disorder.done"),
-    output:
-        tsv=str(ANN / "{pair}" / "disorder.tsv"),
-    log:
-        str(PRE_LOG / "annotate_disorder" / "{pair}.log"),
-    conda:
-        "envs/annotate.yaml"
-    shell:
-        r"""
-        python scripts/annotate_disorder_aiupred.py \
-          --pair {wildcards.pair} --spec {input.spec} --out {output.tsv} \
-          > {log} 2>&1
-        """
-
-
+# Per pair, straight from the per-sequence cache the batch rules filled (with
+# a live lookup for any sequence they missed).
 rule merge_annotation:
     input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
-        domains=str(ANN / "{pair}" / "domains.raw.tsv"),
-        disorder=str(ANN / "{pair}" / "disorder.tsv"),
+        domains=str(ANN_CACHE / "domains.done"),
+        disorder=str(ANN_CACHE / "disorder.done"),
     output:
         yaml=str(ANN / "{pair}" / "annotation.yaml"),
     log:
         str(PRE_LOG / "merge_annotation" / "{pair}.log"),
     conda:
         "envs/annotate.yaml"
+    params:
+        spec=lambda wc: SPEC_KEY[wc.pair],
+        curation=lambda wc: CUR_KEY[wc.pair],
     shell:
         r"""
         python scripts/merge_annotation.py \
-          --pair {wildcards.pair} --spec {input.spec} \
-          --domains {input.domains} --disorder {input.disorder} \
-          --out {output.yaml} \
+          --pair {wildcards.pair} --out {output.yaml} \
           > {log} 2>&1
         """
 
 
 rule fig_domain_bar:
     input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
-        disorder=str(ANN / "{pair}" / "disorder.tsv"),
     output:
         report(str(PRE_REP / "{pair}" / "domain_bar_{chain}.svg"),
                category="Domain map + AIUPred", labels={"pair": "{pair}", "chain": "{chain}"}),
@@ -257,11 +234,13 @@ rule fig_domain_bar:
     params:
         fmts=",".join(CFG["report"]["figure_formats"]),
         cutoff=CFG["annotate"]["consensus"]["disorder_cutoff"],
+        spec=lambda wc: SPEC_KEY[wc.pair],
+        curation=lambda wc: CUR_KEY[wc.pair],
     shell:
         r"""
         python scripts/plot_domain_bar.py \
-          --spec {input.spec} --annotation {input.annotation} --chain {wildcards.chain} \
-          --disorder {input.disorder} --cutoff {params.cutoff} \
+          --pair {wildcards.pair} --annotation {input.annotation} --chain {wildcards.chain} \
+          --cutoff {params.cutoff} \
           --out {output[0]} --formats {params.fmts}
         """
 
@@ -272,8 +251,8 @@ rule fig_domain_bar:
 
 # All N diffusion samples are declared as outputs (N is static, from
 # esmfold2.num_diffusion_samples) so minimize_cif's per-sample input can wire
-# back to this rule -- a `done` sentinel alone would hide the per-sample CIFs
-# from the DAG.
+# back to this rule. fold.parquet is written last, so it also marks the pair
+# as complete.
 # Fold granularity. pairs_per_load = 0: one process (and one ~25 GB model load,
 # with its swap spike) per pair. > 0: pairs are split into chunks of that size
 # and each chunk is ONE job that loads the model once and folds its pairs in a
@@ -283,12 +262,9 @@ PAIRS_PER_LOAD = int(EF.get("pairs_per_load", 0))
 
 if PAIRS_PER_LOAD <= 0:
     rule run_esmfold2:
-        input:
-            spec=str(REPO / "configs" / "{pair}.yaml"),
         output:
-            cifs=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}.cif"), s=SAMPLE_IDX),
-            jsons=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}_confidences.json"), s=SAMPLE_IDX),
-            done=str(POST / "{pair}" / "raw" / "prediction.done"),
+            cifs=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}.cif.gz"), s=SAMPLE_IDX),
+            fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
         log:
             str(FOLD_LOG / "run_esmfold2" / "{pair}.log"),
         conda:
@@ -308,14 +284,15 @@ if PAIRS_PER_LOAD <= 0:
             docker_heavy=DOCKER_HEAVY_POOL,
         params:
             out=lambda wc: str(POST / wc.pair / "raw"),
+            spec=lambda wc: SPEC_KEY[wc.pair],
         shell:
             r"""
             python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
               "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
               > {log} 2>&1
             python scripts/run_esmfold2.py \
-              --pair {wildcards.pair} --spec {input.spec} \
-              --out-dir {params.out} --done {output.done} \
+              --pair {wildcards.pair} \
+              --out-dir {params.out} \
               >> {log} 2>&1
             """
 
@@ -323,12 +300,9 @@ else:
     for _k, _chunk in enumerate(PAIRS[i:i + PAIRS_PER_LOAD] for i in range(0, len(PAIRS), PAIRS_PER_LOAD)):
         rule:
             name: f"run_esmfold2_chunk_{_k:03d}"
-            input:
-                [str(REPO / "configs" / f"{_p}.yaml") for _p in _chunk],
             output:
-                [str(POST / _p / "raw" / f"sample_{_s}.cif") for _p in _chunk for _s in SAMPLE_IDX],
-                [str(POST / _p / "raw" / f"sample_{_s}_confidences.json") for _p in _chunk for _s in SAMPLE_IDX],
-                [str(POST / _p / "raw" / "prediction.done") for _p in _chunk],
+                [str(POST / _p / "raw" / f"sample_{_s}.cif.gz") for _p in _chunk for _s in SAMPLE_IDX],
+                [str(POST / _p / "raw" / "fold.parquet") for _p in _chunk],
             log:
                 str(FOLD_LOG / "run_esmfold2" / f"chunk_{_k:03d}.log"),
             conda:
@@ -339,6 +313,7 @@ else:
                 docker_heavy=DOCKER_HEAVY_POOL,
             params:
                 pairs=" ".join(_chunk),
+                specs=" ".join(SPEC_KEY[_p] for _p in _chunk),
                 root=str(POST),
             shell:
                 r"""
@@ -351,30 +326,9 @@ else:
                 """
 
 
-rule compress_metadata:
-    input:
-        done=str(POST / "{pair}" / "raw" / "prediction.done"),
-    output:
-        parquet=str(META / "{pair}" / "model_metadata.parquet"),
-        h5=str(META / "{pair}" / "arrays.h5"),
-    log:
-        str(FOLD_LOG / "compress" / "{pair}.log"),
-    conda:
-        "envs/metrics.yaml"
-    shell:
-        r"""
-        python scripts/compress_esmfold2_metadata.py \
-          --pair {wildcards.pair} \
-          --results-root {POST} --out-root {META} \
-          --delete-originals --skip-merge > {log} 2>&1
-        """
-
-
 rule compute_metrics:
     input:
-        metadata=str(META / "{pair}" / "model_metadata.parquet"),
-        h5=str(META / "{pair}" / "arrays.h5"),
-        spec=str(REPO / "configs" / "{pair}.yaml"),
+        fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
     output:
         parquet=str(POST / "{pair}" / "interface_metrics.parquet"),
     log:
@@ -390,7 +344,7 @@ rule compute_metrics:
         r"""
         python scripts/compute_interface_metrics.py \
           --pair {wildcards.pair} \
-          --metadata-root {META} --results-root {POST} \
+          --fold {input.fold} --results-root {POST} \
           --out {output.parquet} \
           --enabled {params.enabled} --pae-cutoff {params.pae} \
           --contact-cutoff-cb {params.cb} --pairs {params.pairs} \
@@ -401,9 +355,10 @@ rule compute_metrics:
 
 rule minimize_cif:
     input:
-        cif=str(POST / "{pair}" / "raw" / "sample_{sample}.cif"),
+        cif=str(POST / "{pair}" / "raw" / "sample_{sample}.cif.gz"),
     output:
-        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb"),
+        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb.gz"),
+        energy=str(POST / "{pair}" / "minimized" / "sample_{sample}_energy.parquet"),
     log:
         str(FOLD_LOG / "minimize" / "{pair}" / "sample_{sample}.log"),
     conda:
@@ -422,10 +377,13 @@ rule minimize_cif:
 # --chains treats bait_chains as one interaction partner and prey_chains as
 # the other (protein-protein only, so no --dnareceptor, and no fix_pdb pass
 # -- minimize_openmm.py's PDBFixer step already adds missing atoms/hydrogens,
-# unlike ab_initio_pipeline's ChimeraX minimization).
+# unlike ab_initio_pipeline's ChimeraX minimization). PLIP can't read .pdb.gz
+# (it opens it in binary mode and fails), so the minimized structure is
+# decompressed into the report dir for the run, then deleted together with
+# PLIP's own <name>_protonated.pdb (~2 MB/sample, read by nothing).
 rule run_plip:
     input:
-        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb"),
+        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb.gz"),
     output:
         report=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}_report.txt"),
     params:
@@ -448,44 +406,32 @@ rule run_plip:
     shell:
         r"""
         mkdir -p {params.outdir}
+        pdb="{params.outdir}/sample_{wildcards.sample}.pdb"
+        gunzip -c {input.pdb} > "$pdb"
         docker run --rm --memory={params.memory} {params.platform} \
           -v $(pwd):/work -w /work {params.image} \
-          -f {input.pdb} -t {params.chains} -o {params.outdir} > {log} 2>&1
-        actual="{params.outdir}/$(basename {input.pdb} .pdb)_report.txt"
-        [ "$actual" != "{output.report}" ] && mv "$actual" "{output.report}" || true
+          -f "$pdb" -t {params.chains} -o {params.outdir} > {log} 2>&1 \
+          || {{ rm -f "$pdb"; exit 1; }}
+        rm -f "$pdb" "{params.outdir}/sample_{wildcards.sample}_protonated.pdb"
         """
 
 
-rule plip_to_csv:
+# PLIP TXT report -> ChimeraX visualization script (open the .cxc in ChimeraX).
+# pliparser's per-type contact CSVs and its cxc config are only needed while
+# csv2cxc runs (the .cxc is self-contained), so they live in a scratch dir;
+# the summary CSV is kept, as temp(), until aggregate_plip has folded it into
+# the pair's plip_contacts.parquet. Bait chains are one colored group, prey
+# chains the other; the minimized .pdb.gz is referenced by absolute path
+# (ChimeraX opens gzip directly).
+rule plip_parse:
     input:
         report=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}_report.txt"),
-    output:
-        summary=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv" / "summary.csv"),
-    params:
-        outdir=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv"),
-    conda:
-        "envs/pliparser.yaml"
-    log:
-        str(FOLD_LOG / "pliparser" / "{pair}" / "sample_{sample}.log"),
-    shell:
-        r"""
-        mkdir -p {params.outdir}
-        pliparser plip2csv --input {input.report} --output {params.outdir}/ > {log} 2>&1
-        """
-
-
-# PLIP contacts -> ChimeraX visualization script (open the .cxc in ChimeraX).
-# Bait chains are one colored group, prey chains the other; the minimized PDB
-# is referenced by absolute path.
-rule plip_to_cxc:
-    input:
-        csv=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv" / "summary.csv"),
-        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb"),
+        pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb.gz"),
     output:
         cxc=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}.cxc"),
-        config=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "cxc-config.json"),
+        summary=temp(str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}_summary.csv")),
     params:
-        csv_dir=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "csv"),
+        tmp=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "_pliparser"),
         bait=lambda wc: ",".join(SPECS[wc.pair]["bait_chains"]),
         prey=lambda wc: ",".join(SPECS[wc.pair]["prey_chains"]),
         bait_color=CXC["bait_color"], prey_color=CXC["prey_color"],
@@ -493,37 +439,41 @@ rule plip_to_cxc:
     conda:
         "envs/pliparser.yaml"
     log:
-        str(FOLD_LOG / "plip_to_cxc" / "{pair}" / "sample_{sample}.log"),
+        str(FOLD_LOG / "pliparser" / "{pair}" / "sample_{sample}.log"),
     shell:
         r"""
-        python scripts/write_cxc_config.py --pdb {input.pdb} --csv-dir {params.csv_dir} \
-          --out {output.config} --bait-chains {params.bait} --prey-chains {params.prey} \
+        rm -rf {params.tmp} && mkdir -p {params.tmp}/csv
+        pliparser plip2csv --input {input.report} --output {params.tmp}/csv/ > {log} 2>&1
+        python scripts/write_cxc_config.py --pdb {input.pdb} --csv-dir {params.tmp}/csv \
+          --out {params.tmp}/cxc-config.json --bait-chains {params.bait} --prey-chains {params.prey} \
           --bait-color {params.bait_color} --prey-color {params.prey_color} \
-          --transparency {params.transparency} > {log} 2>&1
-        pliparser csv2cxc --config {output.config} --output {output.cxc} >> {log} 2>&1
+          --transparency {params.transparency} >> {log} 2>&1
+        pliparser csv2cxc --config {params.tmp}/cxc-config.json --output {output.cxc} >> {log} 2>&1
+        mv {params.tmp}/csv/summary.csv {output.summary}
+        rm -rf {params.tmp}
         """
 
 
 rule aggregate_plip:
     input:
         csvs=lambda wc: expand(
-            str(POST / "{{pair}}" / "plip" / "sample_{s}_report" / "csv" / "summary.csv"), s=SAMPLE_IDX),
+            str(POST / "{{pair}}" / "plip" / "sample_{s}_report" / "sample_{s}_summary.csv"), s=SAMPLE_IDX),
     output:
-        str(POST / "{pair}" / "plip_summary.csv"),
+        str(POST / "{pair}" / "plip_contacts.parquet"),
     conda:
         "envs/report.yaml"
     log:
         str(FOLD_LOG / "aggregate_plip" / "{pair}.log"),
     shell:
         r"""
-        python scripts/aggregate_plip_summaries.py {input.csvs} --out {output[0]} > {log} 2>&1
+        python scripts/aggregate_plip_summaries.py {input.csvs} --pair {wildcards.pair} \
+          --out {output[0]} > {log} 2>&1
         """
 
 
 rule fig_plip_contacts:
     input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
-        summary=str(POST / "{pair}" / "plip_summary.csv"),
+        contacts=str(POST / "{pair}" / "plip_contacts.parquet"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
     output:
         report(str(FOLD_REP / "{pair}" / "plip_contacts.svg"),
@@ -532,10 +482,12 @@ rule fig_plip_contacts:
         "envs/report.yaml"
     params:
         fmts=FMTS,
+        spec=lambda wc: SPEC_KEY[wc.pair],
+        curation=lambda wc: CUR_KEY[wc.pair],
     shell:
         r"""
         python scripts/plot_plip_heatmap.py --pair {wildcards.pair} \
-          --spec {input.spec} --summary {input.summary} \
+          --contacts {input.contacts} \
           --annotation {input.annotation} \
           --out {output[0]} --formats {params.fmts}
         """
@@ -543,9 +495,7 @@ rule fig_plip_contacts:
 
 rule fig_domain_heatmap:
     input:
-        spec=str(REPO / "configs" / "{pair}.yaml"),
-        metadata=str(META / "{pair}" / "model_metadata.parquet"),
-        h5=str(META / "{pair}" / "arrays.h5"),
+        fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
     output:
         report(str(FOLD_REP / "{pair}" / "domain_heatmap.svg"),
                category="Bait x prey domain confidence",
@@ -554,17 +504,19 @@ rule fig_domain_heatmap:
         "envs/report.yaml"
     params:
         pae=MET["pae_cutoff"], fmts=FMTS,
+        spec=lambda wc: SPEC_KEY[wc.pair],
+        curation=lambda wc: CUR_KEY[wc.pair],
     shell:
         r"""
         python scripts/plot_domain_heatmap.py --pair {wildcards.pair} \
-          --spec {input.spec} --metadata-root {META} \
+          --fold {input.fold} \
           --pae-cutoff {params.pae} --out {output[0]} --formats {params.fmts}
         """
 
 
 rule fig_minimize_energy:
     input:
-        pdbs=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb"), s=SAMPLE_IDX),
+        energy=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}_energy.parquet"), s=SAMPLE_IDX),
     output:
         svg=report(str(FOLD_REP / "{pair}" / "minimize_energy.svg"),
                    category="Minimization energy", labels={"pair": "{pair}"}),
@@ -585,8 +537,8 @@ rule fig_minimize_energy:
 # sample and its minimized counterpart, then a paired Wilcoxon test.
 rule count_clashes:
     input:
-        raw=lambda wc: expand(str(POST / wc.pair / "raw" / "sample_{s}.cif"), s=SAMPLE_IDX),
-        minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb"), s=SAMPLE_IDX),
+        raw=lambda wc: expand(str(POST / wc.pair / "raw" / "sample_{s}.cif.gz"), s=SAMPLE_IDX),
+        minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb.gz"), s=SAMPLE_IDX),
     output:
         str(POST / "{pair}" / "clashes.csv"),
     conda:
@@ -635,7 +587,7 @@ rule collect_results_table:
     shell:
         r"""
         python scripts/collect_results_table.py --pairs {params.pairs} \
-          --metadata-root {META} --results-root {POST} --out {output[0]}
+          --results-root {POST} --out {output[0]}
         """
 
 

@@ -16,13 +16,13 @@ bait/prey pair, one row per (sample_index, chain_i, chain_j):
   pdockq2           reference tools/ipsae/ipsae.py (subprocess, unchanged).
                     Left NaN with a `note` if that call can't run for a sample.
   pair_iptm         ESMFold2's own per-chain-pair ipTM (pair_chains_iptm),
-                    read straight from each sample's extra_json -- an
+                    read straight from fold.parquet -- an
                     additional bait-prey confidence score AlphaPulldown-style
                     ipTM-based ranking mirrors.
 
 Adapted from ab_initio_pipeline: the PAE + per-token chain ids come straight
-from ESMFold2's own output (arrays.h5's `_topology/<pair>/chain_id` +
-chain_lookup attribute) instead of being reconstructed from a multi-backend
+from ESMFold2's own output (results/<pair>/raw/fold.parquet, see
+scripts/fold_io.py) instead of being reconstructed from a multi-backend
 JSON schema -- no per-backend normalisation needed.
 
 Output: results/<pair>/interface_metrics.parquet
@@ -30,6 +30,7 @@ Output: results/<pair>/interface_metrics.parquet
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import subprocess
 import sys
@@ -38,9 +39,11 @@ from itertools import combinations
 from pathlib import Path
 
 import gemmi
-import h5py
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fold_io import read_fold  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "pinc"))
 from pinc import _ELEMENT_MASS, _DEFAULT_MASS, pinc_from_arrays  # noqa: E402
@@ -125,7 +128,8 @@ def run_ipsae(pae, token_chain_ids, token_res_ids, cif_path: Path, pae_cut, dist
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             cif_link = td / "model.cif"
-            cif_link.write_bytes(cif_path.read_bytes())
+            raw = cif_path.read_bytes()
+            cif_link.write_bytes(gzip.decompress(raw) if cif_path.suffix == ".gz" else raw)
             js = {"pae": np.asarray(pae, float).tolist(),
                   "token_chain_ids": [str(x) for x in token_chain_ids],
                   "token_res_ids": [int(x) for x in token_res_ids]}
@@ -185,23 +189,18 @@ def _parse_ipsae_txt(txt: str) -> dict:
 
 # ── pair_chains_iptm (ESMFold2's own per-chain-pair ipTM) ──────────────
 
-def pair_iptm_lookup(extra_json: dict, chain_ids_unique: list[str]) -> dict:
-    """Best-effort: ESMFold2's pair_chains_iptm is assumed to be a square
-    matrix over chains in the same order as chain_lookup's sorted integer
-    keys. Returns {} (all pairs NaN downstream) if the shape doesn't match
-    what's expected -- this mapping is flagged for verification against a
-    live run in the project plan."""
-    mat = extra_json.get("pair_chains_iptm")
-    lookup = extra_json.get("chain_lookup") or {}
-    if mat is None or not lookup:
+def pair_iptm_lookup(mat, chain_order: list[str]) -> dict:
+    """ESMFold2's pair_chains_iptm is a square matrix over chains in
+    chain_order (its integer chain order). Returns {} (all pairs NaN
+    downstream) if the shape doesn't match."""
+    if mat is None or not chain_order:
         return {}
     mat = np.asarray(mat, dtype=float)
-    ordered_ids = [lookup[str(k)] for k in sorted((int(x) for x in lookup), key=int)]
-    if mat.ndim != 2 or mat.shape[0] != len(ordered_ids) or mat.shape[1] != len(ordered_ids):
+    if mat.ndim != 2 or mat.shape[0] != len(chain_order) or mat.shape[1] != len(chain_order):
         return {}
     out = {}
-    for i, ca in enumerate(ordered_ids):
-        for j, cb in enumerate(ordered_ids):
+    for i, ca in enumerate(chain_order):
+        for j, cb in enumerate(chain_order):
             if i < j:
                 out[tuple(sorted((ca, cb)))] = float(mat[i, j])
     return out
@@ -212,7 +211,7 @@ def pair_iptm_lookup(extra_json: dict, chain_ids_unique: list[str]) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
-    ap.add_argument("--metadata-root", default="results/metadata")
+    ap.add_argument("--fold", required=True, help="results/<pair>/raw/fold.parquet")
     ap.add_argument("--results-root", default="results")
     ap.add_argument("--out", required=True)
     ap.add_argument("--enabled", default="ipsae,ilis,pinc")
@@ -231,82 +230,55 @@ def main() -> int:
         want_pairs = {tuple(sorted(p)) for p in
                       [(x, y) for x in B for y in P if x != y]}
 
-    meta = pd.read_parquet(Path(a.metadata_root) / a.pair / "model_metadata.parquet")
-    h5path = Path(a.metadata_root) / a.pair / "arrays.h5"
     results_root = Path(a.results_root)
-    if not h5path.exists():
-        raise FileNotFoundError(f"{h5path} — run stage 2 metadata compression first")
-
-    chain_lookup = {}
-    chain_id_int = None
-    with h5py.File(h5path, "r") as h5:
-        topo_key = f"_topology/{a.pair}/chain_id"
-        if topo_key in h5:
-            chain_id_int = np.asarray(h5[topo_key][:], dtype=int)
-            chain_lookup = json.loads(h5[topo_key].attrs.get("chain_lookup", "{}"))
-
     rows = []
-    with h5py.File(h5path, "r") as h5:
-        for _, r in meta.iterrows():
-            if not r.get("has_array"):
+    for r in read_fold(Path(a.fold)):
+        pae = r["pae"]
+        if pae is None:
+            continue
+        cif_path = results_root / r["structure_path"]
+        if not cif_path.exists():
+            continue
+        try:
+            chains, cb, com = residue_geometry(cif_path)
+        except Exception:                                      # noqa: BLE001
+            continue
+
+        # ESMFold2's own per-token chain letters; fall back to gemmi's chain
+        # names if they don't line up (same length guard as
+        # ab_initio_pipeline's own defensive trim).
+        chain_ids = r["token_chain"] if len(r["token_chain"]) == pae.shape[0] else chains
+        n = min(len(chain_ids), pae.shape[0], len(chains))
+        chain_ids, pae, chains, cb = chain_ids[:n], pae[:n, :n], chains[:n], cb[:n]
+        token_res_ids = r["residue_index"][:n]
+        plddt = r["plddt"][:n] * 100.0                         # stored 0-1; ipsae.py wants 0-100
+
+        lis = lis_family(pae, chain_ids, cb, a.pae_cutoff, a.contact_cutoff_cb) if "ilis" in enabled else {}
+        pin = pinc_from_arrays(pae, com[:n], chain_ids) if "pinc" in enabled else {}
+        ips, note = ({}, "")
+        if "ipsae" in enabled:
+            ips, note = run_ipsae(pae, chain_ids, token_res_ids, cif_path,
+                                   a.pae_cutoff, 15.0, plddt)
+        pit = pair_iptm_lookup(r["pair_chains_iptm"], r["chain_order"])
+
+        pair_set = set(lis) | set(pin) | set(ips) | set(pit)
+        for pr in sorted(pair_set):
+            if want_pairs is not None and pr not in want_pairs:
                 continue
-            key = r["array_key"]
-            if f"{key}/pae" not in h5:
-                continue
-            pae = np.asarray(h5[f"{key}/pae"][:], dtype=np.float32)
-            extra = json.loads(r["extra_json"]) if r.get("extra_json") else {}
-
-            cif_path = results_root / r["cif_path"]
-            if not cif_path.exists():
-                continue
-            try:
-                chains, cb, com = residue_geometry(cif_path)
-            except Exception:                                  # noqa: BLE001
-                continue
-
-            # map integer chain_id topology onto the letter ids gemmi read
-            # from the CIF; fall back to gemmi's own chain names if the
-            # topology array doesn't line up (same length guard as
-            # ab_initio_pipeline's own defensive trim).
-            if chain_id_int is not None and len(chain_id_int) == pae.shape[0]:
-                chain_ids = np.array([chain_lookup.get(str(c), str(c)) for c in chain_id_int])
-            else:
-                chain_ids = chains
-            n = min(len(chain_ids), pae.shape[0], len(chains))
-            chain_ids, pae, chains, cb = chain_ids[:n], pae[:n, :n], chains[:n], cb[:n]
-
-            res_idx = extra.get("residue_index")
-            token_res_ids = (np.asarray(res_idx[:n]) if res_idx and len(res_idx) >= n
-                              else np.arange(1, n + 1))
-
-            plddt = (np.asarray(h5[f"{key}/plddt"][:n], dtype=np.float32) * 100.0
-                     if f"{key}/plddt" in h5 else None)   # stored 0-1; ipsae.py wants 0-100
-            lis = lis_family(pae, chain_ids, cb, a.pae_cutoff, a.contact_cutoff_cb) if "ilis" in enabled else {}
-            pin = pinc_from_arrays(pae, com[:n], chain_ids) if "pinc" in enabled else {}
-            ips, note = ({}, "")
-            if "ipsae" in enabled:
-                ips, note = run_ipsae(pae, chain_ids, token_res_ids, cif_path,
-                                       a.pae_cutoff, 15.0, plddt)
-            pit = pair_iptm_lookup(extra, list(dict.fromkeys(chain_ids.tolist())))
-
-            pair_set = set(lis) | set(pin) | set(ips) | set(pit)
-            for pr in sorted(pair_set):
-                if want_pairs is not None and pr not in want_pairs:
-                    continue
-                rec = {
-                    "pair": a.pair, "seed": r["seed"], "sample_index": r["sample_index"],
-                    "cif_path": r["cif_path"], "chain_i": pr[0], "chain_j": pr[1],
-                    "lis": lis.get(pr, {}).get("lis", np.nan),
-                    "clis": lis.get(pr, {}).get("clis", np.nan),
-                    "ilis": lis.get(pr, {}).get("ilis", np.nan),
-                    "pinc": pin.get(pr, {}).get("Pinc", np.nan),
-                    "ipsae": ips.get(pr, {}).get("ipsae", np.nan),
-                    "pdockq": ips.get(pr, {}).get("pdockq", np.nan),
-                    "pdockq2": ips.get(pr, {}).get("pdockq2", np.nan),
-                    "pair_iptm": pit.get(pr, np.nan),
-                    "note": note,
-                }
-                rows.append(rec)
+            rec = {
+                "pair": a.pair, "seed": r["seed"], "sample_index": r["sample_index"],
+                "cif_path": r["structure_path"], "chain_i": pr[0], "chain_j": pr[1],
+                "lis": lis.get(pr, {}).get("lis", np.nan),
+                "clis": lis.get(pr, {}).get("clis", np.nan),
+                "ilis": lis.get(pr, {}).get("ilis", np.nan),
+                "pinc": pin.get(pr, {}).get("Pinc", np.nan),
+                "ipsae": ips.get(pr, {}).get("ipsae", np.nan),
+                "pdockq": ips.get(pr, {}).get("pdockq", np.nan),
+                "pdockq2": ips.get(pr, {}).get("pdockq2", np.nan),
+                "pair_iptm": pit.get(pr, np.nan),
+                "note": note,
+            }
+            rows.append(rec)
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)

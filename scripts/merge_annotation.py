@@ -2,9 +2,11 @@
 """
 scripts/merge_annotation.py — Stage 1b (optional human review)
 ======================================================================
-Fuse domains.raw.tsv + disorder_binding.tsv into ONE proposed `domains:`
+Fuse each chain's domain hits (scripts/annotate_domains.py) and AIUPred
+disorder/binding tracks (scripts/annotate_disorder_aiupred.py), both read
+straight from the per-sequence annotation cache, into ONE proposed `domains:`
 block per protein chain, written to data/annotation/<pair>/annotation.yaml
-for a human to curate into configs/<pair>.yaml whenever convenient --
+for a human to curate into configs/curated_domains.yaml whenever convenient --
 folding does not wait on this. Also emits a plain-text diff against
 whatever `domains:` the config already has.
 
@@ -26,7 +28,6 @@ Segment logic, per chain, left to right:
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import re
 import sys
@@ -36,6 +37,8 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from annotate_disorder_aiupred import DISORDER_COLUMNS, pair_disorder_rows  # noqa: E402
+from annotate_domains import pair_domain_rows  # noqa: E402
 from lib_pipeline import load_config, load_pair, protein_chains  # noqa: E402
 
 CFG = load_config()
@@ -52,13 +55,6 @@ def _label(h: dict) -> str:
     if name and not _ACCESSION_RE.match(name):
         return name
     return (h.get("description") or "").strip() or name or h["accession"]
-
-
-def _read_tsv(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    with path.open() as fh:
-        return list(csv.DictReader(fh, delimiter="\t"))
 
 
 def _merge_intervals(ivals: list[tuple[int, int, str]], gap: int = 10) -> list[tuple[int, int, str]]:
@@ -142,18 +138,14 @@ def _chain_segments(seqlen, dom_hits, dis_rows, acfg):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
-    ap.add_argument("--spec", required=True)
-    ap.add_argument("--domains", required=True)
-    ap.add_argument("--disorder", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    repo = Path(args.spec).resolve().parent.parent
-    spec = load_pair(args.pair, repo)
+    spec = load_pair(args.pair)
     acfg = CFG["annotate"]
 
-    dom_all = _read_tsv(Path(args.domains))
-    dis_all = _read_tsv(Path(args.disorder))
+    dom_all = pair_domain_rows(spec)
+    dis_all = [dict(zip(DISORDER_COLUMNS, r)) for r in pair_disorder_rows(spec)]
 
     proposed, summary = {}, {}
     for ch in protein_chains(spec):
@@ -188,8 +180,8 @@ def main() -> int:
         "domains": proposed,
         "disorder_summary": summary,
         "review": (
-            "Curate these segments, paste the `domains:` block into "
-            f"configs/{args.pair}.yaml, then set `annotation_reviewed: true`.\n"
+            "Curate these segments, paste the `domains:` block under "
+            f"`{args.pair}:` in configs/curated_domains.yaml, with `annotation_reviewed: true`.\n"
             "Diff vs current config:\n" + "\n".join(diff_lines)
         ),
     }
@@ -199,8 +191,8 @@ def main() -> int:
     print(f"[merge_annotation] -> {out}")
     print("\n".join(diff_lines))
     if not spec.get("annotation_reviewed"):
-        print(f"\n[merge_annotation] configs/{args.pair}.yaml still has annotation_reviewed: "
-              "false — folding will proceed anyway; curate `domains:` whenever convenient.")
+        print(f"\n[merge_annotation] {args.pair} is not reviewed in configs/curated_domains.yaml "
+              "— folding will proceed anyway; curate `domains:` whenever convenient.")
     return 0
 
 

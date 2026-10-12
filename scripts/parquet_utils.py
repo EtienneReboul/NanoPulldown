@@ -6,7 +6,7 @@ Shared helper for writing self-documenting Parquet files across the
 pipeline: every column gets a short description embedded directly in the
 file's own Arrow schema metadata, plus one table-level description of what
 the file is and how it relates to its siblings (e.g. row-alignment with a
-companion .npy, or "see arrays.h5 for the full arrays"). Written once here
+companion .npy, or "see fold.parquet for the full arrays"). Written once here
 so scripts/tm_helix_alignment.py and scripts/compress_abcfold_metadata.py
 can't drift apart on how — or whether — they document their own output.
 

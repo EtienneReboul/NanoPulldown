@@ -12,8 +12,9 @@ hydrogens at pH 7) -> OpenMM ForceField (amber14-all + a GBSA/implicit-
 solvent term, from config.yaml's `minimize.forcefield`) -> a short probe
 minimization to screen for divergence (mirrors the ChimeraX script's
 probe-then-continue guard, scripts/minimize_cif.py:156-188) -> a longer
-minimization to convergence -> minimized PDB + an energy trace parquet
-(one point every `minimize.trace_interval` iterations) for scripts/plot_minimize_energy.py.
+minimization to convergence -> minimized PDB (gzipped, sample_<i>.pdb.gz --
+ChimeraX/gemmi read it as-is) + an energy trace parquet (sample_<i>_energy.parquet,
+one point every `minimize.trace_interval` iterations) for scripts/plot_minimize_energy.py.
 
 Platform: tries `minimize.platform_preference` in order (OpenCL first, for
 Mac Metal-backed GPU acceleration, then CPU) -- confirm OpenCL actually
@@ -23,11 +24,27 @@ safe fallback.
 from __future__ import annotations
 
 import argparse
+import gzip
+import io
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import load_config  # noqa: E402
+
+ENERGY_TABLE_DESCRIPTION = (
+    "Potential-energy trace of one OpenMM minimization (one diffusion "
+    "sample): one row per recorded point, from the unminimized start "
+    "to the final step. Read by scripts/plot_minimize_energy.py.")
+ENERGY_COLUMN_DESCRIPTIONS = {
+    "step": "Cumulative L-BFGS iterations performed so far (0 = initial structure).",
+    "energy_kJ_mol": "Potential energy of the system at that step, kJ/mol.",
+}
+
+
+def energy_path(pdb_path: Path) -> Path:
+    """minimized/sample_<i>.pdb.gz -> minimized/sample_<i>_energy.parquet"""
+    stem = pdb_path.name.split(".")[0]
+    return pdb_path.with_name(f"{stem}_energy.parquet")
 
 
 def _get_platform(preference: list[str]):
@@ -54,10 +71,12 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     pdb_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[minimize] loading {cif_path.name}")
-    # pdbxfile= wants a file OBJECT (it calls .seek() on it), not a path
-    # string -- filename= is the string-path form and auto-detects mmCIF
-    # from the .cif extension.
-    fixer = PDBFixer(filename=str(cif_path))
+    # pdbxfile= wants a seekable file OBJECT; filename= can't read gzip.
+    if cif_path.suffix == ".gz":
+        with gzip.open(cif_path, "rt") as fh:
+            fixer = PDBFixer(pdbxfile=io.StringIO(fh.read()))
+    else:
+        fixer = PDBFixer(filename=str(cif_path))
     fixer.findMissingResidues()
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
@@ -123,25 +142,19 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     e_final = trace[-1][1]
 
     state = simulation.context.getState(getPositions=True)
-    with open(pdb_path, "w") as fh:
+    with gzip.open(pdb_path, "wt") as fh:
         PDBFile.writeFile(modeller.topology, state.getPositions(), fh)
     print(f"[minimize] saved: {pdb_path.name} (final energy {e_final:.1f} kJ/mol)")
 
     import pandas as pd
     from parquet_utils import write_parquet_with_metadata
 
-    energy_pq = pdb_path.with_name(pdb_path.stem + "_energy.parquet")
+    energy_pq = energy_path(pdb_path)
     df = pd.DataFrame(trace, columns=["step", "energy_kJ_mol"])
     write_parquet_with_metadata(
         df, energy_pq,
-        table_description=(
-            "Potential-energy trace of one OpenMM minimization (one diffusion "
-            "sample): one row per recorded point, from the unminimized start "
-            "to the final step. Read by scripts/plot_minimize_energy.py."),
-        column_descriptions={
-            "step": "Cumulative L-BFGS iterations performed so far (0 = initial structure).",
-            "energy_kJ_mol": "Potential energy of the system at that step, kJ/mol.",
-        },
+        table_description=ENERGY_TABLE_DESCRIPTION,
+        column_descriptions=ENERGY_COLUMN_DESCRIPTIONS,
     )
     print(f"[minimize] energy trace ({len(df)} points) -> {energy_pq.name}")
 
@@ -151,6 +164,8 @@ def main() -> int:
     ap.add_argument("cif", type=Path)
     ap.add_argument("pdb", type=Path)
     args = ap.parse_args()
+
+    from lib_pipeline import load_config
 
     cfg = load_config()
     minimize_one(args.cif, args.pdb, cfg)

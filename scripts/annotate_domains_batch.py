@@ -11,7 +11,7 @@ Incremental: cached sequences are skipped, so a crash / rate-limit stall
 resumes where it stopped. Pool size: annotate.web_workers (keep it polite --
 EBI and ExPASy throttle).
 
-Usage: python scripts/annotate_domains_batch.py --specs configs/*.yaml --done <sentinel>
+Usage: python scripts/annotate_domains_batch.py --pairs <pair> [<pair> ...] --done <sentinel>
 """
 from __future__ import annotations
 
@@ -21,17 +21,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import annotation_cache_dir, seq_md5  # noqa: E402
+from lib_pipeline import annotation_cache_dir, load_pairs, seq_md5  # noqa: E402
 from annotate_domains import (CFG, STOP, annotate_sequence, interproscan_email,  # noqa: E402
                               seq_accessions)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--specs", nargs="+", required=True)
+    ap.add_argument("--pairs", nargs="+", required=True)
     ap.add_argument("--done", required=True)
     ap.add_argument("--workers", type=int, default=None)
     a = ap.parse_args()
@@ -42,8 +41,9 @@ def main() -> int:
 
     seqs: set[str] = set()
     accs: dict[str, str] = {}
-    for f in a.specs:
-        spec = yaml.safe_load(Path(f).read_text())
+    specs = load_pairs()
+    for p in a.pairs:
+        spec = specs[p]
         accs.update(seq_accessions(spec))
         for ch in spec["sequences"]:
             seqs.add(ch["sequence"])

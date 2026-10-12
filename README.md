@@ -30,11 +30,12 @@ OOM-crash.
 │  sequence annotation:  domains (ScanProsite + InterProScan v6 MATCH API)   │
 │                        disorder + MoRF (AIUPred docker)                    │
 │                     ─► data/annotation/<pair>/annotation.yaml              │
-│                        (proposed `domains:`; curate into configs/<pair>.yaml│
+│                        (proposed `domains:`; curate into                   │
+│                        configs/curated_domains.yaml                        │
 │                        whenever convenient — doesn't block folding)        │
 ├─ folding (Apple Silicon GPU) ───────────────────────────────────────────────┤
 │  ESMFold2-Fast: 1 seed, N diffusion samples, no MSA/templates              │
-│  ─► metadata compression (arrays.h5 + model_metadata.parquet)             │
+│  ─► raw/sample_<i>.cif.gz + raw/fold.parquet (scores, PAE, pLDDT)         │
 │  ─► OpenMM minimization                     │
 │  ─► rescoring: ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM             │
 │  ─► reports/report.zip  (unzip → report.html) — the ONE report            │
@@ -51,8 +52,8 @@ conda env create -f envs/controller.yaml && conda activate nanopulldown
 
 # 1. define bait/prey lists (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop)
 #    edit configs/baits.txt and configs/preys.txt, then:
-python scripts/expand_pairs.py          # skips pairs over esmfold2.max_tokens (listed in configs/skipped_too_long.tsv)
-#    edit config.yaml's `pairs:` list to include the new configs/<pair>.yaml stems
+python scripts/expand_pairs.py          # adds rows to configs/pairs.parquet; skips pairs over esmfold2.max_tokens (configs/skipped_too_long.tsv)
+#    edit config.yaml's `pairs:` list to include the new <bait>__<prey> names
 
 # 2. run the whole pipeline (Apple Silicon GPU via MLX/Metal for folding)
 #    --resources gpu=1 is REQUIRED (see above) -- --cores alone doesn't
@@ -69,7 +70,7 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 #    -> reports/report.zip
 
 # anytime before or after: review data/annotation/<pair>/annotation.yaml and
-# curate the `domains:` block into configs/<pair>.yaml -- optional, only
+# curate the `domains:` block into configs/curated_domains.yaml -- optional, only
 # affects domain-map figures, never blocks a run
 ```
 
@@ -80,7 +81,8 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 | `config.yaml`                              | all shared defaults, both stages                                                                 |
 | `config.local.yaml`                        | per-machine overrides (gitignored; copy`.example`) — set `annotate.interproscan.email` here |
 | `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; expanded into pairs by`scripts/expand_pairs.py`                     |
-| `configs/<bait>__<prey>.yaml`              | per-pair chain spec + curated domains                                                            |
+| `configs/pairs.parquet`                    | every expanded pair's chain spec, one row per pair (generated; schema in `configs/_schema.md`)   |
+| `configs/curated_domains.yaml`             | hand-curated domain maps, by pair (tracked)                                                      |
 | `envs/`                                    | one conda env per rule group, built by`--use-conda`                                            |
 | `tools/`                                   | vendored:`ipsae`, `pinc` (both from ab_initio_pipeline, unchanged)                           |
 | `scripts/`                                 | see each script's own docstring for what it reuses/adapts/replaces from ab_initio_pipeline       |
@@ -90,9 +92,10 @@ snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 
 ## Worked example
 
-`configs/example_toy__example_toy.yaml` (a ubiquitin homodimer smoke test,
-same protein ab_initio_pipeline uses for its own worked example) is kept as
-a template for the schema in `configs/_schema.md`.
+`example_toy__example_toy` (a ubiquitin homodimer smoke test, same protein
+ab_initio_pipeline uses for its own worked example) is kept in
+`configs/curated_domains.yaml` as a template for a curated entry; its spec is in
+`configs/pairs.parquet` (see `configs/_schema.md`).
 
 ## Implementation notes worth knowing before relying on this in production
 

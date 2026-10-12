@@ -13,7 +13,6 @@ esmfold2:
   max_tokens: 1200   # run-specific bump (config.yaml: 1050); swapping is accepted
 
 dirs:
-  metadata:    "results_q9m548_e3_fbox/metadata"
   postproc:    "results_q9m548_e3_fbox"
   reports:     "reports_q9m548_e3_fbox"
   logs:        "logs_q9m548_e3_fbox"

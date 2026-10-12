@@ -2,7 +2,7 @@
 """
 scripts/collect_results_table.py — Stage 2g
 ==============================================
-Joins each pair's model_metadata.parquet (ptm/iptm/mean_plddt per sample)
+Joins each pair's raw/fold.parquet (ptm/iptm/mean_plddt per sample)
 with its interface_metrics.parquet (ipSAE/iLIS/Pinc/pDockQ/pair_iptm per
 bait-prey chain pair) into one flat, sortable results table across every
 screened pair -- AlphaPulldown's "Results table with confidence scores and
@@ -15,26 +15,29 @@ report/datavzrd/nanopulldown.datavzrd.yaml)
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fold_io import FOLD_FILE, read_fold_scalars  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pairs", nargs="+", required=True)
-    ap.add_argument("--metadata-root", default="results/metadata")
     ap.add_argument("--results-root", default="results")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
     rows = []
     for pair in a.pairs:
-        mm_path = Path(a.metadata_root) / pair / "model_metadata.parquet"
+        mm_path = Path(a.results_root) / pair / "raw" / FOLD_FILE
         im_path = Path(a.results_root) / pair / "interface_metrics.parquet"
         if not mm_path.exists():
             continue
-        mm = pd.read_parquet(mm_path)[["pair", "sample_index", "ptm", "iptm", "mean_plddt"]]
+        mm = read_fold_scalars(mm_path)[["pair", "sample_index", "ptm", "iptm", "mean_plddt"]]
         if im_path.exists():
             im = pd.read_parquet(im_path)
             joined = im.merge(mm, on=["pair", "sample_index"], how="left")

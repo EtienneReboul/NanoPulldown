@@ -40,8 +40,8 @@ with open(a.out, "w", newline="") as fh:
     w.writeheader()
     for pair in pairs:
         for i in range(a.num_samples):
-            for state, path in (("raw", root / pair / "raw" / f"sample_{i}.cif"),
-                                ("minimized", root / pair / "minimized" / f"sample_{i}.pdb")):
+            for state, path in (("raw", root / pair / "raw" / f"sample_{i}.cif.gz"),
+                                ("minimized", root / pair / "minimized" / f"sample_{i}.pdb.gz")):
                 if not path.exists():
                     continue
                 m = run(session, f"open {path} log false")[0]

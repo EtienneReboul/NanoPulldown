@@ -4,7 +4,7 @@ scripts/plot_domain_bar.py — Stage 1 report figure
 ==================================================
 One horizontal residue bar per protein chain, split into coloured segments
 by `kind` (domain / linker / disordered / morf). Uses the hand-curated
-`domains:` block from configs/<pair>.yaml when `annotation_reviewed:
+`domains:` block from configs/curated_domains.yaml when `annotation_reviewed:
 true`, otherwise the proposed block from data/annotation/<pair>/annotation.yaml.
 
 Copied verbatim from ab_initio_pipeline's scripts/plot_domain_bar.py -- the
@@ -14,6 +14,7 @@ config's own terminology moved from "system" to "pair".
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -23,6 +24,9 @@ import matplotlib.patches as mpatches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 import yaml  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib_pipeline import cached_disorder_tracks, load_config, load_pair  # noqa: E402
 
 KIND_COLOR = {
     "domain": "#4c72b0",
@@ -35,16 +39,17 @@ TRACK_COLOR = {"disorder": "#c44e52", "binding": "#55a868", "linker": "#8172b3"}
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--spec", required=True)
+    ap.add_argument("--pair", required=True)
     ap.add_argument("--annotation", required=True)
     ap.add_argument("--chain", required=True)
-    ap.add_argument("--disorder", help="disorder.tsv (chain resi restype track score); adds AIUPred curves")
+    ap.add_argument("--no-disorder", action="store_true",
+                    help="skip the AIUPred curves (read from the per-sequence annotation cache)")
     ap.add_argument("--cutoff", type=float, default=0.5)
     ap.add_argument("--out", required=True)
     ap.add_argument("--formats", default="svg")
     args = ap.parse_args()
 
-    spec = yaml.safe_load(Path(args.spec).read_text())
+    spec = load_pair(args.pair)
     ann = yaml.safe_load(Path(args.annotation).read_text())
     reviewed = spec.get("annotation_reviewed", False)
     src = spec.get("domains") if reviewed else None
@@ -59,13 +64,16 @@ def main() -> int:
         seqlen = max(seqlen, max(int(d["end"]) for d in segs))
 
     dis = pd.DataFrame()
-    if args.disorder:
-        dis = pd.read_csv(args.disorder, sep="\t")
-        dis = dis[dis["chain"].astype(str) == str(args.chain)]
+    chain_seq = next((s["sequence"] for s in spec.get("sequences", []) if s.get("id") == args.chain), "")
+    if not args.no_disorder and chain_seq:
+        tracks = cached_disorder_tracks(load_config(), chain_seq)
+        dis = pd.DataFrame([{"resi": i, "track": t, "score": round(float(v), 5)}
+                            for t, vals in tracks.items() for i, v in enumerate(vals[:len(chain_seq)], start=1)],
+                           columns=["resi", "track", "score"])
         if not dis.empty:
             seqlen = max(seqlen, int(dis["resi"].max()))
 
-    if args.disorder:
+    if not args.no_disorder:
         fig, (axc, ax) = plt.subplots(2, 1, figsize=(9, 4.4), sharex=True, constrained_layout=True,
                                       gridspec_kw={"height_ratios": [2.4, 1.3]})
         if dis.empty:
@@ -106,7 +114,7 @@ def main() -> int:
 
     ax.set_xlim(1, max(seqlen, 1)); ax.set_ylim(-0.1, 1.35)
     ax.set_yticks([]); ax.set_xlabel("residue")
-    if not args.disorder:
+    if args.no_disorder:
         ax.set_title(f"chain {args.chain} domain map — {source_label}", fontsize=9)
     ax.legend(handles=[mpatches.Patch(color=c, label=k) for k, c in KIND_COLOR.items()],
               loc="upper center", bbox_to_anchor=(0.5, -0.45), ncol=4, frameon=False, fontsize=7)

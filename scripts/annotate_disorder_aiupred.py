@@ -12,7 +12,7 @@ Replaces ab_initio_pipeline's three-way metapredict/IUPred3+ANCHOR2/AIUPred
 tools/MC2) with a single tool run twice: AIUPred's "disorder" mode and its
 "binding" mode (its ANCHOR2-like MoRF/binding-region predictor). "linker" is
 never a raw predictor output here (or in ab_initio_pipeline) -- it stays a
-human call made in configs/<pair>.yaml's `domains:` during curation.
+human call made in configs/curated_domains.yaml during curation.
 
 Output: long-format TSV  chain  resi  restype  track  score
         track is one of: disorder, binding, linker
@@ -169,17 +169,15 @@ def get_tracks(seq: str, acfg: dict) -> dict[str, list[float]]:
     return tracks
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--pair", required=True)
-    ap.add_argument("--spec", required=True)
-    ap.add_argument("--out", required=True)
-    args = ap.parse_args()
+DISORDER_COLUMNS = ["chain", "resi", "restype", "track", "score"]
 
-    spec = load_pair(args.pair, Path(args.spec).resolve().parent.parent)
+
+def pair_disorder_rows(spec: dict) -> list[tuple]:
+    """Per-residue AIUPred tracks of every chain of a pair, as
+    (chain, resi, restype, track, score) tuples, from the per-sequence cache
+    (single-sequence container run on a miss)."""
     acfg = CFG["annotate"]["aiupred"]
     rows: list[tuple] = []
-
     for ch in protein_chains(spec):
         cid, seq = ch["id"], ch["sequence"]
         print(f"[disorder] chain {cid} ({len(seq)} aa)", flush=True)
@@ -188,11 +186,21 @@ def main() -> int:
             for tname, vals in tracks.items():
                 if i - 1 < len(vals):
                     rows.append((cid, i, aa, tname, round(float(vals[i - 1]), 5)))
+    return rows
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--pair", required=True)
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
+
+    rows = pair_disorder_rows(load_pair(args.pair))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w") as fh:
-        fh.write("chain\tresi\trestype\ttrack\tscore\n")
+        fh.write("\t".join(DISORDER_COLUMNS) + "\n")
         for r in rows:
             fh.write("\t".join(map(str, r)) + "\n")
     seen = sorted({r[3] for r in rows})
