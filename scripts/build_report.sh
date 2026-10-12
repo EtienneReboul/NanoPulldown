@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# scripts/build_report.sh [repo_root]
-# Rebuilds reports/report.zip from the just-completed Snakemake run.
+# scripts/build_report.sh [repo_root] [report_zip]
+# Rebuilds the report zip (default reports/report.zip; the Snakefile passes
+# its run's dirs.reports, so a run overlay never overwrites another run's
+# report) from the just-completed Snakemake run.
 # Invoked from Snakefile's `onsuccess:` hook, so it must never fail the
 # pipeline — a broken report build is logged and swallowed.
 #
@@ -18,10 +20,11 @@ set -uo pipefail
 
 REPO="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SNAKEFILE="$REPO/Snakefile"
-OUT="$REPO/reports/report.zip"
+OUT="${2:-$REPO/reports/report.zip}"
+[[ "$OUT" = /* ]] || OUT="$REPO/$OUT"
 CSS="$REPO/report/custom.css"
 
-mkdir -p "$REPO/reports"
+mkdir -p "$(dirname "$OUT")"
 echo "[build_report] -> $OUT"
 
 args=(-s "$SNAKEFILE" --report "$OUT")

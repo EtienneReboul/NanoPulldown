@@ -646,4 +646,4 @@ rule datavzrd_folding:
 
 
 onsuccess:
-    shell(f"bash {REPO}/scripts/build_report.sh {REPO}")
+    shell(f"bash {REPO}/scripts/build_report.sh {REPO} {Path(DIRS['reports']) / 'report.zip'}")

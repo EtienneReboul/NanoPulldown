@@ -1,0 +1,31 @@
+# Run overlay: bait BPM6 (A1L4W5) x the 13 preys of configs/old_preys.txt --
+# the 9 literature-annotated interactors of PXD013906 Table S3 (BPM1/2/4/5,
+# MYC2/3/4, JAZ1, NINJA) + 4 flat background binders as negative controls.
+# A small, curated version of the full A1L4W5 screen in results/.
+# Usage (overlay after config.yaml / config.local.yaml):
+#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_curated.yaml snakemake ...
+# Outputs go to *_bpm6_curated dirs (annotation too, so this run never
+# rewrites the shared annotation cache's .done markers of the main run).
+
+run_name: "bpm6_curated"
+
+dirs:
+  annotation:  "data/annotation_bpm6_curated"
+  postproc:    "results_bpm6_curated"
+  reports:     "reports_bpm6_curated"
+  logs:        "logs_bpm6_curated"
+
+pairs:
+  - A1L4W5__Q8L765   # BPM1
+  - A1L4W5__Q9M8J9   # BPM2
+  - A1L4W5__Q9SRV1   # BPM4
+  - A1L4W5__Q1EBV6   # BPM5
+  - A1L4W5__Q39204   # MYC2
+  - A1L4W5__Q9FIP9   # MYC3
+  - A1L4W5__O49687   # MYC4
+  - A1L4W5__Q9LMA8   # JAZ1
+  - A1L4W5__Q9SV55   # NINJA
+  - A1L4W5__P32961   # NIT1  (negative control)
+  - A1L4W5__Q9ZP05   # PMDH2 (negative control)
+  - A1L4W5__P56757   # ATP synthase alpha (negative control)
+  - A1L4W5__P46010   # NIT3  (negative control)
