@@ -27,8 +27,13 @@ list, folded locally with ESMFold2-Fast (one seed,
   Pinc / pDockQ / pDockQ2 from ab_initio_pipeline's PAE-based rescoring
   stack.
 * **Metric distributions** — one violin per confidence / interface metric
-  (pTM, ipTM, pLDDT, ipSAE, iLIS, Pinc, pDockQ, ...) across all pairs,
+  (pTM, ipTM, pLDDT, ipSAE, iLIS, Pinc, pDockQ, PLIP contacts, ...) across all pairs,
   samples and chain pairs in the results table.
+* **PLIP contacts by interaction type** — the bait-prey PLIP contact count
+  of every sample split by interaction type (hydrogen bonds, hydrophobic,
+  salt bridges, π-stacking, π-cation, ...), one violin per type; the total
+  count is the ``plip_contacts`` panel of the metric distributions, so it can
+  be compared with the confidence scores as a ranking signal.
 * **Minimization energy** — OpenMM energy trace per diffusion sample, plus a
   failure-rate table for any sample whose minimization diverged.
 

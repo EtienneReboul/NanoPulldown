@@ -190,6 +190,7 @@ rule all:
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "metric_violins_interactive"),
+        str(FOLD_REP / "plip_type_violins"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         ([str(FOLD_REP / "tables")] if DATAVZRD else []),
 
@@ -641,7 +642,8 @@ rule fig_clash_test:
 
 rule collect_results_table:
     input:
-        [str(POST / p / "interface_metrics.parquet") for p in PAIRS],
+        metrics=[str(POST / p / "interface_metrics.parquet") for p in PAIRS],
+        plip=[str(POST / p / "plip_contacts.parquet") for p in PAIRS],
     output:
         str(FOLD_REP / "results_table.csv"),
     conda:
@@ -670,6 +672,35 @@ rule fig_metric_violins_interactive:
         r"""
         python scripts/plot_metric_violins_interactive.py --table {input[0]} \
           --outdir {output[0]}
+        """
+
+
+# PLIP contacts per interaction type: same interactive violin figure as the
+# metric distributions, over the results table's plip_* count columns. The
+# total (plip_contacts) is also one of the metric-distribution panels.
+PLIP_TYPE_COLS = ["plip_hbond", "plip_hydrophobic", "plip_salt_bridge", "plip_water_bridge",
+                  "plip_pi_stacking", "plip_pi_cation", "plip_halogen", "plip_metal"]
+PLIP_TYPE_LABELS = ["hydrogen bonds", "hydrophobic", "salt bridges", "water bridges",
+                    "π-stacking", "π-cation", "halogen bonds", "metal complexes"]
+
+
+rule fig_plip_type_violins:
+    input:
+        str(FOLD_REP / "results_table.csv"),
+    output:
+        report(directory(str(FOLD_REP / "plip_type_violins")),
+               category="PLIP contacts by interaction type", htmlindex="index.html"),
+    conda:
+        "envs/report.yaml"
+    params:
+        cols=" ".join(PLIP_TYPE_COLS),
+        labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
+    shell:
+        r"""
+        python scripts/plot_metric_violins_interactive.py --table {input[0]} \
+          --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
+          --skip-all-zero --ncols 3 \
+          --title "PLIP bait-prey contacts per interaction type (all pairs, samples, chain pairs)"
         """
 
 

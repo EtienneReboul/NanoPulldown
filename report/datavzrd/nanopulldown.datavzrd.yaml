@@ -76,6 +76,24 @@ views:
           label: "pDockQ"
         pdockq2:
           label: "pDockQ2"
+        plip_contacts:
+          label: "PLIP contacts"
+        plip_hbond:
+          label: "PLIP H-bonds"
+        plip_hydrophobic:
+          label: "PLIP hydrophobic"
+        plip_salt_bridge:
+          label: "PLIP salt bridges"
+        plip_water_bridge:
+          label: "PLIP water bridges"
+        plip_pi_stacking:
+          label: "PLIP π-stacking"
+        plip_pi_cation:
+          label: "PLIP π-cation"
+        plip_halogen:
+          label: "PLIP halogen"
+        plip_metal:
+          label: "PLIP metal"
         note:
           label: "note"
 
