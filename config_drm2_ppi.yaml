@@ -1,0 +1,32 @@
+# Run overlay: bait DRM2 (Q9M548, DNA (cytosine-5)-methyltransferase, AT5G14620)
+# x its known interactors in the PPI databases UniProt cross-references
+# (UniProt, IntAct, MINT, BioGRID, STRING physical, Complex Portal; see
+# scripts/fetch_interactors.py). Snapshot: data/interactors/drm2_ppi.tsv.
+# Usage (overlay after config.yaml / config.local.yaml):
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_ppi.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_ppi.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+# Outputs go to *_drm2_ppi dirs (annotation too, so this run never rewrites the
+# shared annotation cache's .done markers of the main run).
+
+run_name: "drm2_ppi"
+
+esmfold2:
+  max_tokens: 1200   # as q9m548_e3_fbox (same bait); AGO4/AGO9/TPR2/CYP65 still exceed it,
+                     # see configs/skipped_too_long_drm2_ppi.tsv
+
+dirs:
+  annotation:  "data/annotation_drm2_ppi"
+  postproc:    "results_drm2_ppi"
+  reports:     "reports_drm2_ppi"
+  logs:        "logs_drm2_ppi"
+
+inputs:
+  baits:
+    - accessions: [Q9M548]
+  preys:
+    - interactors:
+        name: drm2_ppi          # partners of the baits, every database, >= 1 database
+        min_databases: 1
+
+pairs_file: configs/pairs_drm2_ppi.txt

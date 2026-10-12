@@ -27,11 +27,22 @@ then `exclude:` entries are dropped:
             filter: "adjp < 0.05 and logfc > 0"   # optional pandas query
             keep_columns: [logfc, adjp]        # carried into the results table as pxd013906_logfc ...
             annotate_only: false               # true: only add columns to preys other sources picked
+        - interactors:                         # known partners from PPI databases
+            name: bpm6_ppi                     # snapshot: data/interactors/bpm6_ppi.tsv
+            of: [A1L4W5]                       # default: this run's baits
+            databases: [uniprot, intact, mint, biogrid, string, complexportal]   # (the default)
+            string: {min_score: 700}           # overrides config.yaml interactors.string
+            min_databases: 2                   # reported by >= 2 databases
+            same_organism: true                # (default) drop cross-species partners
+            max_partners: 50                   # keep the 50 best-supported
+            annotate_only: false               # true: only flag preys other sources picked
         - exclude: [P56757]                    # never pair these
 
-`uniprot_query` keys are documented in fetch_uniprot.build_query. Query
-results are snapshotted and reused while the query is unchanged (pass
-refresh=True / expand_pairs --refresh-queries to re-query).
+`uniprot_query` keys are documented in fetch_uniprot.build_query,
+`interactors` keys in fetch_interactors (module docstring + summarize). Both
+are snapshotted and reused while the query is unchanged (pass refresh=True /
+expand_pairs --refresh-queries to re-query). An `interactors` source carries
+<name>_databases, <name>_n_databases and <name>_string_score per protein.
 
 Run standalone to preview what a config selects without expanding anything:
     NANOPULLDOWN_RUN_CONFIG=config_bpm6_curated.yaml python scripts/resolve_inputs.py
@@ -44,10 +55,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fetch_interactors import interactors as fetch_interactors  # noqa: E402
 from fetch_uniprot import build_query, parse_protein_spec, run_query  # noqa: E402
 from lib_pipeline import REPO_ROOT, load_config  # noqa: E402
 
-KINDS = ("list", "accessions", "uniprot_query", "ipms", "exclude")
+KINDS = ("list", "accessions", "uniprot_query", "ipms", "interactors", "exclude")
 
 
 @dataclass
@@ -125,6 +137,28 @@ def _ipms(res: Resolved, role: str, src: dict) -> str:
     return name
 
 
+def _interactors(res: Resolved, role: str, src: dict, cfg: dict, refresh: bool) -> str:
+    name = src.get("name")
+    if not name:
+        raise ValueError("interactors source needs a `name:` (its snapshot file)")
+    of = [parse_protein_spec(str(s)).uniprot for s in src.get("of") or []]
+    if not of:
+        if role == "bait" or not res.specs["bait"]:
+            raise ValueError(f"interactors {name!r}: set `of:` (no baits resolved to default to)")
+        of = [parse_protein_spec(s).uniprot for s in res.specs["bait"]]
+    for hit in fetch_interactors(name, src, of, cfg, refresh=refresh):
+        acc = hit["partner"]
+        extra = {f"{name}_databases": hit["databases"],
+                 f"{name}_n_databases": hit["n_databases"],
+                 f"{name}_string_score": hit["string_score"]}
+        if src.get("annotate_only"):
+            if (acc, role) in res.provenance:
+                res.provenance[(acc, role)].update(extra)
+        else:
+            res.add(role, acc, name, extra)
+    return name
+
+
 def resolve_inputs(cfg: dict, refresh: bool = False, verbose: bool = True) -> Resolved:
     inputs = cfg.get("inputs") or {}
     res = Resolved()
@@ -152,6 +186,8 @@ def resolve_inputs(cfg: dict, refresh: bool = False, verbose: bool = True) -> Re
                     res.add(role, acc, tag)
             elif kind == "ipms":
                 tag = _ipms(res, role, src["ipms"])
+            elif kind == "interactors":
+                tag = _interactors(res, role, src["interactors"], cfg, refresh)
             else:                                           # exclude
                 excluded |= {parse_protein_spec(str(s)).uniprot for s in src["exclude"]}
                 continue

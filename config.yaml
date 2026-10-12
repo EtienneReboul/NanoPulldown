@@ -1592,6 +1592,26 @@ uniprot:
   retries: 3
   timeout_s: 30
 
+# `interactors:` input source (scripts/fetch_interactors.py): known partners of
+# the baits from the PPI databases UniProt cross-references. Per-source keys
+# (databases, string, min_databases ...) go in the run config's `inputs:` block.
+interactors:
+  snapshot_dir: "data/interactors"      # <dir>/<name>.tsv + .json: one snapshot per source
+  retries: 3
+  timeout_s: 60
+  psicquic_page: 500
+  string:                               # defaults; a source's own `string:` overrides
+    base_url: "https://string-db.org/api"
+    network_type: "physical"            # physical | functional
+    min_score: 400                      # STRING combined score, 0-1000 (400 = medium)
+    limit: 100                          # max partners per query protein
+  complexportal_url: "https://www.ebi.ac.uk/intact/complex-ws"
+  psicquic:                             # PSICQUIC REST endpoints, usable as `databases:` names
+    intact:  "https://www.ebi.ac.uk/Tools/webservices/psicquic/intact/webservices/current"
+    mint:    "https://www.ebi.ac.uk/Tools/webservices/psicquic/mint/webservices/current"
+    imex:    "https://www.ebi.ac.uk/Tools/webservices/psicquic/imex/webservices/current"
+    biogrid: "http://tyersrest.tyerslab.com:8805/psicquic/webservices/current"
+
 # ── Stage 1b: sequence annotation (domains / disorder / MoRF) ──────────────
 # Annotation is cached per unique sequence (data/annotation/_cache/); a proposed
 # `domains:` block per pair is left at data/annotation/<pair>/annotation.yaml for

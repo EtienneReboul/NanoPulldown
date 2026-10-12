@@ -52,7 +52,9 @@ conda env create -f envs/controller.yaml && conda activate nanopulldown
 
 # 1. declare where baits/preys come from in a run config's `inputs:` block --
 #    list files (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop),
-#    inline accessions, UniProt GO/InterPro queries, IP-MS tables; see
+#    inline accessions, UniProt GO/InterPro queries, IP-MS tables, known
+#    interactors of the baits from PPI databases (UniProt, IntAct, MINT,
+#    BioGRID, STRING, Complex Portal; scripts/fetch_interactors.py); see
 #    scripts/resolve_inputs.py and config_bpm6_curated.yaml -- then:
 NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
 #    -> configs/pairs.parquet rows (skips pairs over esmfold2.max_tokens),

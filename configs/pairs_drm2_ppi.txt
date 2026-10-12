@@ -1,0 +1,9 @@
+# drm2_ppi: 1 bait(s) x 12 prey(s), written by scripts/expand_pairs.py
+Q9M548__O22607
+Q9M548__O23629
+Q9M548__Q9LUJ3
+Q9M548__Q39255
+Q9M548__Q9LZR5
+Q9M548__Q1EC66
+Q9M548__Q9FN03
+Q9M548__Q7XA66

@@ -92,5 +92,12 @@ Q9LMA8: {short: JAZ1}     # UniProt primary gene name: TIFY10A
 There is one row per (accession, role) for the run named by `run_name`
 (default `main`). `sources` lists the config `inputs:` sources that selected
 the protein. Each `keep_columns` entry of an `ipms:` source adds a
-`<source>_<column>` column (e.g. `pxd013906_logfc`). The results table joins
-these values in for the prey.
+`<source>_<column>` column (e.g. `pxd013906_logfc`). Each `interactors:`
+source adds `<source>_databases` (e.g. `biogrid;intact;string`),
+`<source>_n_databases` and `<source>_string_score` (0-1000). The results table
+joins these values in for the prey.
+
+`interactors:` sources snapshot every (query, partner, database) hit to
+`data/interactors/<name>.tsv` (+ `.json`: settings, per-database counts,
+failed calls, date). Partners are current primary UniProt accessions, so the
+same protein counts once however each database names it.
