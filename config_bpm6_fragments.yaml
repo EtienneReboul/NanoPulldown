@@ -1,0 +1,36 @@
+# Run overlay: fragment mode of config_bpm6_curated.yaml -- bait BPM6 (A1L4W5)
+# x the 13 curated preys of configs/old_preys.txt (9 PXD013906 Table S3
+# interactors + 4 background negative controls), both cut into their
+# annotated domains (config.yaml `fragments:`, scripts/fragment_domains.py),
+# so pairs are domain x domain as in a yeast two-hybrid screen.
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_fragments.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_fragments.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+
+run_name: "bpm6_fragments"
+
+fragments:
+  enabled: true
+
+dirs:
+  annotation:  "data/annotation_bpm6_fragments"
+  postproc:    "results_bpm6_fragments"
+  reports:     "reports_bpm6_fragments"
+  logs:        "logs_bpm6_fragments"
+
+inputs:
+  baits:
+    - list: configs/baits.txt
+  preys:
+    - list: configs/old_preys.txt
+      name: chico2020_curated
+    - ipms:
+        name: pxd013906
+        path: data/pxd013906_uniprot_mapping.csv
+        id_column: uniprot
+        name_column: genes
+        keep_columns: [logfc, adjp]
+        annotate_only: true
+
+pairs_file: configs/pairs_bpm6_fragments.txt

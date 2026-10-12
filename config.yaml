@@ -1675,9 +1675,12 @@ annotate:
 fragments:
   enabled: false
   sides: [bait, prey]            # which side(s) get cut; the other stays full length
-  merge_gap: 20                  # domains at most this many residues apart -> one fragment
-                                 # (tandem repeats, a domain split across two signatures)
-  min_length: 30                 # drop merged domain blocks shorter than this (before padding)
+  merge_gap: 0                   # domains at most this many residues apart -> one fragment; 0 = only
+                                 # abutting/overlapping ones (one unit split across two signatures,
+                                 # e.g. BTB/POZ + BACK), so MATH and BTB stay separate fragments
+  repeat_gap: 20                 # repeats of the SAME domain this close -> one fragment (WD40, UBA ...)
+  min_length: 15                 # drop merged domain blocks shorter than this (before padding); keep
+                                 # it low -- short motifs (JAZ1's 26-aa Jas) are often the binder
   padding: 10                    # residues added on each side of a block (clipped to the protein)
   without_domains: full_length   # full_length: keep a protein with no domain whole | skip: drop it
   include_full_length: false     # also pair each fragmented protein whole (full-length control)

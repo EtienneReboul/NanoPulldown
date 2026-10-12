@@ -100,9 +100,11 @@ NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml snakemake --use-conda --cores
 ```
 
 - Domains are the ones the domain-map figures show (InterPro representative
-  set, `scripts/merge_annotation.py`). Domains close together are merged
-  (`merge_gap`), short blocks dropped (`min_length`), and `padding` residues
-  added each side. `configs/fragment_domains.yaml` replaces them by hand per
+  set, `scripts/merge_annotation.py`). Abutting or overlapping domains are
+  merged into one fragment (`merge_gap`), as are repeats of the same domain
+  (`repeat_gap`). Domains with a linker between them stay separate. Short
+  blocks are dropped (`min_length`), and `padding` residues are added on each
+  side. `configs/fragment_domains.yaml` replaces them by hand per
   accession, e.g. with the constructs of a published screen.
 - `sides:` picks which side is cut. `include_full_length:` adds the whole
   protein as a control. `without_domains:` keeps (`full_length`) or drops

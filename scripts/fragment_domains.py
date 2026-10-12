@@ -22,9 +22,13 @@ Where the domains come from, per accession:
   2. otherwise the folded domains the reports show: merge_annotation's
      select_domains() over the full-length entry's InterPro / ScanProsite
      hits (cached per sequence, see scripts/annotate_domains.py), then
-       * domains <= `merge_gap` residues apart merged into one fragment
-         (tandem repeats, a domain split across two signatures)
-       * blocks shorter than `min_length` dropped
+       * domains <= `merge_gap` residues apart (default 0: abutting or
+         overlapping -- one structural unit annotated by two signatures,
+         e.g. BTB/POZ + BACK) merged into one fragment, and so are repeats of
+         the same domain <= `repeat_gap` apart (WD40, UBA ...); distinct
+         domains with a linker between them stay separate fragments
+       * blocks shorter than `min_length` dropped (keep it low: short motifs
+         such as JAZ1's 26-aa Jas motif are often the interaction element)
        * `padding` residues added on each side, clipped to the protein
   3. no domain left: `without_domains: full_length` keeps the whole protein
      (named "full length"), `skip` drops the protein from the screen.
@@ -48,8 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import REPO_ROOT, load_config  # noqa: E402
 from fetch_uniprot import fetch_sequence, parse_protein_spec  # noqa: E402
 
-DEFAULTS = {"enabled": False, "sides": ["bait", "prey"], "min_length": 30, "merge_gap": 20,
-            "padding": 10, "without_domains": "full_length", "include_full_length": False,
+DEFAULTS = {"enabled": False, "sides": ["bait", "prey"], "min_length": 15, "merge_gap": 0,
+            "repeat_gap": 20, "padding": 10, "without_domains": "full_length", "include_full_length": False,
             "overrides": "configs/fragment_domains.yaml"}
 
 
@@ -112,10 +116,12 @@ def _join_names(names: list[str]) -> str:
     return " + ".join(n if k == 1 else f"{n} ×{k}" for n, k in out)
 
 
-def merge_domains(domains: list[tuple[int, int, str]], merge_gap: int) -> list[tuple[int, int, list[str]]]:
+def merge_domains(domains: list[tuple[int, int, str]], merge_gap: int,
+                  repeat_gap: int) -> list[tuple[int, int, list[str]]]:
     blocks: list[list] = []
     for s, e, name in sorted(domains):
-        if blocks and s - blocks[-1][1] - 1 <= merge_gap:
+        gap = s - blocks[-1][1] - 1 if blocks else None
+        if blocks and (gap <= merge_gap or (name == blocks[-1][2][-1] and gap <= repeat_gap)):
             blocks[-1][1] = max(blocks[-1][1], e)
             blocks[-1][2].append(name)
         else:
@@ -149,7 +155,8 @@ def protein_fragments(spec: str, role: str, cfg: dict, fcfg: dict | None = None,
                   for d in overrides[ps.uniprot]]
     else:
         source = "interpro"
-        blocks = [b for b in merge_domains(annotated_domains(ps.uniprot, seq), int(fcfg["merge_gap"]))
+        blocks = [b for b in merge_domains(annotated_domains(ps.uniprot, seq), int(fcfg["merge_gap"]),
+                                              int(fcfg["repeat_gap"]))
                   if b[1] - b[0] + 1 >= int(fcfg["min_length"])]
 
     frags = []
