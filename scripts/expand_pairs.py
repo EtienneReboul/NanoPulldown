@@ -51,8 +51,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib_pipeline import (PAIRS_TABLE, REPO_ROOT, inputs_table_path, load_config, load_pairs,  # noqa: E402
                           pair_tokens, update_proteins, write_pairs)
 from fetch_uniprot import fetch_metadata, fetch_sequence, parse_protein_spec  # noqa: E402
-from fragment_domains import (Fragment, fragment_config, load_overrides, protein_fragments,  # noqa: E402
-                              write_fragments_table)
+from fragment_domains import (Fragment, fragment_config, load_overrides, prefetch_annotation,  # noqa: E402
+                              protein_fragments, write_fragments_table)
 from resolve_inputs import Resolved, read_specs, resolve_inputs, write_inputs_table  # noqa: E402
 
 
@@ -143,6 +143,14 @@ def main() -> int:
     fragment_mode = a.fragments or bool(fcfg["enabled"])
     if fragment_mode:
         overrides = load_overrides(fcfg)
+        cut = [s for role, rs in (("bait", baits), ("prey", preys)) if role in fcfg["sides"]
+               for s in rs if parse_protein_spec(s).uniprot not in overrides]
+        failed = prefetch_annotation(cut, cfg)
+        if failed:
+            print(f"[expand_pairs] ERROR: domain annotation incomplete for {len(failed)} protein(s) "
+                  f"(web service errors), e.g. {failed[:5]}. Nothing written; progress is cached, "
+                  "rerun to retry them.", file=sys.stderr)
+            return 2
         sides = {}
         for role, role_specs in (("bait", baits), ("prey", preys)):
             per_spec = [protein_fragments(s, role, cfg, fcfg, overrides) for s in role_specs]

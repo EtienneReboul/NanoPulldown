@@ -87,16 +87,56 @@ def load_overrides(fcfg: dict) -> dict[str, list[dict]]:
     return {str(acc): list(doms or []) for acc, doms in (yaml.safe_load(path.read_text()) or {}).items()}
 
 
+class AnnotationIncomplete(RuntimeError):
+    """A web service failed for this protein: cutting it from partial hits
+    would silently give wrong fragments, so expansion stops instead."""
+
+
+def prefetch_annotation(specs: list[str], cfg: dict) -> list[str]:
+    """Annotate the full-length entries of `specs` in the rate-limited thread
+    pool (annotate.web_workers), as annotate_domains_batch does, so a large
+    screen's expansion is not one web call at a time. Returns the accessions
+    still uncached (a service failed); protein_fragments refuses those."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from annotate_domains import CFG, DOMAIN_CACHE, annotate_sequence, interproscan_email
+    from lib_pipeline import annotation_cache_dir, seq_md5
+
+    acfg, cache = CFG["annotate"], annotation_cache_dir(CFG, DOMAIN_CACHE)
+    email = interproscan_email(acfg)
+    seqs = {}
+    for spec in specs:
+        ps = parse_protein_spec(spec)
+        if not ps.regions and "-" not in ps.uniprot:
+            seqs[ps.uniprot] = fetch_sequence(ps.uniprot, cfg)
+    todo = [a for a, s in seqs.items() if not (cache / f"{seq_md5(s)}.json").exists()]
+    if todo:
+        print(f"[fragment_domains] annotating {len(todo)} of {len(seqs)} protein(s) "
+              f"({acfg.get('web_workers', 4)} workers, rate-limited)", flush=True)
+        with ThreadPoolExecutor(max_workers=int(acfg.get("web_workers", 4))) as pool:
+            for i, _ in enumerate(pool.map(
+                    lambda a: annotate_sequence(seqs[a], acfg, email,
+                                                lambda m: print(m, file=sys.stderr), accession=a),
+                    todo), 1):
+                if i % 25 == 0 or i == len(todo):
+                    print(f"[fragment_domains] {i}/{len(todo)}", flush=True)
+    return [a for a, s in seqs.items() if not (cache / f"{seq_md5(s)}.json").exists()]
+
+
 def annotated_domains(accession: str, sequence: str) -> list[tuple[int, int, str]]:
     """(start, end, name) folded domains of a full-length entry, as
     merge_annotation proposes them (InterPro representative set + uncovered
     InterPro domain entries; ScanProsite when InterPro has nothing)."""
-    from annotate_domains import CFG, annotate_sequence, interproscan_email
+    from annotate_domains import CFG, DOMAIN_CACHE, annotate_sequence, interproscan_email
+    from lib_pipeline import annotation_cache_dir, seq_md5
     from merge_annotation import select_domains
 
     acfg = CFG["annotate"]
     rec = annotate_sequence(sequence, acfg, interproscan_email(acfg),
                             log=lambda m: print(m, file=sys.stderr), accession=accession)
+    if not (annotation_cache_dir(CFG, DOMAIN_CACHE) / f"{seq_md5(sequence)}.json").exists():
+        raise AnnotationIncomplete(f"{accession}: domain annotation incomplete (a web service failed); "
+                                   "rerun scripts/expand_pairs.py once the services respond")
     out = []
     for s, e, name in select_domains(rec["hits"]):
         s, e = max(1, int(s)), min(len(sequence), int(e))

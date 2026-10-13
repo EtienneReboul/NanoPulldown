@@ -1,0 +1,42 @@
+# Run overlay: fragment mode, bait DRM2 (Q9M548) x Arabidopsis nuclear E3
+# ubiquitin ligases + nuclear F-box proteins (UniProt queries of
+# data/data_retrieval_README.md), both cut into their annotated domains
+# (config.yaml `fragments:`, scripts/fragment_domains.py) -- the fragment-mode
+# counterpart of config_q9m548_e3_fbox.yaml, whose full-length screen had to
+# skip the preys over max_tokens.
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_e3_fbox_fragments.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_e3_fbox_fragments.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+
+run_name: "drm2_e3_fbox_fragments"
+
+esmfold2:
+  max_tokens: 1200   # as q9m548_e3_fbox (same bait)
+
+fragments:
+  enabled: true
+
+dirs:
+  annotation:  "data/annotation_drm2_e3_fbox_fragments"
+  postproc:    "results_drm2_e3_fbox_fragments"
+  reports:     "reports_drm2_e3_fbox_fragments"
+  logs:        "logs_drm2_e3_fbox_fragments"
+
+inputs:
+  baits:
+    - accessions: [Q9M548]
+  preys:
+    # data/data_retrieval_README.md query 1: (go:0061630) AND (go:0005634) AND (organism_id:3702)
+    - uniprot_query:
+        name: e3_nuclear_go
+        go: [GO:0061630, GO:0005634]
+        organism: 3702
+    # query 2: (xref:interpro-IPR001810 OR xref:interpro-IPR036047) AND (go:0005634) AND (organism_id:3702)
+    - uniprot_query:
+        name: fbox_nuclear_go
+        interpro: [IPR001810, IPR036047]
+        go: [GO:0005634]
+        organism: 3702
+
+pairs_file: configs/pairs_drm2_e3_fbox_fragments.txt
