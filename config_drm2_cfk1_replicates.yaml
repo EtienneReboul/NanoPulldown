@@ -1,0 +1,24 @@
+# Run overlay: replicate folds of the DRM2 x CFK1 domain hit from
+# config_drm2_cfk1_fragments.yaml (methyltransferase x kelch propeller, seed 1,
+# 1 sample) with a new seed and 2 diffusion samples, next to two domain
+# controls. Pairs are already in configs/pairs.parquet (no `inputs:`).
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_cfk1_replicates.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+
+run_name: "drm2_cfk1_replicates"
+
+esmfold2:
+  seed: 2
+  num_diffusion_samples: 2   # ~6 GiB per extra sample at 610 tokens: 2 samples ~25 GiB peak
+  max_tokens: 1200
+
+dirs:
+  annotation:  "data/annotation_drm2_cfk1_fragments"   # same pairs, same annotation
+  postproc:    "results_drm2_cfk1_replicates"
+  reports:     "reports_drm2_cfk1_replicates"
+  logs:        "logs_drm2_cfk1_replicates"
+
+pairs:
+  - Q9M548x285-626__O80582x106-373   # hit: DRM2 methyltransferase x CFK1 kelch
+  - Q9M548x285-626__O80582x9-73      # control: methyltransferase x F-box
+  - Q9M548x42-235__O80582x106-373    # control: UBA cluster x kelch

@@ -1,0 +1,33 @@
+# Run overlay: DRM2 (Q9M548) x CFK1 (O80582, At2g44130), fragment mode with
+# full-length references -- which CFK1 domain (F-box / kelch propeller) binds
+# which DRM2 domain (UBA cluster / methyltransferase)? Chen et al. 2021 New
+# Phytol (10.1111/nph.17103) showed full-length CFK1-DRM2 binding (Y2H,
+# split-LUC, BiFC, co-IP) but mapped no domains. CFK1 is not in the
+# e3_fbox screen (no nuclear GO term in UniProt).
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_cfk1_fragments.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_drm2_cfk1_fragments.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+
+run_name: "drm2_cfk1_fragments"
+
+esmfold2:
+  max_tokens: 1200          # full DRM2 x full CFK1 = 1035 tokens
+
+fragments:
+  enabled: true
+  include_full_length: true # full-length pair = the construct the paper tested
+
+dirs:
+  annotation:  "data/annotation_drm2_cfk1_fragments"
+  postproc:    "results_drm2_cfk1_fragments"
+  reports:     "reports_drm2_cfk1_fragments"
+  logs:        "logs_drm2_cfk1_fragments"
+
+inputs:
+  baits:
+    - accessions: [Q9M548]
+  preys:
+    - accessions: [O80582]
+
+pairs_file: configs/pairs_drm2_cfk1_fragments.txt

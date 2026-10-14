@@ -8,3 +8,13 @@
 # Q9M548:                                    # DRM2
 #   - {name: UBA cluster, start: 50, end: 230}
 #   - {name: MTase,       start: 290, end: 626}
+
+# InterPro's per-accession API answers 408 for these two (2026-10-14), so
+# their Pfam domains (InterPro /entry/pfam/protein/uniprot/) are given here.
+P93736:                                      # TWN2, valine--tRNA ligase (1108 aa)
+  - {name: tRNA synthetase class I, start: 149, end: 771}
+  - {name: Anticodon-binding,       start: 817, end: 965}
+P56757:                                      # atpA, ATP synthase alpha (507 aa)
+  - {name: ATP synthase beta-barrel,          start: 29,  end: 93}
+  - {name: ATP synthase nucleotide-binding,   start: 150, end: 365}
+  - {name: ATP synthase C-terminal,           start: 372, end: 496}

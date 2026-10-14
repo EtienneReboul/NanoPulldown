@@ -1,0 +1,36 @@
+# Run overlay: fragment mode of the full BPM6 screen in config.yaml -- bait
+# BPM6 (A1L4W5) x every protein of PXD013906 Table S3 (Chico et al. 2020 PNAS,
+# data/pnas.1912199117.sd01.xlsx, resolved to UniProt by
+# scripts/resolve_pxd013906_uniprot.py -> data/pxd013906_uniprot_mapping.csv:
+# 1641 rows, 1558 accessions, 83 AGIs unresolved), both cut into their
+# annotated domains (config.yaml `fragments:`, scripts/fragment_domains.py),
+# so pairs are domain x domain as in a yeast two-hybrid screen. Full-length
+# pairs are already in results/ (config.yaml), so no full-length controls.
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_pxd013906_fragments.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_pxd013906_fragments.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2
+
+run_name: "bpm6_pxd013906_fragments"
+
+fragments:
+  enabled: true
+
+dirs:
+  annotation:  "data/annotation_bpm6_pxd013906_fragments"
+  postproc:    "results_bpm6_pxd013906_fragments"
+  reports:     "reports_bpm6_pxd013906_fragments"
+  logs:        "logs_bpm6_pxd013906_fragments"
+
+inputs:
+  baits:
+    - list: configs/baits.txt
+  preys:
+    - ipms:
+        name: pxd013906
+        path: data/pxd013906_uniprot_mapping.csv
+        id_column: uniprot
+        name_column: genes
+        keep_columns: [logfc, adjp]
+
+pairs_file: configs/pairs_bpm6_pxd013906_fragments.txt
