@@ -52,10 +52,11 @@ conda env create -f envs/controller.yaml && conda activate nanopulldown
 
 # 1. declare where baits/preys come from in a run config's `inputs:` block --
 #    list files (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop),
-#    inline accessions, UniProt GO/InterPro queries, IP-MS tables, known
-#    interactors of the baits from PPI databases (UniProt, IntAct, MINT,
-#    BioGRID, STRING, Complex Portal; scripts/fetch_interactors.py); see
-#    scripts/resolve_inputs.py and config_bpm6_curated.yaml -- then:
+#    inline accessions, UniProt GO/InterPro queries, IP-MS tables; see
+#    scripts/resolve_inputs.py and config_bpm6_curated.yaml. Every run also
+#    gets controls (config.yaml `controls:`, "Controls" below): the baits'
+#    known direct partners as positives and a matched decoy set as negatives.
+#    Preview the counts with --dry-run, then:
 NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
 #    -> configs/pairs.parquet rows (skips pairs over esmfold2.max_tokens),
 #       configs/proteins.parquet (UniProt names), configs/inputs_<run>.parquet,
@@ -73,13 +74,57 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
 #    swap/OOM crash on the dev Mac when it was 3 PLIP containers at once
 #    with no folding running (see git history) -- start lower (e.g. 2) and
 #    watch `vm.swapusage` / Activity Monitor before raising it.
-snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
+#    For a long (multi-day) run use the full command of "Launching a long
+#    run" below: --keep-going / --retries / --rerun-incomplete, caffeinate.
+snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=2 \
+  --keep-going --retries 2 --rerun-incomplete
 #    -> reports/report.zip
 
 # anytime before or after: review data/annotation/<pair>/annotation.yaml and
 # curate the `domains:` block into configs/curated_domains.yaml -- optional, only
 # affects domain-map figures, never blocks a run
 ```
+
+## Launching a long run
+
+A screen of thousands of pairs folds for days, so launch it detached, from a
+fresh login shell with the controller env activated:
+
+```bash
+nohup env -i HOME=$HOME USER=$USER TERM=xterm zsh -lic '
+  cd ~/projects/NanoPulldown && conda activate nanopulldown &&
+  NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml caffeinate -dimsu \
+    snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=2 \
+      --keep-going --retries 2 --rerun-incomplete' \
+  > logs_<run>/snakemake_caffeinate.log 2>&1 &
+```
+
+- `--keep-going`: without it, ONE failed job (e.g. a PLIP container dying on
+  a large pair) stops Snakemake from scheduling anything else; the run then
+  sits idle until someone looks. With it, only that pair's downstream steps
+  are skipped.
+- `--retries 2`: reruns transiently failing jobs (docker, OpenCL, web
+  services) before counting them as failed. A fold chunk skips the pairs
+  it already folded, so a retry does not redo work.
+- `--rerun-incomplete`: reruns jobs a crash or kill left half-written.
+- `caffeinate -dimsu`: keeps the Mac awake for the whole run.
+- `conda activate nanopulldown`, in a clean shell: do NOT put the
+  controller env on `PATH` by hand instead. Its python then stays ahead of
+  the rule envs `--use-conda` activates, and `run_esmfold2` dies at once on
+  `No module named 'mlx'`.
+- Check it is really folding a few minutes after launch:
+  `grep "model loaded" logs_<run>/folding/run_esmfold2/*.log`, then
+  `grep "^\[fold_batch\]"` on the newest chunk log for per-pair progress.
+  List failures with `grep "Error in rule" logs_<run>/snakemake_caffeinate.log`.
+- To stop: `pkill -f bin/snakemake; pkill -f run_esmfold2_batch.py`. After a
+  hard kill, `NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --unlock`
+  before relaunching.
+- In fragment mode, `expand_pairs.py` writes nothing if any protein's domain
+  annotation fails. InterPro can answer 408 for an accession on every retry
+  (P93736, P56757 did). Give such proteins their domains in
+  `configs/fragment_domains.yaml` (e.g. Pfam from
+  `https://www.ebi.ac.uk/interpro/api/entry/pfam/protein/uniprot/<ACC>`)
+  and rerun; the other annotations are cached.
 
 ## Fragment mode (domain x domain, as in yeast two-hybrid)
 
@@ -119,6 +164,88 @@ NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml snakemake --use-conda --cores
   full-length numbering: add the fragment start minus 1 to map back.
   Their domain annotation is the full-length entry's, projected onto the
   fragment. No per-fragment InterProScan submission is made.
+
+## Controls (positives and decoys, calibrated hit calling)
+
+`scripts/expand_pairs.py` adds two control sets to every run's preys and
+pairs them with every bait (config.yaml `controls:`; a run overlay can turn
+either off, e.g. `controls: {decoys: {enabled: false}}`). They are tagged in
+`prey_sources` of the results table, and the Snakefile's `decoy_calibration`
+rule (in the report, "Controls") reads them.
+
+**Positives (`known`): the baits' known direct partners.** They come from
+UniProt, IntAct, MINT, BioGRID, STRING and Complex Portal
+(`scripts/fetch_interactors.py`, snapshot
+`data/interactors/interactors_<run>.tsv`). Only partners with direct
+evidence are kept. That means at least one publication with a PSI-MI
+*direct interaction* type, such as BioGRID's two-hybrid and reconstituted
+complexes, or one of its descendants (covalent binding, enzymatic reactions
+such as ubiquitination). A two-hybrid detection method, or a descendant of
+it, also counts. Co-IP and affinity capture-MS (*association*, *physical
+association*) do not count, and neither does Complex Portal co-membership.
+STRING alone does not count either: its API gives no per-evidence detail,
+so its score is only carried as `known_string_score`. Of DRM2's 12 reported
+partners, 2 pass. `direct_methods: ["MI:0018", "MI:0090"]` also accepts
+protein-complementation assays (BiFC, split luciferase).
+`direct_only: false` takes every reported partner, as the former
+`interactors:` input source did (`config_drm2_ppi.yaml`). Positives are cut
+like any prey in fragment mode. A screen prey that is a known partner gets
+the `known_*` columns either way.
+
+**Negatives (`decoy`): a matched decoy set** (`scripts/build_decoys.py`).
+It is built the way DUD-E builds one for docking: real, folded proteins
+matched to the preys but unable to meet the bait. They are Arabidopsis
+proteins found only in plastid stroma, thylakoid lumen, mitochondrial
+matrix, apoplast, vacuolar lumen, ER lumen, peroxisomal matrix or the
+extracellular region. They have no nuclear or cytosolic annotation and no
+known interaction with the baits, direct or not. In fragment mode they are
+cut with the run's own `fragments:` rules. They are then matched to the
+run's screen prey fragments on length and on Cys+His content: zinc-binding
+RING/U-box blocks score differently from large globular domains. The match
+uses only the preys that fit under `max_tokens`, and leaves out the
+positives.
+
+```bash
+# preview: positives, decoy match report, pair counts (needs internet; writes nothing but snapshots)
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py --dry-run
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/controls.py          # the positives only
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/fetch_interactors.py Q9M548 --direct
+
+# expand + fold as usual: the controls are paired with every bait
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
+#    -> configs/decoys_<run>.txt + data/decoys/decoys_<run>.parquet (+ .json)
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=2
+#    -> reports_<run>/folding/decoy_calibration/: per bait and metric, conformal
+#       p-values against the decoys, BH q-values, hits; recall of the positives
+```
+
+- **Decoys are drawn once per run.** They are reused while
+  `controls.decoys` and the cutting rules are unchanged. Adding preys to a
+  run therefore never re-draws, and re-folds, its decoys. A warning says
+  when the preys have changed since the draw.
+  `expand_pairs.py --rebuild-decoys` (or `build_decoys.py [--n N --seed S]`)
+  draws again.
+- **Cost:** each decoy is paired with every bait fragment, so the controls
+  add `n` × bait fragments folds. The default `n: 500` with 10 bait
+  fragments is 5,000 pairs. Lower `n` or switch decoys off for exploratory
+  runs.
+- **How many decoys:** the smallest conformal p is 1/(n+1). For BH at FDR α
+  over m preys to accept k hits, n must be at least about m/(k·α). With
+  ~700 preys per bait, 30 hits need ~500 decoys, and 10 hits need ~1,400.
+- **Reading the calibration** (`index.html`, `summary.csv`, `recall.csv`):
+  - `auc_prey_vs_decoy` close to 0.5 means most preys behave like decoys.
+    The median/MAD or adjusted-boxplot fences on the screen alone are then
+    justified.
+  - `auc_positive_vs_decoy` shows how well a metric separates known binders
+    from the null.
+  - `recall` (per bait protein) is the fraction of known partners with at
+    least one hit pair. In fragment mode most fragment pairs of a true
+    partner miss the interface, so recall is the number to compare metrics
+    on.
+- The decoy pool query, the interactor lookup and the PSI-MI term
+  expansion are snapshotted (`data/uniprot_retrieval/decoy_pool_<run>.*`,
+  `data/interactors/interactors_<run>.*`, `data/interactors/psi_mi_*.json`).
+  The draw is seeded, so a control set can be rebuilt exactly.
 
 ## Layout
 

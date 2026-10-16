@@ -20,6 +20,15 @@ Alongside the pairs it writes, for the reports:
                                      configs/pairs_<run>.txt), which the
                                      Snakefile runs when `pairs_file:` is set
 
+Controls (config `controls:`, scripts/controls.py), added to every run's
+preys and paired with every bait:
+  * positives -- the baits' known direct partners in the PPI databases
+                 (source tag `known`)
+  * decoys    -- a matched decoy set (scripts/build_decoys.py, source tag
+                 `decoy`), drawn once per run and reused while its settings
+                 are unchanged (--rebuild-decoys redraws it)
+Turn either off in a run overlay (`controls: {decoys: {enabled: false}}`).
+
 Fragment mode (config `fragments.enabled: true`, or --fragments): every bait
 and prey is first cut into its annotated domains (scripts/fragment_domains.py),
 and the pairs are bait fragment x prey fragment, each an ordinary region pair
@@ -39,12 +48,14 @@ Usage:
     python scripts/expand_pairs.py --max-tokens 1500    # override the config limit
     python scripts/expand_pairs.py --refresh-queries    # re-run UniProt queries
     NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/expand_pairs.py   # fragment mode
+    NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py --dry-run   # counts only
 """
 from __future__ import annotations
 
 import argparse
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -54,6 +65,8 @@ from fetch_uniprot import fetch_metadata, fetch_sequence, parse_protein_spec  # 
 from fragment_domains import (Fragment, fragment_config, load_overrides, prefetch_annotation,  # noqa: E402
                               protein_fragments, write_fragments_table)
 from resolve_inputs import Resolved, read_specs, resolve_inputs, write_inputs_table  # noqa: E402
+from build_decoys import decoy_config, decoy_fragments  # noqa: E402
+from controls import add_positives, positives_config, screen_prey_fragments  # noqa: E402
 
 
 def slug(spec: str) -> str:
@@ -100,6 +113,94 @@ def build_pair_spec(bait_spec: str, prey_spec: str, cfg: dict,
     }
 
 
+@dataclass
+class Prepared:
+    res: Resolved
+    sides: dict[str, list[Fragment]]   # role -> fragments paired (decoys included)
+    fragment_mode: bool
+    n_positives: int                   # positive-control preys not in the screen
+    n_decoys: int
+
+
+def cut_sides(baits: list[str], preys: list[str], cfg: dict, fragment_mode: bool) -> dict | None:
+    """One Fragment per protein as given, or its domain fragments in fragment
+    mode. None when a protein's domain annotation is incomplete."""
+    if not fragment_mode:
+        return {"bait": [Fragment(s, parse_protein_spec(s).uniprot, "bait", None, 0, 0, "as_given", [])
+                         for s in baits],
+                "prey": [Fragment(s, parse_protein_spec(s).uniprot, "prey", None, 0, 0, "as_given", [])
+                         for s in preys]}
+    fcfg = fragment_config(cfg)
+    overrides = load_overrides(fcfg)
+    cut = [s for role, rs in (("bait", baits), ("prey", preys)) if role in fcfg["sides"]
+           for s in rs if parse_protein_spec(s).uniprot not in overrides]
+    failed = prefetch_annotation(cut, cfg)
+    if failed:
+        print(f"[expand_pairs] ERROR: domain annotation incomplete for {len(failed)} protein(s) "
+              f"(web service errors), e.g. {failed[:5]}. Nothing written; progress is cached, "
+              "rerun to retry them.", file=sys.stderr)
+        return None
+    sides = {}
+    for role, role_specs in (("bait", baits), ("prey", preys)):
+        per_spec = [protein_fragments(s, role, cfg, fcfg, overrides) for s in role_specs]
+        sides[role] = [f for frags in per_spec for f in frags]
+        skipped_specs = [s for s, frags in zip(role_specs, per_spec) if not frags]
+        print(f"[expand_pairs] fragment mode: {len(role_specs)} {role}(s) -> {len(sides[role])} fragment(s)"
+              + (f"; no domain, skipped: {', '.join(skipped_specs)}" if skipped_specs else ""))
+    return sides
+
+
+def prepare(cfg: dict, baits_file: str | None = None, preys_file: str | None = None,
+            refresh: bool = False, fragments: bool = False, rebuild_decoys: bool = False,
+            dry_run: bool = False) -> Prepared | None:
+    """Everything the run pairs: the screen's baits and preys (config `inputs:`,
+    or two list files), plus the controls (positives before cutting, decoys
+    matched to the cut screen preys). None when nothing can be expanded."""
+    if cfg.get("inputs") and not (baits_file or preys_file):
+        res = resolve_inputs(cfg, refresh=refresh)
+    else:                                   # legacy: two list files
+        res = Resolved()
+        for role, path in (("bait", baits_file or "configs/baits.txt"),
+                           ("prey", preys_file or "configs/preys.txt")):
+            if Path(path).exists():
+                for spec in read_specs(Path(path)):
+                    res.add(role, spec, Path(path).stem)
+    if not res.specs["bait"]:
+        print("[expand_pairs] nothing to expand (no bait)")
+        return None
+
+    pcfg, dcfg = positives_config(cfg), decoy_config(cfg)
+    n_screen = len({parse_protein_spec(s).uniprot for s in res.specs["prey"]})
+    partners = []
+    if pcfg["enabled"] or (dcfg["enabled"] and dcfg["exclude_interactors"]):
+        partners = add_positives(res, cfg, refresh=refresh)
+    n_pos = len({parse_protein_spec(s).uniprot for s in res.specs["prey"]}) - n_screen
+    baits, preys = res.specs["bait"], res.specs["prey"]
+    if not preys:
+        print(f"[expand_pairs] nothing to expand ({len(baits)} bait(s), no prey and no known partner)")
+        return None
+
+    fragment_mode = fragments or bool(fragment_config(cfg)["enabled"])
+    sides = cut_sides(baits, preys, cfg, fragment_mode)
+    if sides is None:
+        return None
+
+    decoys = []
+    if dcfg["enabled"]:
+        exclude = ({parse_protein_spec(s).uniprot for s in baits + preys} | res.excluded["bait"]
+                   | res.excluded["prey"] | {p["partner"] for p in partners})
+        decoys = decoy_fragments(cfg, screen_prey_fragments(sides, res, cfg), sides["bait"], exclude,
+                                 dcfg, rebuild=rebuild_decoys, dry_run=dry_run)
+        for f in decoys:
+            res.add("prey", f.spec, dcfg["name"])
+        sides["prey"] += decoys
+    nb, npy = len(sides["bait"]), len(sides["prey"])
+    print(f"[expand_pairs] controls: +{n_pos} positive prey protein(s) ({pcfg['name']}), "
+          f"+{len(decoys)} decoy prey(s) ({dcfg['name']}) -> {nb} bait x {npy} prey "
+          f"{'fragment' if fragment_mode else 'protein'}(s), of which {nb * len(decoys)} decoy pair(s)")
+    return Prepared(res, sides, fragment_mode, n_pos, len(decoys))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--baits", help="bait list file (overrides the config's inputs.baits)")
@@ -109,60 +210,41 @@ def main() -> int:
                     help="skip pairs with more total tokens than this "
                          "(default: config esmfold2.max_tokens; 0 = no limit)")
     ap.add_argument("--refresh-queries", action="store_true",
-                    help="re-run uniprot_query sources instead of reusing their snapshots")
+                    help="re-run uniprot_query sources and the interactor lookup instead of "
+                         "reusing their snapshots")
     ap.add_argument("--pairs-out", default=None,
                     help="write this run's pair list here (default: config pairs_file, "
                          "else configs/pairs_<run_name>.txt)")
     ap.add_argument("--fragments", action="store_true",
                     help="fragment mode: pair domain fragments (config `fragments:`), "
                          "even when fragments.enabled is false")
+    ap.add_argument("--rebuild-decoys", action="store_true",
+                    help="redraw the decoy set even if its settings are unchanged")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="resolve, cut and draw the controls, print the counts, write nothing "
+                         "(snapshots and annotation caches excepted)")
     a = ap.parse_args()
 
     cfg = load_config(REPO_ROOT)
     max_tokens = a.max_tokens if a.max_tokens is not None else int(cfg["esmfold2"].get("max_tokens", 0))
-    if cfg.get("inputs") and not (a.baits or a.preys):
-        res = resolve_inputs(cfg, refresh=a.refresh_queries)
-    else:                                   # legacy: two list files
-        res = Resolved()
-        for role, path in (("bait", a.baits or "configs/baits.txt"),
-                           ("prey", a.preys or "configs/preys.txt")):
-            if Path(path).exists():
-                for spec in read_specs(Path(path)):
-                    res.add(role, spec, Path(path).stem)
+    prep = prepare(cfg, a.baits, a.preys, refresh=a.refresh_queries, fragments=a.fragments,
+                   rebuild_decoys=a.rebuild_decoys, dry_run=a.dry_run)
+    if prep is None:
+        return 0 if not a.dry_run else 1
+    res, sides, fragment_mode = prep.res, prep.sides, prep.fragment_mode
     baits, preys = res.specs["bait"], res.specs["prey"]
-    if not baits or not preys:
-        print(f"[expand_pairs] nothing to expand ({len(baits)} bait(s), {len(preys)} prey(s))")
-        return 0
 
     out_dir = Path(a.configs_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
     run = cfg.get("run_name") or "main"
-
-    # one Fragment per protein as given, or its domain fragments in fragment mode
-    fcfg = fragment_config(cfg)
-    fragment_mode = a.fragments or bool(fcfg["enabled"])
+    if a.dry_run:
+        n = len(sides["bait"]) * len(sides["prey"])
+        print(f"[expand_pairs] dry run: {len(sides['bait'])} x {len(sides['prey'])} = {n} combination(s) "
+              f"before the max_tokens={max_tokens} filter; nothing written")
+        return 0
+    out_dir.mkdir(parents=True, exist_ok=True)
     if fragment_mode:
-        overrides = load_overrides(fcfg)
-        cut = [s for role, rs in (("bait", baits), ("prey", preys)) if role in fcfg["sides"]
-               for s in rs if parse_protein_spec(s).uniprot not in overrides]
-        failed = prefetch_annotation(cut, cfg)
-        if failed:
-            print(f"[expand_pairs] ERROR: domain annotation incomplete for {len(failed)} protein(s) "
-                  f"(web service errors), e.g. {failed[:5]}. Nothing written; progress is cached, "
-                  "rerun to retry them.", file=sys.stderr)
-            return 2
-        sides = {}
-        for role, role_specs in (("bait", baits), ("prey", preys)):
-            per_spec = [protein_fragments(s, role, cfg, fcfg, overrides) for s in role_specs]
-            sides[role] = [f for frags in per_spec for f in frags]
-            skipped_specs = [s for s, frags in zip(role_specs, per_spec) if not frags]
-            print(f"[expand_pairs] fragment mode: {len(role_specs)} {role}(s) -> {len(sides[role])} fragment(s)"
-                  + (f"; no domain, skipped: {', '.join(skipped_specs)}" if skipped_specs else ""))
         frag_table = write_fragments_table(sides["bait"] + sides["prey"], out_dir / f"fragments_{run}.parquet")
         print(f"[expand_pairs] fragments -> {frag_table}")
-    else:
-        sides = {"bait": [Fragment(s, "", "bait", None, 0, 0, "as_given", []) for s in baits],
-                 "prey": [Fragment(s, "", "prey", None, 0, 0, "as_given", []) for s in preys]}
 
     specs = load_pairs(REPO_ROOT)
     written, skipped, too_long, run_pairs = 0, 0, [], []
@@ -196,7 +278,8 @@ def main() -> int:
     pairs_out.parent.mkdir(parents=True, exist_ok=True)
     mode = (f" = {len(sides['bait'])} x {len(sides['prey'])} domain fragment(s)"
             if fragment_mode else "")
-    pairs_out.write_text(f"# {run}: {len(baits)} bait(s) x {len(preys)} prey(s){mode}, "
+    controls = f" (incl. {prep.n_positives} positive control(s), {prep.n_decoys} decoy(s))"
+    pairs_out.write_text(f"# {run}: {len(baits)} bait(s) x {len(preys)} prey(s){controls}{mode}, "
                          f"written by scripts/expand_pairs.py\n" + "".join(f"{p}\n" for p in run_pairs))
     print(f"[expand_pairs] {len(run_pairs)} pair(s) for this run -> {pairs_out}"
           + ("" if cfg.get("pairs_file") else f"  (set `pairs_file: {pairs_out}` to run them)"))

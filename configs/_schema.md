@@ -102,12 +102,22 @@ Q9LMA8: {short: JAZ1}     # UniProt primary gene name: TIFY10A
 There is one row per (accession, role) for the run named by `run_name`
 (default `main`). `sources` lists the config `inputs:` sources that selected
 the protein. Each `keep_columns` entry of an `ipms:` source adds a
-`<source>_<column>` column (e.g. `pxd013906_logfc`). Each `interactors:`
-source adds `<source>_databases` (e.g. `biogrid;intact;string`),
-`<source>_n_databases` and `<source>_string_score` (0-1000). The results table
-joins these values in for the prey.
+`<source>_<column>` column (e.g. `pxd013906_logfc`). The controls
+(`scripts/controls.py`) add their tags to `sources`: `known` for the baits'
+known direct partners, `decoy` for the decoy set. Every known partner of the
+baits in the table, direct or not, carries `known_databases` (e.g.
+`biogrid;intact;string`), `known_n_databases`, `known_string_score` (0-1000),
+`known_direct_databases`, `known_direct_methods` (e.g. `two hybrid`) and
+`known_n_direct_publications`. The results table joins these values in for the
+prey.
 
-`interactors:` sources snapshot every (query, partner, database) hit to
-`data/interactors/<name>.tsv` (+ `.json`: settings, per-database counts,
-failed calls, date). Partners are current primary UniProt accessions, so the
-same protein counts once however each database names it.
+The interactor lookup snapshots every evidence group to
+`data/interactors/interactors_<run>.tsv`: one row per (query, partner,
+database, detection method, interaction type), with the evidence count and
+PubMed ids. A `.json` beside it holds the settings, per-database counts,
+failed calls and date. Partners are current primary UniProt accessions, so
+the same protein counts once however each database names it. The decoys
+are listed in `configs/decoys_<run>.txt`. Their provenance is in
+`data/decoys/decoys_<run>.parquet`: fragment, domains, length, Cys+His
+fraction, matching stratum, UniProt name and location. In fragment mode they
+appear in `configs/fragments_<run>.parquet` with source `decoy`.

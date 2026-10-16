@@ -18,3 +18,76 @@ P56757:                                      # atpA, ATP synthase alpha (507 aa)
   - {name: ATP synthase beta-barrel,          start: 29,  end: 93}
   - {name: ATP synthase nucleotide-binding,   start: 150, end: 365}
   - {name: ATP synthase C-terminal,           start: 372, end: 496}
+
+# DNE1/DCP1/DCP2 IP (config_dne1_dcp_ip_fragments.yaml, 2026-10-16): blocks the
+# automatic merge made too long to fold with the baits (max_tokens 1200).
+# Cuts follow InterPro's own sub-hits (cache of that run); an override
+# REPLACES every fragment of the protein, so unaffected blocks are listed too.
+# Target: <= ~690 aa after padding, so each block still pairs with whole DNE1
+# (489 aa). Myosin MYA2 (F4K7C5) is left automatic: its 68-792 block is one
+# motor-domain fold. NAP1 (Q5S2C4, no InterPro domain) is pending manual review.
+
+Q42510:                                      # GNOM, ARF-GEF (1451 aa); 353-1358 hit is an envelope around the Sec7 domain
+  - {name: pre-Sec7 (HUS region),  start: 353, end: 554}
+  - {name: Sec7 domain,            start: 555, end: 755}
+  - {name: post-Sec7 (HDS region), start: 756, end: 1358}
+F4IIM1:                                      # CSI1 (2150 aa); 444-2150 = 6 abutting Armadillo hits + C2
+  - {name: U-box-like ARM region,  start: 50,   end: 412}
+  - {name: Armadillo 1-2,          start: 444,  end: 817}
+  - {name: Armadillo 3-4,          start: 818,  end: 1380}
+  - {name: Armadillo 5-6,          start: 1381, end: 2029}
+  - {name: C2 domain,              start: 2030, end: 2150}
+Q0WLB5:                                      # CHC2, clathrin heavy chain 2 (1703 aa)
+  - {name: N-terminal propeller,   start: 1,    end: 377}
+  - {name: linker + CHCR 1,        start: 345,  end: 793}
+  - {name: CHCR 2-3,               start: 847,  end: 1138}
+  - {name: CHCR 4-6,               start: 1142, end: 1596}
+Q0WNJ6:                                      # CHC1, clathrin heavy chain 1 (1705 aa), same boundaries as CHC2
+  - {name: N-terminal propeller,   start: 1,    end: 377}
+  - {name: linker + CHCR 1,        start: 345,  end: 793}
+  - {name: CHCR 2-3,               start: 847,  end: 1138}
+  - {name: CHCR 4-6,               start: 1142, end: 1596}
+Q0WPN0:                                      # SOV, inactive DIS3L2 (1055 aa); OB/CSD2/RNB glued by overlap
+  - {name: OB-fold + cold-shock 2, start: 145, end: 448}
+  - {name: Ribonuclease II/R,      start: 437, end: 910}
+Q9FR53:                                      # TOR (2481 aa); only the N-terminal HEAT block (60-820) is split
+  - {name: Armadillo-like (HEAT) N1,                 start: 60,   end: 476}
+  - {name: Armadillo-like (HEAT) N2,                 start: 484,  end: 820}
+  - {name: mTOR domain + Armadillo-like,             start: 855,  end: 1141}
+  - {name: FAT domain,                               start: 1201, end: 1777}
+  - {name: ATR-like HEAT repeats,                    start: 1827, end: 1907}
+  - {name: FKBP12-rapamycin binding domain,          start: 1920, end: 2023}
+  - {name: PI3/4-kinase catalytic domain,            start: 2092, end: 2417}
+  - {name: FATC domain,                              start: 2449, end: 2481}
+Q8L866:                                      # CuAO zeta (776 aa); D2+D3 glued to the catalytic domain
+  - {name: Copper amine oxidase D2-D3 (N2/N3),       start: 65,  end: 321}
+  - {name: Copper amine oxidase catalytic domain,    start: 321, end: 747}
+# Plasma-membrane H+-ATPases: InterPro's HAD hit spans the whole catalytic
+# core (TM1 to TM10); split at its A-domain and P/N-domain sub-hits into
+# TM1-2 + A domain, the cytoplasmic P/N headpiece, TM3-10, and the C-terminal
+# regulatory (R) tail (14-3-3 site).
+P20649:                                      # AHA1 (949 aa)
+  - {name: TM1-2 + A domain,       start: 13,  end: 322}
+  - {name: P/N domain,             start: 323, end: 633}
+  - {name: TM3-10,                 start: 634, end: 845}
+  - {name: C-terminal R domain,    start: 846, end: 949}
+P20431:                                      # AHA3 (949 aa)
+  - {name: TM1-2 + A domain,       start: 13,  end: 324}
+  - {name: P/N domain,             start: 325, end: 624}
+  - {name: TM3-10,                 start: 625, end: 846}
+  - {name: C-terminal R domain,    start: 847, end: 949}
+Q9LV11:                                      # AHA11 (956 aa)
+  - {name: TM1-2 + A domain,       start: 17,  end: 327}
+  - {name: P/N domain,             start: 328, end: 627}
+  - {name: TM3-10,                 start: 628, end: 853}
+  - {name: C-terminal R domain,    start: 854, end: 956}
+Q9SU58:                                      # AHA4 (960 aa)
+  - {name: TM1-2 + A domain,       start: 21,  end: 331}
+  - {name: P/N domain,             start: 332, end: 631}
+  - {name: TM3-10,                 start: 632, end: 857}
+  - {name: C-terminal R domain,    start: 858, end: 960}
+F4JPJ7:                                      # HA2 (981 aa); no sub-hits, boundaries = AHA1's shifted +19 (core 32-872 vs 13-845)
+  - {name: TM1-2 + A domain,       start: 32,  end: 341}
+  - {name: P/N domain,             start: 342, end: 652}
+  - {name: TM3-10,                 start: 653, end: 872}
+  - {name: C-terminal R domain,    start: 873, end: 981}

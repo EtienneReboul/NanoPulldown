@@ -10,9 +10,11 @@ accessions -- the `interactors:` input source of scripts/resolve_inputs.py:
                    curated from IntAct; `numberOfExperiments` as score)
 * intact, mint, biogrid, imex, ...
                 -- any PSICQUIC service named in `interactors.psicquic`
-                   (MITAB 2.5; score = number of evidence rows). MINT is now
-                   curated inside IntAct, and IMEx is the union of the IMEx
-                   members (IntAct, MINT, DIP-IMEx ...), so `imex` is opt-in.
+                   (MITAB 2.5; score = number of evidence rows, kept per
+                   detection method x interaction type, with their PubMed
+                   ids). MINT is now curated inside IntAct, and IMEx is the
+                   union of the IMEx members (IntAct, MINT, DIP-IMEx ...), so
+                   `imex` is opt-in.
 * string        -- STRING interaction_partners (physical subnetwork by default;
                    combined score 0-1000 as score). Non-UniProt STRING ids
                    (e.g. 9606.ENSP...) are mapped through UniProt ID mapping.
@@ -21,6 +23,17 @@ accessions -- the `interactors:` input source of scripts/resolve_inputs.py:
 
 CORUM (mammals, download only), DIP (service offline) and ELM (motifs, not
 binary interactions) have no usable per-protein API and are not queried.
+
+Direct interactions (`direct_only`, the positive controls of
+scripts/controls.py): only the PSICQUIC databases say how an interaction was
+seen. An evidence row is direct when its PSI-MI interaction type is one of
+`direct_types` (default MI:0407 direct interaction) or its detection method
+one of `direct_methods` (default MI:0018 two hybrid), each with every PSI-MI
+descendant (OLS, cached in <snapshot_dir>/psi_mi_*.json): covalent binding,
+enzymatic reactions (ubiquitination, phosphorylation ...), two-hybrid
+variants. Co-IP / affinity capture-MS ("association", "physical
+association"), Complex Portal co-membership and STRING (no per-evidence
+detail in its API) are not direct; STRING's score is still reported.
 
 Isoform / chain ids (`Q9LMA8-2`, `P04637-PRO_0000...`) collapse to the
 canonical accession; non-protein interactors (ChEBI, sub-complexes, RNA)
@@ -33,6 +46,7 @@ databases, same organism, top-N) works on the snapshot and never re-fetches.
 
 Preview from the command line:
     python scripts/fetch_interactors.py A1L4W5 --min-databases 2
+    python scripts/fetch_interactors.py Q9M548 --direct      # the positive controls
 """
 from __future__ import annotations
 
@@ -52,7 +66,13 @@ from lib_pipeline import atomic_write, load_config  # noqa: E402
 
 BUILTIN = ("uniprot", "string", "complexportal")
 DEFAULT_DATABASES = ["uniprot", "intact", "mint", "biogrid", "string", "complexportal"]
-COLUMNS = ("query", "partner", "database", "score", "partner_taxon")
+COLUMNS = ("query", "partner", "database", "score", "partner_taxon",
+           "detection_method", "interaction_type", "publications")
+SNAPSHOT_FORMAT = 2                  # 2: + detection_method / interaction_type / publications
+DIRECT_DEFAULTS = {"direct_types": ["MI:0407"],     # direct interaction (+ descendants)
+                   "direct_methods": ["MI:0018"],   # two hybrid (+ descendants)
+                   "min_direct_publications": 1}
+_MI = re.compile(r'MI:\d{4}')
 _ACC = re.compile(r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})"
                   r"(?![A-Z0-9])")
 # MITAB id prefixes that carry a UniProt accession (BioGRID writes uniprot/swiss-prot:)
@@ -81,7 +101,8 @@ def _get(icfg: dict, url: str, params: dict | None = None, method: str = "GET",
     raise RuntimeError(f"request failed ({url}): {last_err}")
 
 
-# ── per-database fetchers: query accession -> [(partner, score, partner_taxon)] ──
+# ── per-database fetchers: query accession ->
+#    [(partner, score, partner_taxon[, detection_method, interaction_type, publications])] ──
 
 def _uniprot(acc: str, cfg: dict, icfg: dict, taxon: int | None) -> list[tuple]:
     base = cfg["uniprot"]["base_url"].rstrip("/")
@@ -122,6 +143,20 @@ def _mitab_taxon(field: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _mitab_term(field: str) -> str:
+    """'psi-mi:"MI:0018"(two hybrid)' -> 'MI:0018(two hybrid)' ('' if none)."""
+    m = re.search(r'(MI:\d{4})"?\(([^)]*)\)', field or "")
+    if m:
+        return f"{m.group(1)}({m.group(2)})"
+    m = _MI.search(field or "")
+    return m.group(0) if m else ""
+
+
+def _mitab_pubs(field: str) -> set[str]:
+    return {tok.split(":", 1)[1] for tok in (field or "").split("|")
+            if tok.lower().startswith("pubmed:") and tok.split(":", 1)[1].strip()}
+
+
 def _psicquic(url: str, acc: str, icfg: dict) -> list[tuple]:
     page = int(icfg.get("psicquic_page", 500))
     rows, first = [], 0
@@ -133,10 +168,11 @@ def _psicquic(url: str, acc: str, icfg: dict) -> list[tuple]:
         if len(lines) < page:
             break
         first += page
-    counts: dict[str, list] = {}
+    # (partner, detection method, interaction type) -> [n rows, taxon, pubmed ids]
+    counts: dict[tuple, list] = {}
     for ln in rows:
         f = ln.split("\t")
-        if len(f) < 11:
+        if len(f) < 12:
             continue
         (a, a_rep), (b, b_rep) = _mitab_side(f[0], f[2]), _mitab_side(f[1], f[3])
         if acc in a:
@@ -145,14 +181,17 @@ def _psicquic(url: str, acc: str, icfg: dict) -> list[tuple]:
             partners, tax = a_rep or {None}, _mitab_taxon(f[9])
         else:
             continue
+        method, itype = _mitab_term(f[6]), _mitab_term(f[11])
         for p in partners:
-            rec = counts.setdefault(p, [0, tax])
+            rec = counts.setdefault((p, method, itype), [0, tax, set()])
             rec[0] += 1
-    unmapped = counts.pop(None, None)
+            rec[2] |= _mitab_pubs(f[8])
+    unmapped = sum(n for (p, _, _), (n, _, _) in counts.items() if p is None)
     if unmapped:
-        print(f"[fetch_interactors]   {acc}: {unmapped[0]} evidence row(s) with a partner "
+        print(f"[fetch_interactors]   {acc}: {unmapped} evidence row(s) with a partner "
               f"that has no UniProt id (skipped)", file=sys.stderr)
-    return [(p, n, tax) for p, (n, tax) in counts.items()]
+    return [(p, n, tax, method, itype, "|".join(sorted(pubs)))
+            for (p, method, itype), (n, tax, pubs) in counts.items() if p is not None]
 
 
 def _idmapping(ids: list[str], from_db: str, icfg: dict, cfg: dict) -> dict[str, str]:
@@ -239,7 +278,7 @@ def fetch_settings(src: dict, of: list[str], cfg: dict) -> dict:
     """Everything that changes what the databases return (the snapshot key)."""
     icfg = cfg.get("interactors") or {}
     s = {**(icfg.get("string") or {}), **(src.get("string") or {})}
-    return {"of": sorted(dict.fromkeys(of)),
+    return {"format": SNAPSHOT_FORMAT, "of": sorted(dict.fromkeys(of)),
             "databases": sorted(src.get("databases") or DEFAULT_DATABASES),
             "string": {"min_score": int(s.get("min_score", 400)),
                        "limit": int(s.get("limit", 100)),
@@ -283,8 +322,12 @@ def fetch_interactions(name: str, src: dict, of: list[str], cfg: dict,
                 print(f"[fetch_interactors] WARNING {acc} / {db}: {e}", file=sys.stderr)
                 failed.append(f"{acc}/{db}")
                 continue
-            rows += [{"query": acc, "partner": p, "database": db, "score": sc,
-                      "partner_taxon": tx} for p, sc, tx in hits]
+            for h in hits:
+                p, sc, tx, method, itype, pubs = (*h, "", "", "")[:6]
+                rows.append({"query": acc, "partner": p, "database": db, "score": sc,
+                             "partner_taxon": tx, "detection_method": method,
+                             "interaction_type": itype, "publications": pubs})
+            hits = {h[0] for h in hits}
             counts[f"{acc}/{db}"] = len(hits)
             print(f"[fetch_interactors] {acc} / {db}: {len(hits)} partner(s)", file=sys.stderr)
     # one current primary accession per protein: databases lag behind UniProt
@@ -311,25 +354,85 @@ def _read_tsv(path: Path) -> list[dict]:
     head = lines[0].split("\t")
     rows = []
     for ln in lines[1:]:
-        r = dict(zip(head, ln.split("\t")))
+        r = {c: "" for c in COLUMNS} | dict(zip(head, ln.split("\t")))
         for k in ("score", "partner_taxon"):
             r[k] = int(float(r[k])) if r.get(k) not in (None, "") else None
         rows.append(r)
     return rows
 
 
-def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None) -> list[dict]:
+def psi_mi_descendants(terms: list[str], cfg: dict) -> set[str]:
+    """`terms` and every PSI-MI term below them (is_a / part_of), from OLS;
+    cached per term in <interactors.snapshot_dir>/psi_mi_<term>.json. OLS
+    down and nothing cached: the terms alone, with a warning."""
+    icfg = cfg.get("interactors") or {}
+    sdir = Path(icfg.get("snapshot_dir", "data/interactors"))
+    ols = (icfg.get("ols_url") or "https://www.ebi.ac.uk/ols4/api").rstrip("/")
+    out: set[str] = set()
+    for t in terms:
+        t = str(t).upper()
+        out.add(t)
+        cache = sdir / f"psi_mi_{t.replace(':', '_')}.json"
+        if cache.exists():
+            out |= set(json.loads(cache.read_text())["descendants"])
+            continue
+        iri = f"http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252F{t.replace(':', '_')}"
+        try:
+            d = _get(icfg, f"{ols}/ontologies/mi/terms/{iri}/hierarchicalDescendants",
+                     {"size": 1000}).json()
+        except RuntimeError as e:
+            print(f"[fetch_interactors] WARNING: PSI-MI descendants of {t} unavailable ({e}); "
+                  "using the term alone", file=sys.stderr)
+            continue
+        terms_ = (d.get("_embedded") or {}).get("terms") or []
+        desc = {x["obo_id"]: x.get("label") for x in terms_ if x.get("obo_id")}
+        sdir.mkdir(parents=True, exist_ok=True)
+        atomic_write(cache, json.dumps({"term": t, "descendants": desc,
+                                        "retrieved": date.today().isoformat()}, indent=1))
+        out |= set(desc)
+    return out
+
+
+def direct_terms(src: dict, cfg: dict) -> tuple[set[str], set[str]]:
+    """(interaction types, detection methods) whose evidence counts as direct."""
+    d = {**DIRECT_DEFAULTS, **{k: v for k, v in src.items() if k in DIRECT_DEFAULTS}}
+    return psi_mi_descendants(d["direct_types"], cfg), psi_mi_descendants(d["direct_methods"], cfg)
+
+
+def is_direct(row: dict, direct: tuple[set[str], set[str]]) -> bool:
+    types, methods = direct
+    t, m = _MI.search(row.get("interaction_type") or ""), _MI.search(row.get("detection_method") or "")
+    return bool((t and t.group(0) in types) or (m and m.group(0) in methods))
+
+
+def _label(term: str) -> str:
+    """'MI:0018(two hybrid)' -> 'two hybrid'."""
+    m = re.search(r"\(([^)]*)\)", term or "")
+    return m.group(1) if m else term
+
+
+def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None,
+              direct: tuple[set[str], set[str]] | None = None) -> list[dict]:
     """Long table -> one record per unique partner, filtered and ranked:
-    {partner, databases, n_databases, evidence, string_score, of}.
+    {partner, databases, n_databases, evidence, string_score, of,
+     direct_databases, direct_methods, n_direct_publications}.
 
       min_databases: 2       reported by at least N databases
       same_organism: true    drop partners from another species than their query
       include_self: true     keep the query itself (homo-oligomer) when reported
-      max_partners: 50       keep the N best (most databases, then STRING score,
-                             then evidence count)
+      direct_only: true      keep partners with direct evidence (`direct`, see
+                             direct_terms) in >= min_direct_publications
+                             publications (PubMed ids; a row without one
+                             counts as one)
+      max_partners: 50       keep the N best (direct publications when
+                             direct_only, then most databases, STRING score,
+                             evidence count)
     """
     query_taxa = query_taxa or {}
     same = src.get("same_organism", True)
+    direct_only = bool(src.get("direct_only"))
+    if direct_only and direct is None:
+        raise ValueError("summarize: direct_only needs the direct PSI-MI terms (direct_terms)")
     agg: dict[str, dict] = {}
     for r in rows:
         if same and r["partner_taxon"] is not None and query_taxa.get(r["query"]) \
@@ -338,22 +441,34 @@ def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None) -> li
         if not src.get("include_self", True) and r["partner"] == r["query"]:
             continue
         a = agg.setdefault(r["partner"], {"partner": r["partner"], "databases": set(),
-                                          "of": set(), "evidence": 0, "string_score": None})
+                                          "of": set(), "evidence": 0, "string_score": None,
+                                          "direct_databases": set(), "direct_methods": set(),
+                                          "direct_pubs": set()})
         a["databases"].add(r["database"])
         a["of"].add(r["query"])
         if r["database"] == "string":
             a["string_score"] = max(a["string_score"] or 0, r["score"] or 0)
         elif r["score"]:
             a["evidence"] += r["score"]
+        if direct is not None and is_direct(r, direct):
+            a["direct_databases"].add(r["database"])
+            a["direct_methods"].add(_label(r.get("detection_method") or r.get("interaction_type")))
+            pubs = [x for x in (r.get("publications") or "").split("|") if x]
+            a["direct_pubs"] |= set(pubs) or {f"{r['database']}:{r['query']}:{r.get('detection_method')}"}
     out = []
     for a in agg.values():
         a["n_databases"] = len(a["databases"])
-        a["databases"] = ";".join(sorted(a["databases"]))
-        a["of"] = ";".join(sorted(a["of"]))
-        if a["n_databases"] >= int(src.get("min_databases", 1)):
-            out.append(a)
-    out.sort(key=lambda a: (-a["n_databases"], -(a["string_score"] or 0), -a["evidence"],
-                            a["partner"]))
+        a["n_direct_publications"] = len(a.pop("direct_pubs"))
+        for k in ("databases", "of", "direct_databases", "direct_methods"):
+            a[k] = ";".join(sorted(a[k]))
+        if a["n_databases"] < int(src.get("min_databases", 1)):
+            continue
+        if direct_only and a["n_direct_publications"] < int(
+                src.get("min_direct_publications", DIRECT_DEFAULTS["min_direct_publications"])):
+            continue
+        out.append(a)
+    out.sort(key=lambda a: (-(a["n_direct_publications"] if direct_only else 0), -a["n_databases"],
+                            -(a["string_score"] or 0), -a["evidence"], a["partner"]))
     if src.get("max_partners"):
         out = out[:int(src["max_partners"])]
     return out
@@ -361,12 +476,12 @@ def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None) -> li
 
 def interactors(name: str, src: dict, of: list[str], cfg: dict,
                 refresh: bool = False) -> list[dict]:
-    """fetch_interactions + summarize: the unique partners an `interactors:`
-    source selects, best first."""
+    """fetch_interactions + summarize: the unique partners a source selects,
+    best first (only the direct ones when src `direct_only`)."""
     rows = fetch_interactions(name, src, of, cfg, refresh=refresh)
     sdir = Path((cfg.get("interactors") or {}).get("snapshot_dir", "data/interactors"))
     taxa = json.loads((sdir / f"{name}.json").read_text()).get("query_taxa") or {}
-    return summarize(rows, src, taxa)
+    return summarize(rows, src, taxa, direct_terms(src, cfg))
 
 
 def main() -> int:
@@ -377,17 +492,22 @@ def main() -> int:
     ap.add_argument("--min-databases", type=int, default=1)
     ap.add_argument("--max-partners", type=int)
     ap.add_argument("--all-organisms", action="store_true")
+    ap.add_argument("--direct", action="store_true",
+                    help="only partners with direct evidence (two hybrid, direct interaction ...)")
     ap.add_argument("--refresh", action="store_true")
     a = ap.parse_args()
     cfg = load_config()
     src = {"databases": a.databases, "min_databases": a.min_databases,
-           "max_partners": a.max_partners, "same_organism": not a.all_organisms}
+           "max_partners": a.max_partners, "same_organism": not a.all_organisms,
+           "direct_only": a.direct}
     name = a.name or "interactors_" + "_".join(a.accessions)
     hits = interactors(name, src, a.accessions, cfg, refresh=a.refresh)
-    print("partner\tn_databases\tdatabases\tstring_score\tevidence\tof")
+    print("partner\tn_databases\tdatabases\tstring_score\tevidence\tn_direct_publications\t"
+          "direct_methods\tof")
     for h in hits:
         print(f"{h['partner']}\t{h['n_databases']}\t{h['databases']}\t"
-              f"{h['string_score'] or ''}\t{h['evidence']}\t{h['of']}")
+              f"{h['string_score'] or ''}\t{h['evidence']}\t{h['n_direct_publications']}\t"
+              f"{h['direct_methods']}\t{h['of']}")
     print(f"[fetch_interactors] {len(hits)} unique partner(s)", file=sys.stderr)
     return 0
 

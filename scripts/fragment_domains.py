@@ -227,7 +227,7 @@ FRAGMENT_COLUMNS = {
     "length": "Fragment length (residues)",
     "source": "interpro (annotated domains) | override (configs/fragment_domains.yaml) | "
               "full_length (no domain found) | as_given (side not fragmented, explicit regions, "
-              "or include_full_length control)",
+              "or include_full_length control) | decoy (scripts/build_decoys.py)",
     "domains": "Names of the domains merged into the fragment",
 }
 

@@ -117,6 +117,24 @@ LABELS = {p: pair_labels(SPECS[p], PROTEINS) for p in PAIRS}
 LABEL_KEY = {p: label_digest(SPECS[p], PROTEINS) for p in PAIRS}
 INPUTS_TABLE = inputs_table_path(CFG, REPO)
 
+# Controls (scripts/controls.py, added by expand_pairs): decoy_calibration
+# runs only when this run's preys include decoys -- a run expanded before
+# the controls existed (or with controls.decoys off) builds as before.
+_CTL = CFG.get("controls") or {}
+DECOY_TAG = (_CTL.get("decoys") or {}).get("name", "decoy")
+POSITIVE_TAG = (_CTL.get("positives") or {}).get("name", "known")
+
+
+def _run_has_decoys() -> bool:
+    if not INPUTS_TABLE.exists():
+        return False
+    import pyarrow.parquet as pq
+    t = pq.read_table(INPUTS_TABLE, columns=["role", "sources"]).to_pydict()
+    return any(r == "prey" and DECOY_TAG in (s or []) for r, s in zip(t["role"], t["sources"]))
+
+
+HAS_DECOYS = _run_has_decoys()
+
 
 def pair_report_labels(wc):
     lb = LABELS[wc.pair]
@@ -193,6 +211,7 @@ rule all:
         str(FOLD_REP / "plip_type_violins"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         ([str(FOLD_REP / "tables")] if DATAVZRD else []),
+        ([str(FOLD_REP / "decoy_calibration")] if HAS_DECOYS else []),
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -701,6 +720,28 @@ rule fig_plip_type_violins:
           --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
           --skip-all-zero --ncols 3 \
           --title "PLIP bait-prey contacts per interaction type (all pairs, samples, chain pairs)"
+        """
+
+
+# Controls: conformal p-values of every prey against the bait's decoys, BH
+# hits, and the recall of the known direct partners (scripts/decoy_calibration.py).
+rule decoy_calibration:
+    input:
+        str(FOLD_REP / "results_table.csv"),
+    output:
+        report(directory(str(FOLD_REP / "decoy_calibration")),
+               category="Controls: decoy calibration and known partners", htmlindex="index.html"),
+    conda:
+        "envs/report.yaml"
+    log:
+        str(FOLD_LOG / "decoy_calibration.log"),
+    params:
+        decoy=DECOY_TAG,
+        positive=POSITIVE_TAG,
+    shell:
+        r"""
+        python scripts/decoy_calibration.py --table {input[0]} --outdir {output[0]} \
+          --decoy-tag {params.decoy} --positive-tag {params.positive} > {log} 2>&1
         """
 
 
