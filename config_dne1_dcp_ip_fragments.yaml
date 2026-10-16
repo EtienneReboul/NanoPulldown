@@ -1,0 +1,37 @@
+# Run overlay: fragment mode of the DNE1/DCP1/DCP2 IP
+# (~/Downloads/IP DNE1DCP1DCP2.xlsx): 5 baits (column B: DNE1 Q6NQ97, DCP1
+# Q9SJF3, DCP2 Q8GW31, and the GYF-domain proteins F4I983 / F4HSW8) x 113
+# preys (column A), every combination. Full length only 178/565 pairs fit
+# max_tokens=1050 (228 at 1200) (both GYF baits are ~1490 aa alone), so baits and preys are
+# cut into their annotated domains: domain x domain only (2026-10-16:
+# include_full_length off, ~13 h of folding instead of ~44 h). Preys with no
+# InterPro domain (PAT1, PTAC12, GRP17, AT3G49490, NAP1) stay whole
+# (without_domains: full_length, config.yaml).
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_dne1_dcp_ip_fragments.yaml python scripts/expand_pairs.py
+#   NANOPULLDOWN_RUN_CONFIG=config_dne1_dcp_ip_fragments.yaml snakemake --use-conda --cores 4 \
+#       --resources gpu=1 docker_heavy=2 --keep-going --retries 2 --rerun-incomplete
+#   (detached, caffeinated: README "Launching a long run")
+
+run_name: "dne1_dcp_ip_fragments"
+
+esmfold2:
+  max_tokens: 1200   # run-specific bump (config.yaml: 1050), as q9m548/drm2 runs; swapping is accepted
+
+fragments:
+  enabled: true
+  include_full_length: false # domain x domain only (true: + whole proteins, 3283 pairs, ~44 h)
+
+dirs:
+  annotation:  "data/annotation_dne1_dcp_ip_fragments"
+  postproc:    "results_dne1_dcp_ip_fragments"
+  reports:     "reports_dne1_dcp_ip_fragments"
+  logs:        "logs_dne1_dcp_ip_fragments"
+
+inputs:
+  baits:
+    - list: configs/baits_dne1_dcp_ip.txt
+  preys:
+    - list: configs/preys_dne1_dcp_ip.txt
+
+pairs_file: configs/pairs_dne1_dcp_ip_fragments.txt

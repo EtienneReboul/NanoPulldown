@@ -1,7 +1,11 @@
 # Run overlay: bait DRM2 (Q9M548, DNA (cytosine-5)-methyltransferase, AT5G14620)
 # x its known interactors in the PPI databases UniProt cross-references
 # (UniProt, IntAct, MINT, BioGRID, STRING physical, Complex Portal; see
-# scripts/fetch_interactors.py). Snapshot: data/interactors/drm2_ppi.tsv.
+# scripts/fetch_interactors.py). No screen preys: the run is the positive
+# controls alone, with every reported partner (direct or not), as the former
+# `interactors:` input source selected them, and no decoys. Snapshot:
+# data/interactors/interactors_drm2_ppi.tsv (pairs folded 2026-10 came from
+# the old data/interactors/drm2_ppi.tsv; tag `drm2_ppi` there, `known` now).
 # Usage (overlay after config.yaml / config.local.yaml):
 #   NANOPULLDOWN_RUN_CONFIG=config_drm2_ppi.yaml python scripts/expand_pairs.py
 #   NANOPULLDOWN_RUN_CONFIG=config_drm2_ppi.yaml snakemake --use-conda --cores 4 \
@@ -24,9 +28,12 @@ dirs:
 inputs:
   baits:
     - accessions: [Q9M548]
-  preys:
-    - interactors:
-        name: drm2_ppi          # partners of the baits, every database, >= 1 database
-        min_databases: 1
+
+controls:
+  positives:
+    direct_only: false          # every partner of the bait, >= 1 database
+    min_databases: 1
+  decoys:
+    enabled: false
 
 pairs_file: configs/pairs_drm2_ppi.txt

@@ -9,7 +9,8 @@
 # Usage:
 #   NANOPULLDOWN_RUN_CONFIG=config_bpm6_pxd013906_fragments.yaml python scripts/expand_pairs.py
 #   NANOPULLDOWN_RUN_CONFIG=config_bpm6_pxd013906_fragments.yaml snakemake --use-conda --cores 4 \
-#       --resources gpu=1 docker_heavy=2
+#       --resources gpu=1 docker_heavy=2 --keep-going --retries 2 --rerun-incomplete
+#   (detached, caffeinated: README "Launching a long run")
 
 run_name: "bpm6_pxd013906_fragments"
 

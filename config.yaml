@@ -1592,11 +1592,12 @@ uniprot:
   retries: 3
   timeout_s: 30
 
-# `interactors:` input source (scripts/fetch_interactors.py): known partners of
-# the baits from the PPI databases UniProt cross-references. Per-source keys
-# (databases, string, min_databases ...) go in the run config's `inputs:` block.
+# PPI database access (scripts/fetch_interactors.py): known partners of the
+# baits from the databases UniProt cross-references, for the positive controls
+# and the decoy exclusions (`controls:` below).
 interactors:
-  snapshot_dir: "data/interactors"      # <dir>/<name>.tsv + .json: one snapshot per source
+  snapshot_dir: "data/interactors"      # <dir>/<name>.tsv + .json: one snapshot per run (interactors_<run>)
+  ols_url: "https://www.ebi.ac.uk/ols4/api"   # PSI-MI term descendants (direct evidence), cached in snapshot_dir
   retries: 3
   timeout_s: 60
   psicquic_page: 500
@@ -1611,6 +1612,40 @@ interactors:
     mint:    "https://www.ebi.ac.uk/Tools/webservices/psicquic/mint/webservices/current"
     imex:    "https://www.ebi.ac.uk/Tools/webservices/psicquic/imex/webservices/current"
     biogrid: "http://tyersrest.tyerslab.com:8805/psicquic/webservices/current"
+
+# ── Stage 1a: controls (scripts/controls.py, scripts/build_decoys.py) ──────
+# Added to every run's preys by scripts/expand_pairs.py and paired with every
+# bait: the baits' known direct partners (positives, tag `known`) and a decoy
+# set matched to the screen's preys (negatives, tag `decoy`). The Snakefile's
+# decoy_calibration rule turns them into per-bait conformal p-values / BH hits
+# and a positive-control recall. Turn either off in a run overlay.
+controls:
+  positives:
+    enabled: true
+    name: known                    # input-source tag (prey_sources), column prefix known_*
+    databases: [uniprot, intact, mint, biogrid, string, complexportal]
+    direct_only: true              # false: every reported partner (>= min_databases), direct or not
+    direct_types: ["MI:0407"]      # PSI-MI interaction types counted as direct (+ descendants:
+                                   # covalent binding, enzymatic reactions such as ubiquitination)
+    direct_methods: ["MI:0018"]    # detection methods counted as direct (+ descendants): two hybrid.
+                                   # Add "MI:0090" (protein complementation: BiFC, split luciferase)
+                                   # to also accept proximity assays
+    min_direct_publications: 1     # distinct PubMed ids with direct evidence
+    min_databases: 1
+    same_organism: true
+    max_partners: null             # keep the N best-supported (null = all)
+    # string: {min_score: 700}     # overrides interactors.string (STRING only annotates: no direct evidence)
+  decoys:                          # knobs: scripts/build_decoys.py DEFAULTS
+    enabled: true
+    name: decoy
+    n: 500                         # decoy preys per run, each paired with every bait (fragment):
+                                   # n x bait fragments extra folds. Smallest p = 1/(n+1)
+    seed: 0
+    length_bins: 8
+    cys_his_cutoff: 0.08
+    max_per_protein: 2
+    exclude_transmembrane: false
+    exclude_interactors: true      # never draw a known partner of the baits (any evidence)
 
 # ── Stage 1b: sequence annotation (domains / disorder / MoRF) ──────────────
 # Annotation is cached per unique sequence (data/annotation/_cache/); a proposed
