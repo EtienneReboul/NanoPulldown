@@ -22,6 +22,10 @@ fragments:
   enabled: true
   include_full_length: false # domain x domain only (true: + whole proteins, 3283 pairs, ~44 h)
 
+controls:                   # added 2026-10-18 as a complementary run (screen pairs already folded)
+  decoys:
+    n: 200                    # config.yaml: 500; 200 x 8 bait fragments = 1600 folds, smallest p = 1/201
+
 dirs:
   annotation:  "data/annotation_dne1_dcp_ip_fragments"
   postproc:    "results_dne1_dcp_ip_fragments"
@@ -33,5 +37,7 @@ inputs:
     - list: configs/baits_dne1_dcp_ip.txt
   preys:
     - list: configs/preys_dne1_dcp_ip.txt
+    - exclude: [Q9SCK9]   # AT3G49490: PLIP segfaults (exit 139) in --chains mode on every
+                          # pair, even at 26 GB (2026-10-18); folds stay in results_*
 
 pairs_file: configs/pairs_dne1_dcp_ip_fragments.txt
