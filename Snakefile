@@ -164,8 +164,9 @@ HAS_DECOYS = _run_has_decoys()
 
 
 def pair_report_labels(wc):
+    # bait + prey only: more columns crowd the report's figure lists out of view
     lb = LABELS[wc.pair]
-    return {"bait": lb["bait"], "prey": lb["prey"], "prey name": lb["prey_long"], "pair": wc.pair}
+    return {"bait": lb["bait"], "prey": lb["prey"]}
 
 # ── stage 1: preprocessing ───────────────────────────────────────────────
 ANN = Path(DIRS["annotation"])
