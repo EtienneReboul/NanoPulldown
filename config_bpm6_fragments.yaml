@@ -1,10 +1,10 @@
 # Run overlay: fragment mode of config_bpm6_curated.yaml -- bait BPM6 (A1L4W5)
 # x the 13 curated preys of configs/old_preys.txt (9 PXD013906 Table S3
 # interactors + 4 background negative controls), both cut into their
-# annotated domains (config.yaml `fragments:`, scripts/fragment_domains.py),
+# annotated domains (config.yaml `fragments:`, nanopulldown.inputs.fragments),
 # so pairs are domain x domain as in a yeast two-hybrid screen.
 # Usage:
-#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_fragments.yaml python scripts/expand_pairs.py
+#   nanopulldown --run-config config_bpm6_fragments.yaml inputs expand
 #   NANOPULLDOWN_RUN_CONFIG=config_bpm6_fragments.yaml snakemake --use-conda --cores 4 \
 #       --resources gpu=1 docker_heavy=2
 

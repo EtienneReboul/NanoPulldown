@@ -19,7 +19,7 @@ dirs:
 # spectral-counting statistics attached (annotate_only: the IP-MS table only
 # adds columns, it does not pull in its other 240+ hits). `expand_pairs.py`
 # writes the pair list to pairs_file, which the Snakefile then runs.
-#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_curated.yaml python scripts/expand_pairs.py
+#   nanopulldown --run-config config_bpm6_curated.yaml inputs expand
 inputs:
   baits:
     - list: configs/baits.txt

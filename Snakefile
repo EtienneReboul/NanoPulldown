@@ -7,7 +7,7 @@ straight into folding.
 
   1. preprocessing (needs internet)
     Sequence annotation. Pairs themselves (bait/prey UniProt sequences
-    resolved, chains assigned) come from scripts/expand_pairs.py, run once
+    resolved, chains assigned) come from `nanopulldown inputs expand`, run once
     ahead of Snakemake, into configs/pairs.parquet -- see the README and
     configs/_schema.md. This stage only annotates their already-resolved
     sequences.
@@ -29,7 +29,7 @@ straight into folding.
     (.cif.gz / .pdb.gz -- ChimeraX and gemmi open them as-is).
       run_esmfold2       one seed, N diffusion samples -> raw/sample_<i>.cif.gz +
                          raw/fold.parquet (scores, pae/plddt float16, topology;
-                         schema in scripts/fold_io.py)
+                         schema in nanopulldown/core/fold_table.py)
       compute_metrics    ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM ->
                          results/<pair>/interface_metrics.parquet
       minimize_cif       OpenMM energy minimization -> minimized/sample_<i>.pdb.gz
@@ -44,19 +44,30 @@ straight into folding.
         PLIP contact heatmaps) and reports/report.zip (onsuccess hook; unzip
         -> report.html) -- the ONLY report this pipeline produces.
 
+Every step is a `nanopulldown` CLI command (src/nanopulldown/, run as
+`python -m nanopulldown` with src/ on PYTHONPATH, so no per-env install);
+`nanopulldown --help` lists them, and each runs by hand the same way.
+
 Usage (one command, both stages):
   snakemake --use-conda --cores 4
 """
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
 REPO = Path(workflow.basedir)
-sys.path.insert(0, str(REPO / "scripts"))
-from lib_pipeline import (inputs_table_path, label_digest, load_config, load_pairs,  # noqa: E402
-                          load_proteins, pair_labels, pair_tokens, protein_chains,
-                          protein_name, spec_digest)
+sys.path.insert(0, str(REPO / "src"))
+from nanopulldown.core.config import load_config  # noqa: E402
+from nanopulldown.core.proteins import label_digest, load_proteins, pair_labels, protein_name  # noqa: E402
+from nanopulldown.core.specs import (inputs_table_path, load_pairs, pair_tokens,  # noqa: E402
+                                     protein_chains, spec_digest)
+
+# Jobs (in any --use-conda env) import the package from the checkout itself.
+os.environ["PYTHONPATH"] = os.pathsep.join(
+    [str(REPO / "src")] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p])
+NP = "python -m nanopulldown"
 
 configfile: str(REPO / "config.yaml")
 if (REPO / "config.local.yaml").exists():
@@ -70,13 +81,13 @@ EF = CFG["esmfold2"]
 MAX_TOKENS = int(EF.get("max_tokens", 0))
 
 # Specs come from configs/pairs.parquet (+ configs/curated_domains.yaml). A
-# pair is dropped (with a warning) when it isn't in the table -- expand_pairs
+# pair is dropped (with a warning) when it isn't in the table -- inputs expand
 # does not add pairs over esmfold2.max_tokens -- or when it is over max_tokens
 # anyway (specs expanded before the limit existed): ESMFold2 memory grows
 # ~quadratically with tokens and an over-limit fold aborts the whole process
 # on the Metal buffer cap. 0 = no limit.
 _ALL_SPECS = load_pairs(REPO)
-# `pairs_file:` (written by scripts/expand_pairs.py from the config's
+# `pairs_file:` (written by `nanopulldown inputs expand` from the config's
 # `inputs:`) takes precedence over an inline `pairs:` list.
 if CFG.get("pairs_file"):
     _PAIR_LIST = [ln.split("#", 1)[0].strip() for ln in (REPO / CFG["pairs_file"]).read_text().splitlines()]
@@ -117,7 +128,7 @@ LABELS = {p: pair_labels(SPECS[p], PROTEINS) for p in PAIRS}
 LABEL_KEY = {p: label_digest(SPECS[p], PROTEINS) for p in PAIRS}
 INPUTS_TABLE = inputs_table_path(CFG, REPO)
 
-# Controls (scripts/controls.py, added by expand_pairs): decoy_calibration
+# Controls (nanopulldown/inputs/controls.py, added by inputs expand): decoy_calibration
 # runs only when this run's preys include decoys -- a run expanded before
 # the controls existed (or with controls.decoys off) builds as before.
 _CTL = CFG.get("controls") or {}
@@ -235,14 +246,13 @@ rule annotate_domains_batch:
     log:
         str(PRE_LOG / "annotate_domains_batch.log"),
     conda:
-        "envs/annotate.yaml"
+        "envs/analysis.yaml"
     priority: 50
     params:
         pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
     shell:
         r"""
-        python scripts/annotate_domains_batch.py --pairs {params.pairs} --done {output.done} \
-          > {log} 2>&1
+        {NP} annotate domains --pairs {params.pairs} --done {output.done} > {log} 2>&1
         """
 
 
@@ -252,7 +262,7 @@ rule annotate_disorder_batch:
     log:
         str(PRE_LOG / "annotate_disorder_batch.log"),
     conda:
-        "envs/annotate.yaml"
+        "envs/analysis.yaml"
     priority: 50
     params:
         pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
@@ -262,8 +272,7 @@ rule annotate_disorder_batch:
         docker_heavy=1,
     shell:
         r"""
-        python scripts/annotate_disorder_batch.py --pairs {params.pairs} --done {output.done} \
-          > {log} 2>&1
+        {NP} annotate disorder --pairs {params.pairs} --done {output.done} > {log} 2>&1
         """
 
 
@@ -278,15 +287,13 @@ rule merge_annotation:
     log:
         str(PRE_LOG / "merge_annotation" / "{pair}.log"),
     conda:
-        "envs/annotate.yaml"
+        "envs/analysis.yaml"
     params:
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
     shell:
         r"""
-        python scripts/merge_annotation.py \
-          --pair {wildcards.pair} --out {output.yaml} \
-          > {log} 2>&1
+        {NP} annotate merge --pair {wildcards.pair} --out {output.yaml} > {log} 2>&1
         """
 
 
@@ -303,7 +310,7 @@ rule fig_domain_bar:
                    "UniProt": DOMAIN_PROTEINS[wc.protein]["uniprot"],
                    "pairs": str(len(DOMAIN_PROTEINS[wc.protein]["pairs"]))}),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         theme=FIG_THEME,
         fmts=",".join(CFG["report"]["figure_formats"]),
@@ -315,7 +322,7 @@ rule fig_domain_bar:
         labels=lambda wc: LABEL_KEY[DOMAIN_PROTEINS[wc.protein]["pair"]],
     shell:
         r"""
-        python scripts/plot_domain_bar.py \
+        {NP} plot domain-bar \
           --pair {params.pair} --annotation {input.annotation} --chain {params.chain} \
           --cutoff {params.cutoff} \
           --out {output[0]} --formats {params.fmts}
@@ -333,7 +340,7 @@ rule fig_domain_bar:
 # Fold granularity. pairs_per_load = 0: one process (and one ~25 GB model load,
 # with its swap spike) per pair. > 0: pairs are split into chunks of that size
 # and each chunk is ONE job that loads the model once and folds its pairs in a
-# loop (scripts/run_esmfold2_batch.py). A chunk's downstream steps (minimize,
+# loop (`nanopulldown fold --pairs ...`). A chunk's downstream steps (minimize,
 # PLIP, ...) only start once the whole chunk is done, so keep chunks to ~1-2 h.
 PAIRS_PER_LOAD = int(EF.get("pairs_per_load", 0))
 
@@ -367,10 +374,7 @@ if PAIRS_PER_LOAD <= 0:
             python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
               "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
               > {log} 2>&1
-            python scripts/run_esmfold2.py \
-              --pair {wildcards.pair} \
-              --out-dir {params.out} \
-              >> {log} 2>&1
+            {NP} fold --pair {wildcards.pair} --out-dir {params.out} >> {log} 2>&1
             """
 
 else:
@@ -397,9 +401,7 @@ else:
                 python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
                   "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
                   > {log} 2>&1
-                python scripts/run_esmfold2_batch.py \
-                  --pairs {params.pairs} --out-root {params.root} \
-                  >> {log} 2>&1
+                {NP} fold --pairs {params.pairs} --out-root {params.root} >> {log} 2>&1
                 """
 
 
@@ -411,7 +413,7 @@ rule compute_metrics:
     log:
         str(FOLD_LOG / "compute_metrics" / "{pair}.log"),
     conda:
-        "envs/metrics.yaml"
+        "envs/analysis.yaml"
     params:
         enabled=",".join(MET["enabled"]),
         pae=MET["pae_cutoff"], cb=MET["contact_cutoff_cb"], pairs=MET["pairs"],
@@ -419,7 +421,7 @@ rule compute_metrics:
         prey=lambda wc: ",".join(SPECS[wc.pair]["prey_chains"]),
     shell:
         r"""
-        python scripts/compute_interface_metrics.py \
+        {NP} metrics \
           --pair {wildcards.pair} \
           --fold {input.fold} --results-root {POST} \
           --out {output.parquet} \
@@ -446,14 +448,14 @@ rule minimize_cif:
         docker_heavy=1,
     shell:
         r"""
-        python scripts/minimize_openmm.py {input.cif} {output.pdb} > {log} 2>&1
+        {NP} minimize {input.cif} {output.pdb} > {log} 2>&1
         """
 
 
 # ── 2e. PLIP contact identification ──────────────────────────────────────
 # --chains treats bait_chains as one interaction partner and prey_chains as
 # the other (protein-protein only, so no --dnareceptor, and no fix_pdb pass
-# -- minimize_openmm.py's PDBFixer step already adds missing atoms/hydrogens,
+# -- `nanopulldown minimize`'s PDBFixer step already adds missing atoms/hydrogens,
 # unlike ab_initio_pipeline's ChimeraX minimization). PLIP can't read .pdb.gz
 # (it opens it in binary mode and fails), so the minimized structure is
 # decompressed into the report dir for the run, then deleted together with
@@ -487,13 +489,13 @@ rule run_plip:
         pdb="{params.outdir}/sample_{wildcards.sample}.pdb"
         gunzip -c {input.pdb} > "$pdb"
         # chains over max_chain_len get extra ids for PLIP only (it segfaults on them)
-        chains=$(python scripts/plip_chain_split.py split --pdb "$pdb" \
+        chains=$({NP} plip split-chains --pdb "$pdb" \
           --bait {params.bait} --prey {params.prey} --max-len {params.max_chain_len})
         docker run --rm --memory={params.memory} {params.platform} \
           -v $(pwd):/work -w /work {params.image} \
           -f "$pdb" -t --chains "$chains" -o {params.outdir} > {log} 2>&1 \
           || {{ rm -f "$pdb" "$pdb.chainmap.json"; exit 1; }}
-        python scripts/plip_chain_split.py restore --report {output.report} --map "$pdb.chainmap.json"
+        {NP} plip restore-chains --report {output.report} --map "$pdb.chainmap.json"
         rm -f "$pdb" "$pdb.chainmap.json" "{params.outdir}/sample_{wildcards.sample}_protonated.pdb"
         """
 
@@ -526,7 +528,7 @@ rule plip_parse:
         r"""
         rm -rf {params.tmp} && mkdir -p {params.tmp}/csv
         pliparser plip2csv --input {input.report} --output {params.tmp}/csv/ > {log} 2>&1
-        python scripts/write_cxc_config.py --pdb {input.pdb} --csv-dir {params.tmp}/csv \
+        {NP} plip cxc-config --pdb {input.pdb} --csv-dir {params.tmp}/csv \
           --out {params.tmp}/cxc-config.json --bait-chains {params.bait} --prey-chains {params.prey} \
           --bait-color {params.bait_color} --prey-color {params.prey_color} \
           --transparency {params.transparency} >> {log} 2>&1
@@ -543,13 +545,12 @@ rule aggregate_plip:
     output:
         str(POST / "{pair}" / "plip_contacts.parquet"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     log:
         str(FOLD_LOG / "aggregate_plip" / "{pair}.log"),
     shell:
         r"""
-        python scripts/aggregate_plip_summaries.py {input.csvs} --pair {wildcards.pair} \
-          --out {output[0]} > {log} 2>&1
+        {NP} plip aggregate {input.csvs} --pair {wildcards.pair} --out {output[0]} > {log} 2>&1
         """
 
 
@@ -561,7 +562,7 @@ rule fig_plip_contacts:
         report(str(FOLD_REP / "{pair}" / "plip_contacts.svg"),
                category="PLIP contacts", labels=pair_report_labels),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         theme=FIG_THEME,
         fmts=FMTS,
@@ -570,7 +571,7 @@ rule fig_plip_contacts:
         labels=lambda wc: LABEL_KEY[wc.pair],
     shell:
         r"""
-        python scripts/plot_plip_heatmap.py --pair {wildcards.pair} \
+        {NP} plot plip-heatmap --pair {wildcards.pair} \
           --contacts {input.contacts} \
           --annotation {input.annotation} \
           --out {output[0]} --formats {params.fmts}
@@ -586,7 +587,7 @@ rule fig_domain_heatmap:
                category="Bait x prey domain confidence",
                labels=pair_report_labels),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         theme=FIG_THEME,
         pae=MET["pae_cutoff"], fmts=FMTS,
@@ -595,7 +596,7 @@ rule fig_domain_heatmap:
         labels=lambda wc: LABEL_KEY[wc.pair],
     shell:
         r"""
-        python scripts/plot_domain_heatmap.py --pair {wildcards.pair} \
+        {NP} plot domain-heatmap --pair {wildcards.pair} \
           --fold {input.fold} --annotation {input.annotation} \
           --pae-cutoff {params.pae} --out {output[0]} --formats {params.fmts}
         """
@@ -609,20 +610,20 @@ rule fig_minimize_energy:
                    category="Minimization energy", labels=pair_report_labels),
         table=str(FOLD_REP / "{pair}" / "minimize_failure_rate.csv"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         theme=FIG_THEME,
         n=N_SAMPLES, maxe=MZ["max_abs_energy"], fmts=FMTS,
         labels=lambda wc: LABEL_KEY[wc.pair],
     shell:
         r"""
-        python scripts/plot_minimize_energy.py --pair {wildcards.pair} \
+        {NP} plot minimize-energy --pair {wildcards.pair} \
           --results-root {POST} --num-samples {params.n} --max-abs-energy {params.maxe} \
           --out {output.svg} --out-table {output.table} --formats {params.fmts}
         """
 
 
-# ChimeraX-style clash counting (scripts/count_clashes.py) on the raw ESMFold2
+# ChimeraX-style clash counting (`nanopulldown clashes`) on the raw ESMFold2
 # sample and its minimized counterpart, then a paired Wilcoxon test.
 rule count_clashes:
     input:
@@ -631,13 +632,13 @@ rule count_clashes:
     output:
         str(POST / "{pair}" / "clashes.csv"),
     conda:
-        "envs/clashes.yaml"
+        "envs/analysis.yaml"
     params:
         n=N_SAMPLES, cutoff=CL["overlap_cutoff"], hb=CL["hbond_allowance"],
         sep=CL["bond_separation"],
     shell:
         r"""
-        python scripts/count_clashes.py --pair {wildcards.pair} \
+        {NP} clashes --pair {wildcards.pair} \
           --results-root {POST} --num-samples {params.n} --out {output[0]} \
           --overlap-cutoff {params.cutoff} --hbond-allowance {params.hb} \
           --bond-separation {params.sep}
@@ -653,12 +654,12 @@ rule fig_clash_test:
         stats=str(FOLD_REP / "clash_test_stats.csv"),
         counts=str(FOLD_REP / "clash_counts.csv"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         alt=CL["alternative"],
     shell:
         r"""
-        python scripts/plot_clash_test.py --tables {input} --outdir {output.html} \
+        {NP} plot clash-test --tables {input} --outdir {output.html} \
           --out-stats {output.stats} --out-counts {output.counts} \
           --alternative {params.alt}
         """
@@ -671,7 +672,7 @@ rule collect_results_table:
     output:
         str(FOLD_REP / "results_table.csv"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         pairs=" ".join(PAIRS),
         inputs=str(INPUTS_TABLE),
@@ -679,7 +680,7 @@ rule collect_results_table:
         inputs_mtime=INPUTS_TABLE.stat().st_mtime if INPUTS_TABLE.exists() else 0,
     shell:
         r"""
-        python scripts/collect_results_table.py --pairs {params.pairs} \
+        {NP} table results --pairs {params.pairs} \
           --results-root {POST} --inputs {params.inputs} --out {output[0]}
         """
 
@@ -691,11 +692,10 @@ rule fig_metric_violins_interactive:
         report(directory(str(FOLD_REP / "metric_violins_interactive")),
                category="Metric distributions", htmlindex="index.html"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     shell:
         r"""
-        python scripts/plot_metric_violins_interactive.py --table {input[0]} \
-          --outdir {output[0]}
+        {NP} plot violins --table {input[0]} --outdir {output[0]}
         """
 
 
@@ -715,13 +715,13 @@ rule fig_plip_type_violins:
         report(directory(str(FOLD_REP / "plip_type_violins")),
                category="PLIP contacts by interaction type", htmlindex="index.html"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         cols=" ".join(PLIP_TYPE_COLS),
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
     shell:
         r"""
-        python scripts/plot_metric_violins_interactive.py --table {input[0]} \
+        {NP} plot violins --table {input[0]} \
           --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
           --skip-all-zero --ncols 3 \
           --title "PLIP bait-prey contacts per interaction type (all pairs, samples, chain pairs)"
@@ -729,7 +729,7 @@ rule fig_plip_type_violins:
 
 
 # Controls: conformal p-values of every prey against the bait's decoys, BH
-# hits, and the recall of the known direct partners (scripts/decoy_calibration.py).
+# hits, and the recall of the known direct partners (`nanopulldown calibrate`).
 rule decoy_calibration:
     input:
         str(FOLD_REP / "results_table.csv"),
@@ -737,7 +737,7 @@ rule decoy_calibration:
         report(directory(str(FOLD_REP / "decoy_calibration")),
                category="Controls: decoy calibration and known partners", htmlindex="index.html"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     log:
         str(FOLD_LOG / "decoy_calibration.log"),
     params:
@@ -745,7 +745,7 @@ rule decoy_calibration:
         positive=POSITIVE_TAG,
     shell:
         r"""
-        python scripts/decoy_calibration.py --table {input[0]} --outdir {output[0]} \
+        {NP} calibrate --table {input[0]} --outdir {output[0]} \
           --decoy-tag {params.decoy} --positive-tag {params.positive} > {log} 2>&1
         """
 
@@ -756,12 +756,12 @@ rule collect_minimize_failures:
     output:
         str(FOLD_REP / "minimize_failure_rate.csv"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     params:
         labels=hashlib.sha1(" ".join(LABEL_KEY[p] for p in PAIRS).encode()).hexdigest()[:12],
     shell:
         r"""
-        python scripts/collect_minimize_failures.py --tables {input} --out {output[0]}
+        {NP} table minimize-failures --tables {input} --out {output[0]}
         """
 
 
@@ -769,7 +769,7 @@ rule collect_minimize_failures:
 rule datavzrd_folding:
     input:
         config=str(REPO / "report" / "datavzrd" / "nanopulldown.datavzrd.yaml"),
-        css=str(REPO / "scripts" / "datavzrd-dark.css"),
+        css=str(REPO / "src" / "nanopulldown" / "report" / "assets" / "datavzrd-dark.css"),
         results=str(FOLD_REP / "results_table.csv"),
         failures=str(FOLD_REP / "minimize_failure_rate.csv"),
         clash_stats=str(FOLD_REP / "clash_test_stats.csv"),
@@ -778,18 +778,14 @@ rule datavzrd_folding:
         report(directory(str(FOLD_REP / "tables")),
                category="Interactive tables", htmlindex="index.html"),
     conda:
-        "envs/report.yaml"
+        "envs/analysis.yaml"
     log:
         str(FOLD_LOG / "datavzrd.log"),
     shell:
         r"""
-        (
-          cd "$(dirname {input.results})" \
-            && datavzrd "{input.config}" --overwrite-output --output tables
-        ) > {log} 2>&1
-        python scripts/style_datavzrd.py {output[0]} {input.css} >> {log} 2>&1
+        {NP} report tables --config {input.config} --outdir {output[0]} --css {input.css} > {log} 2>&1
         """
 
 
 onsuccess:
-    shell(f"bash {REPO}/scripts/build_report.sh {REPO} {Path(DIRS['reports']) / 'report.zip'}")
+    shell(f"{NP} report build --repo {REPO} --out {Path(DIRS['reports']) / 'report.zip'}")

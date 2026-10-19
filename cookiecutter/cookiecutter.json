@@ -1,0 +1,50 @@
+{
+  "project_name": "My bait screen",
+  "project_slug": "{{ cookiecutter.project_name.lower().strip().replace(' ', '_').replace('-', '_') }}",
+  "run_name": "{{ cookiecutter.project_slug }}",
+  "author_name": "Your Name",
+  "author_email": "you@yourinstitute.org",
+  "baits": "Q9M548",
+  "preys": "Q9ZVD5, O22607",
+  "organism_taxon": "3702",
+  "fragment_mode": [
+    "no",
+    "yes"
+  ],
+  "positive_controls": [
+    "yes",
+    "no"
+  ],
+  "decoys": [
+    "yes",
+    "no"
+  ],
+  "n_decoys": "500",
+  "max_tokens": "1050",
+  "figure_theme": [
+    "dark",
+    "light"
+  ],
+  "docker_heavy_pool": "2",
+  "init_git": [
+    "yes",
+    "no"
+  ],
+  "__prompts__": {
+    "project_name": "Project name (free text)",
+    "project_slug": "Directory name",
+    "run_name": "Run name (suffix of config_<run>.yaml, results_<run>/, ...)",
+    "author_email": "Contact e-mail (EBI's InterProScan API requires one)",
+    "baits": "Bait specs, comma-separated (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop)",
+    "preys": "Prey specs, comma-separated (same syntax; edit configs/preys_<run>.txt later for long lists)",
+    "organism_taxon": "NCBI taxon id of the screen (decoy pool, same-organism partners); 3702 = Arabidopsis",
+    "fragment_mode": "Fragment mode: cut baits and preys into their domains (two-hybrid style)?",
+    "positive_controls": "Add the baits' known direct partners as positive controls?",
+    "decoys": "Add a matched decoy prey set (calibrated hit calling)?",
+    "n_decoys": "Number of decoy preys (each folded with every bait)",
+    "max_tokens": "ESMFold2 limit on total residues per pair (memory grows ~quadratically)",
+    "figure_theme": "Figure theme",
+    "docker_heavy_pool": "Concurrent minimize/PLIP jobs (scheduling.docker_heavy_pool)",
+    "init_git": "git init the new project?"
+  }
+}

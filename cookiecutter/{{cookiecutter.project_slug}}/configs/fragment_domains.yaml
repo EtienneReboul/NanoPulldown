@@ -1,0 +1,10 @@
+# Fragment mode: hand-curated domain fragments, by UniProt accession (tracked).
+# A protein listed here is cut into exactly these fragments instead of its
+# annotated domains (nanopulldown.inputs.fragments) -- e.g. the constructs of a
+# published two-hybrid screen. 1-based, inclusive, full-length numbering;
+# config `fragments.padding` is still added on each side.
+#
+# Q9M548:
+#   - {name: UBA cluster, start: 50, end: 230}
+#   - {name: MTase,       start: 290, end: 626}
+{}

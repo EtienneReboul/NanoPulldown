@@ -5,7 +5,7 @@
 # split-LUC, BiFC, co-IP) but mapped no domains. CFK1 is not in the
 # e3_fbox screen (no nuclear GO term in UniProt).
 # Usage:
-#   NANOPULLDOWN_RUN_CONFIG=config_drm2_cfk1_fragments.yaml python scripts/expand_pairs.py
+#   nanopulldown --run-config config_drm2_cfk1_fragments.yaml inputs expand
 #   NANOPULLDOWN_RUN_CONFIG=config_drm2_cfk1_fragments.yaml snakemake --use-conda --cores 4 \
 #       --resources gpu=1 docker_heavy=2
 

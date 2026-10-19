@@ -6,7 +6,7 @@
    shell, the RST/prose panels, the rule graph and the result tables, and
    frames the (white) matplotlib SVGs on a light card so they stay readable.
    Loaded last in <head>, hence the `!important`s. The interactive datavzrd
-   bundles carry their own dark skin (scripts/datavzrd-dark.css). */
+   bundles carry their own dark skin (src/nanopulldown/report/assets/datavzrd-dark.css). */
 
 :root {
   --ab-bg:        #0f1620;   /* page / main canvas            */
@@ -109,7 +109,7 @@ table:not(.table-auto) tbody tr:nth-child(even) { background: rgba(255, 255, 255
 
 /* ── vega: rule graph, runtimes, timeline ──────────────────────────────── */
 /* These render to <canvas>, so the text rules below only reach an SVG
-   renderer; the real recolouring is done in the specs by scripts/style_report.py. */
+   renderer; the real recolouring is done in the specs by nanopulldown.report.bundle. */
 .vega-embed text, #rulegraph text, #runtimes text, #timeline text {
   fill: #e8eef5 !important;
 }
@@ -123,7 +123,7 @@ table:not(.table-auto) tbody tr:nth-child(even) { background: rgba(255, 255, 255
 .vega-actions a:hover { background: rgba(110, 198, 255, 0.12) !important; }
 
 /* ── figures: framed on a card the colour of the figures' own surface ─────
-   (--fig-card is set by scripts/style_report.py from report.figure_theme:
+   (--fig-card is set by nanopulldown.report.bundle from report.figure_theme:
    the dark panel colour for dark figures, white for light ones). */
 /* Let the single-figure view use the whole main column instead of shrink-
    wrapping to the SVG's intrinsic ~880 px (which left the plot small and

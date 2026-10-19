@@ -1,0 +1,48 @@
+# Run overlay: {{ cookiecutter.project_name }}
+# Deep-merged on top of config.yaml (+ config.local.yaml); select it with
+#   nanopulldown --run-config config_{{ cookiecutter.run_name }}.yaml inputs expand
+#   NANOPULLDOWN_RUN_CONFIG=config_{{ cookiecutter.run_name }}.yaml snakemake ...
+# Any config.yaml key can be overridden here.
+
+run_name: "{{ cookiecutter.run_name }}"
+
+dirs:
+  annotation:  "data/annotation_{{ cookiecutter.run_name }}"
+  postproc:    "results_{{ cookiecutter.run_name }}"
+  reports:     "reports_{{ cookiecutter.run_name }}"
+  logs:        "logs_{{ cookiecutter.run_name }}"
+
+# Where baits and preys come from (see nanopulldown.inputs.resolve for every
+# source type: list files, inline accessions, UniProt GO/InterPro queries,
+# IP-MS tables). `inputs expand` writes the pair list to pairs_file, which the
+# Snakefile then runs.
+inputs:
+  baits:
+    - list: configs/baits_{{ cookiecutter.run_name }}.txt
+  preys:
+    - list: configs/preys_{{ cookiecutter.run_name }}.txt
+
+pairs_file: configs/pairs_{{ cookiecutter.run_name }}.txt
+
+fragments:
+  enabled: {{ "true" if cookiecutter.fragment_mode == "yes" else "false" }}
+
+controls:
+  positives:
+    enabled: {{ "true" if cookiecutter.positive_controls == "yes" else "false" }}
+  decoys:
+    enabled: {{ "true" if cookiecutter.decoys == "yes" else "false" }}
+    n: {{ cookiecutter.n_decoys }}
+    # The default decoy pool is compartments a nuclear bait never reaches,
+    # with PLANT terms among them (chloroplast stroma, thylakoid lumen): for
+    # another organism, review controls.decoys.compartments in config.yaml.
+    organism: {{ cookiecutter.organism_taxon }}
+
+esmfold2:
+  max_tokens: {{ cookiecutter.max_tokens }}
+
+scheduling:
+  docker_heavy_pool: {{ cookiecutter.docker_heavy_pool }}
+
+report:
+  figure_theme: "{{ cookiecutter.figure_theme }}"

@@ -44,20 +44,31 @@ OOM-crash.
 snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=3
 ```
 
+## Start a new project
+
+```bash
+cookiecutter gh:EtienneReboul/NanoPulldown --directory cookiecutter   # or a local path to cookiecutter/
+```
+
+asks for the baits, preys and options and writes a ready-to-run project:
+its run overlay and bait/prey lists, plus this pipeline (see
+`cookiecutter/README.md`).
+
 ## Quick start
 
 ```bash
-# 0. controller env (once)
+# 0. controller env (once), with the `nanopulldown` command on PATH
 conda env create -f envs/controller.yaml && conda activate nanopulldown
+pip install -e .        # or, without installing: PYTHONPATH=src python -m nanopulldown ...
 
 # 1. declare where baits/preys come from in a run config's `inputs:` block --
 #    list files (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop),
 #    inline accessions, UniProt GO/InterPro queries, IP-MS tables; see
-#    scripts/resolve_inputs.py and config_bpm6_curated.yaml. Every run also
+#    nanopulldown.inputs.resolve and config_bpm6_curated.yaml. Every run also
 #    gets controls (config.yaml `controls:`, "Controls" below): the baits'
 #    known direct partners as positives and a matched decoy set as negatives.
 #    Preview the counts with --dry-run, then:
-NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
+nanopulldown --run-config config_<run>.yaml inputs expand
 #    -> configs/pairs.parquet rows (skips pairs over esmfold2.max_tokens),
 #       configs/proteins.parquet (UniProt names), configs/inputs_<run>.parquet,
 #       and the run's pair list (point the config's `pairs_file:` at it)
@@ -116,10 +127,10 @@ nohup env -i HOME=$HOME USER=$USER TERM=xterm zsh -lic '
   `grep "model loaded" logs_<run>/folding/run_esmfold2/*.log`, then
   `grep "^\[fold_batch\]"` on the newest chunk log for per-pair progress.
   List failures with `grep "Error in rule" logs_<run>/snakemake_caffeinate.log`.
-- To stop: `pkill -f bin/snakemake; pkill -f run_esmfold2_batch.py`. After a
+- To stop: `pkill -f bin/snakemake; pkill -f "nanopulldown fold"`. After a
   hard kill, `NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --unlock`
   before relaunching.
-- In fragment mode, `expand_pairs.py` writes nothing if any protein's domain
+- In fragment mode, `inputs expand` writes nothing if any protein's domain
   annotation fails. InterPro can answer 408 for an accession on every retry
   (P93736, P56757 did). Give such proteins their domains in
   `configs/fragment_domains.yaml` (e.g. Pfam from
@@ -137,15 +148,15 @@ interactors AGO4/AGO6/TPR2/CYP65 are skipped full length, folded as fragments).
 
 ```bash
 # preview the cuts (nothing written)
-NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/fragment_domains.py Q9M548 Q9ZVD5
+nanopulldown --run-config config_drm2_fragments.yaml inputs fragments Q9M548 Q9ZVD5
 #   Q9ZVD5:57-458   402 aa  interpro  Protein argonaute, N-terminal + Argonaute, linker 1 domain + PAZ domain
 #   Q9ZVD5:462-924  463 aa  interpro  Argonaute-like, PIWI domain + Piwi domain
-NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml python scripts/expand_pairs.py   # or --fragments
+nanopulldown --run-config config_drm2_fragments.yaml inputs expand   # or --fragments
 NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=2
 ```
 
 - Domains are the ones the domain-map figures show (InterPro representative
-  set, `scripts/merge_annotation.py`). Abutting or overlapping domains are
+  set, `nanopulldown.annotate.merge`). Abutting or overlapping domains are
   merged into one fragment (`merge_gap`), as are repeats of the same domain
   (`repeat_gap`). Domains with a linker between them stay separate. Short
   blocks are dropped (`min_length`), and `padding` residues are added on each
@@ -167,7 +178,7 @@ NANOPULLDOWN_RUN_CONFIG=config_drm2_fragments.yaml snakemake --use-conda --cores
 
 ## Controls (positives and decoys, calibrated hit calling)
 
-`scripts/expand_pairs.py` adds two control sets to every run's preys and
+`nanopulldown.inputs.expand` adds two control sets to every run's preys and
 pairs them with every bait (config.yaml `controls:`; a run overlay can turn
 either off, e.g. `controls: {decoys: {enabled: false}}`). They are tagged in
 `prey_sources` of the results table, and the Snakefile's `decoy_calibration`
@@ -175,7 +186,7 @@ rule (in the report, "Controls") reads them.
 
 **Positives (`known`): the baits' known direct partners.** They come from
 UniProt, IntAct, MINT, BioGRID, STRING and Complex Portal
-(`scripts/fetch_interactors.py`, snapshot
+(`nanopulldown.services.interactors`, snapshot
 `data/interactors/interactors_<run>.tsv`). Only partners with direct
 evidence are kept. That means at least one publication with a PSI-MI
 *direct interaction* type, such as BioGRID's two-hybrid and reconstituted
@@ -192,7 +203,7 @@ protein-complementation assays (BiFC, split luciferase).
 like any prey in fragment mode. A screen prey that is a known partner gets
 the `known_*` columns either way.
 
-**Negatives (`decoy`): a matched decoy set** (`scripts/build_decoys.py`).
+**Negatives (`decoy`): a matched decoy set** (`nanopulldown.inputs.decoys`).
 It is built the way DUD-E builds one for docking: real, folded proteins
 matched to the preys but unable to meet the bait. They are Arabidopsis
 proteins found only in plastid stroma, thylakoid lumen, mitochondrial
@@ -207,12 +218,12 @@ positives.
 
 ```bash
 # preview: positives, decoy match report, pair counts (needs internet; writes nothing but snapshots)
-NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py --dry-run
-NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/controls.py          # the positives only
-NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/fetch_interactors.py Q9M548 --direct
+nanopulldown --run-config config_<run>.yaml inputs expand --dry-run
+nanopulldown --run-config config_<run>.yaml inputs positives          # the positives only
+nanopulldown --run-config config_<run>.yaml inputs interactors Q9M548 --direct
 
 # expand + fold as usual: the controls are paired with every bait
-NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml python scripts/expand_pairs.py
+nanopulldown --run-config config_<run>.yaml inputs expand
 #    -> configs/decoys_<run>.txt + data/decoys/decoys_<run>.parquet (+ .json)
 NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --resources gpu=1 docker_heavy=2
 #    -> reports_<run>/folding/decoy_calibration/: per bait and metric, conformal
@@ -223,8 +234,8 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --reso
   `controls.decoys` and the cutting rules are unchanged. Adding preys to a
   run therefore never re-draws, and re-folds, its decoys. A warning says
   when the preys have changed since the draw.
-  `expand_pairs.py --rebuild-decoys` (or `build_decoys.py [--n N --seed S]`)
-  draws again.
+  `nanopulldown inputs expand --rebuild-decoys` (or `nanopulldown inputs decoys
+  [--n N --seed S]`) draws again.
 - **Cost:** each decoy is paired with every bait fragment, so the controls
   add `n` × bait fragments folds. The default `n: 500` with 10 bait
   fragments is 5,000 pairs. Lower `n` or switch decoys off for exploratory
@@ -253,7 +264,7 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --reso
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `config.yaml`                              | all shared defaults, both stages                                                                 |
 | `config.local.yaml`                        | per-machine overrides (gitignored; copy`.example`) — set `annotate.interproscan.email` here |
-| `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; a `list:` input source (or the default lists) for`scripts/expand_pairs.py` |
+| `configs/baits.txt`, `configs/preys.txt` | one protein spec per line; a `list:` input source (or the default lists) for`nanopulldown.inputs.expand` |
 | `configs/pairs.parquet`                    | every expanded pair's chain spec, one row per pair (generated; schema in `configs/_schema.md`)   |
 | `configs/proteins.parquet`                 | UniProt names / gene / AGI locus per accession, and the display names reports use (generated)   |
 | `configs/inputs_<run>.parquet`             | which input source picked each protein, plus IP-MS columns (generated)                           |
@@ -261,12 +272,44 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --reso
 | `configs/curated_domains.yaml`             | hand-curated domain maps, by pair (tracked)                                                      |
 | `configs/fragment_domains.yaml`            | fragment mode: hand-picked domain fragments, by accession (tracked)                              |
 | `configs/fragments_<run>.parquet`          | fragment mode: every bait/prey fragment a run pairs (generated)                                  |
-| `envs/`                                    | one conda env per rule group, built by`--use-conda`                                            |
-| `tools/`                                   | vendored:`ipsae`, `pinc` (both from ab_initio_pipeline, unchanged)                           |
-| `scripts/`                                 | see each script's own docstring for what it reuses/adapts/replaces from ab_initio_pipeline       |
+| `envs/`                                    | `analysis` (annotation, metrics, figures, tables), `esmfold2`, `minimize`, `pliparser`; built by `--use-conda` |
+| `src/nanopulldown/`                        | the package + `nanopulldown` CLI every rule calls (see "Code layout" below)                       |
+| `scripts/legacy/`                          | one-off migrations and comparisons, not part of the pipeline                                     |
+| `cookiecutter/`                            | project template: `cookiecutter cookiecutter/` starts a new screen                               |
 | `Snakefile`                                | the whole pipeline, one default`rule all`                                                      |
 | `report/`                                  | `custom.css` (dark theme, from ab_initio_pipeline), `datavzrd/nanopulldown.datavzrd.yaml`    |
 | `data/ results/ logs/ reports/`            | runtime outputs (gitignored)                                                                     |
+
+## Code layout
+
+Everything the pipeline runs is one package, `src/nanopulldown/`, behind one
+CLI (`nanopulldown --help` lists every command; `nanopulldown <cmd> --help`
+its options). The Snakefile calls `python -m nanopulldown <cmd>` with `src/`
+on `PYTHONPATH`, so the rule envs need no install. Modules only import
+downward, and each layer adds as few dependencies as it can:
+
+| Module         | What                                                                        | Deps (beyond stdlib)          |
+| -------------- | --------------------------------------------------------------------------- | ----------------------------- |
+| `cli`          | the dispatcher; imports a command's module only when it runs                | none                          |
+| `core`         | config, pair specs, protein names, fold table, cache, small io helpers      | pyyaml (+ pyarrow, lazily)    |
+| `services`     | UniProt, interactor databases, polite rate-limited HTTP                     | requests                      |
+| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), per-pair merge   | requests                      |
+| `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
+| `fold`         | ESMFold2-Fast (MLX), single pair or one model load per chunk                | esm, mlx, numpy               |
+| `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc)    | openmm / gemmi, scipy, numpy  |
+| `plip`         | pliparser's cxc config, per-pair contact table (the docker PLIP run and the pliparser calls stay shell in the Snakefile) | none / pandas |
+| `report`       | figures (`report.plots`), tables, decoy calibration, datavzrd + report zip  | matplotlib, plotly, pandas    |
+
+```bash
+nanopulldown --run-config config_<run>.yaml inputs expand --dry-run
+nanopulldown plot domain-heatmap --pair <pair> --fold results/<pair>/raw/fold.parquet \
+  --annotation data/annotation/<pair>/annotation.yaml --out /tmp/heatmap.svg
+```
+
+The package moved out of the old flat `scripts/` with this release, which
+changes every rule's shell command and conda env. On an existing run, pass
+`--rerun-triggers mtime params input` once so Snakemake does not re-run
+finished jobs (folding included) only because their command text changed.
 
 ## Worked example
 
@@ -280,13 +323,13 @@ ab_initio_pipeline uses for its own worked example) is kept in
 - **ESMFold2's MLX path**: this pipeline assumes the Apple Silicon MLX model
   populates `result.pae` / `result.pair_chains_iptm` exactly like the
   Torch/CUDA path does — confirm once against a live run.
-- **AIUPred docker CLI**: `scripts/annotate_disorder_aiupred.py` assumes a
+- **AIUPred docker CLI**: `nanopulldown.annotate.disorder` assumes a
   `-i/-t/-o` CLI contract; confirm with
   `docker run --rm ghcr.io/doszilab/aiupred:cpu --help` and adjust if it
   differs.
-- **InterProScan v6 MATCH API**: `scripts/annotate_domains.py`'s MD5-cache
+- **InterProScan v6 MATCH API**: `nanopulldown.annotate.domains`'s MD5-cache
   lookup endpoint/schema should be confirmed against current EBI docs.
-- **OpenMM OpenCL platform**: `scripts/minimize_openmm.py` prefers OpenCL
+- **OpenMM OpenCL platform**: `nanopulldown.structure.minimize` prefers OpenCL
   (Mac Metal-backed GPU accel) with a CPU fallback — confirm OpenCL actually
   initializes on the target Mac.
 - **PLIP docker image on Apple Silicon**: `docker.io/pharmai/plip` has no

@@ -1,11 +1,11 @@
 # Run overlay: fragment mode, bait DRM2 (Q9M548) x Arabidopsis nuclear E3
 # ubiquitin ligases + nuclear F-box proteins (UniProt queries of
 # data/data_retrieval_README.md), both cut into their annotated domains
-# (config.yaml `fragments:`, scripts/fragment_domains.py) -- the fragment-mode
+# (config.yaml `fragments:`, nanopulldown.inputs.fragments) -- the fragment-mode
 # counterpart of config_q9m548_e3_fbox.yaml, whose full-length screen had to
 # skip the preys over max_tokens.
 # Usage:
-#   NANOPULLDOWN_RUN_CONFIG=config_drm2_e3_fbox_fragments.yaml python scripts/expand_pairs.py
+#   nanopulldown --run-config config_drm2_e3_fbox_fragments.yaml inputs expand
 #   NANOPULLDOWN_RUN_CONFIG=config_drm2_e3_fbox_fragments.yaml snakemake --use-conda --cores 4 \
 #       --resources gpu=1 docker_heavy=2
 

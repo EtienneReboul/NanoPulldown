@@ -1,0 +1,4 @@
+# Baits of {{ cookiecutter.project_name }}: one protein spec per line
+# (AlphaPulldown syntax: ID | ID:N | ID:start-stop | ID:N:start-stop)
+{% for s in cookiecutter.baits.replace(';', ',').split(',') if s.strip() %}{{ s.strip() }}
+{% endfor %}

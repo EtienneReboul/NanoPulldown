@@ -1,4 +1,4 @@
-# Hand-curated domain maps, merged into a pair's spec by lib_pipeline.load_pair().
+# Hand-curated domain maps, merged into a pair's spec by core.specs.load_pair().
 # {pair: {annotation_reviewed: bool, domains: {chain: [{name, start, end, kind}]}}}
 # -- see configs/_schema.md. Start from data/annotation/<pair>/annotation.yaml.
 example_toy__example_toy:

@@ -1,0 +1,6 @@
+# Hand overrides of the display names the reports use, keyed by UniProt
+# accession: `short` (axes, titles, pair labels) and/or `long` (protein name
+# in subtitles, tables, tooltips). Everything else comes from UniProt via
+# configs/proteins.parquet -- see configs/_schema.md.
+# Q9LMA8: {short: JAZ1}
+{}

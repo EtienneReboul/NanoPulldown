@@ -7,7 +7,7 @@
 # multimer/AF3. Adding a new pair should need edits ONLY to:
 #   1. this file's `pairs:` list (one line per bait__prey pair), and
 #   2. its row in configs/pairs.parquet (see configs/_schema.md) — added
-#      for you by scripts/expand_pairs.py from configs/baits.txt x
+#      for you by nanopulldown.inputs.expand from configs/baits.txt x
 #      configs/preys.txt.
 # Per-machine / per-user paths go in config.local.yaml (copy
 # config.local.yaml.example), which the Snakefile loads on top of this one
@@ -1592,7 +1592,7 @@ uniprot:
   retries: 3
   timeout_s: 30
 
-# PPI database access (scripts/fetch_interactors.py): known partners of the
+# PPI database access (nanopulldown.services.interactors): known partners of the
 # baits from the databases UniProt cross-references, for the positive controls
 # and the decoy exclusions (`controls:` below).
 interactors:
@@ -1613,8 +1613,8 @@ interactors:
     imex:    "https://www.ebi.ac.uk/Tools/webservices/psicquic/imex/webservices/current"
     biogrid: "http://tyersrest.tyerslab.com:8805/psicquic/webservices/current"
 
-# ── Stage 1a: controls (scripts/controls.py, scripts/build_decoys.py) ──────
-# Added to every run's preys by scripts/expand_pairs.py and paired with every
+# ── Stage 1a: controls (nanopulldown.inputs.controls, nanopulldown.inputs.decoys) ──────
+# Added to every run's preys by nanopulldown.inputs.expand and paired with every
 # bait: the baits' known direct partners (positives, tag `known`) and a decoy
 # set matched to the screen's preys (negatives, tag `decoy`). The Snakefile's
 # decoy_calibration rule turns them into per-bait conformal p-values / BH hits
@@ -1635,7 +1635,7 @@ controls:
     same_organism: true
     max_partners: null             # keep the N best-supported (null = all)
     # string: {min_score: 700}     # overrides interactors.string (STRING only annotates: no direct evidence)
-  decoys:                          # knobs: scripts/build_decoys.py DEFAULTS
+  decoys:                          # knobs: nanopulldown.inputs.decoys DEFAULTS
     enabled: true
     name: decoy
     n: 500                         # decoy preys per run, each paired with every bait (fragment):
@@ -1696,17 +1696,17 @@ annotate:
   consensus:
     disorder_cutoff: 0.5
 
-# ── Stage 1a: fragment mode (scripts/fragment_domains.py) ──────────────────
+# ── Stage 1a: fragment mode (nanopulldown.inputs.fragments) ──────────────────
 # Cut baits and preys into their annotated domains before pairing, and fold
 # bait domain x prey domain instead of full length x full length -- the way
 # yeast two-hybrid constructs are made. Each fragment is an ordinary region
 # spec (Q9M548:285-626), so everything downstream runs unchanged; proteins too
 # long for esmfold2.max_tokens at full length can be screened by domain.
 # Domains are the ones the reports show (InterPro representative set,
-# scripts/merge_annotation.py); configs/fragment_domains.yaml overrides them
-# per accession. Preview: python scripts/fragment_domains.py <ACC> [<ACC> ...]
+# nanopulldown.annotate.merge); configs/fragment_domains.yaml overrides them
+# per accession. Preview: nanopulldown inputs fragments <ACC> [<ACC> ...]
 # Turn on in a run overlay (see config_drm2_fragments.yaml), then rerun
-# scripts/expand_pairs.py.
+# nanopulldown.inputs.expand.
 fragments:
   enabled: false
   sides: [bait, prey]            # which side(s) get cut; the other stays full length
@@ -1761,7 +1761,7 @@ minimize:
   max_steps: 2000
   trace_interval: 50           # record energy every N iterations (-> sample_<i>_energy.parquet)
   convergence_delta: 1.0e-3    # kJ/mol: stop early if a chunk changes energy by less than this
-  # ChimeraX `clashes` defaults, used by scripts/count_clashes.py to compare
+  # ChimeraX `clashes` defaults, used by nanopulldown.structure.clashes to compare
   # raw vs minimized structures (heavy atoms only -- see that script).
   clashes:
     overlap_cutoff: 0.6        # A: vdW overlap (after allowance) at/above which a pair clashes
@@ -1781,7 +1781,7 @@ plip:
   docker_platform: "linux/amd64"   # pharmai/plip has no arm64 build -- required on Apple Silicon
   max_chain_len: 850             # PLIP 3.0 segfaults (exit 139) on chains of ~880+ residues: longer chains
                                  # are given extra chain ids for PLIP only, mapped back in the report
-                                 # (scripts/plip_chain_split.py). Contacts are identical (tested 2026-10-19).
+                                 # (nanopulldown.plip.chain_split). Contacts are identical (tested 2026-10-19).
   # ChimeraX visualization script (rule plip_parse, pliparser csv2cxc)
   cxc:
     bait_color: "gray"

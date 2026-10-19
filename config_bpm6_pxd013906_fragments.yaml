@@ -1,13 +1,13 @@
 # Run overlay: fragment mode of the full BPM6 screen in config.yaml -- bait
 # BPM6 (A1L4W5) x every protein of PXD013906 Table S3 (Chico et al. 2020 PNAS,
 # data/pnas.1912199117.sd01.xlsx, resolved to UniProt by
-# scripts/resolve_pxd013906_uniprot.py -> data/pxd013906_uniprot_mapping.csv:
+# scripts/legacy/resolve_pxd013906_uniprot.py -> data/pxd013906_uniprot_mapping.csv:
 # 1641 rows, 1558 accessions, 83 AGIs unresolved), both cut into their
-# annotated domains (config.yaml `fragments:`, scripts/fragment_domains.py),
+# annotated domains (config.yaml `fragments:`, nanopulldown.inputs.fragments),
 # so pairs are domain x domain as in a yeast two-hybrid screen. Full-length
 # pairs are already in results/ (config.yaml), so no full-length controls.
 # Usage:
-#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_pxd013906_fragments.yaml python scripts/expand_pairs.py
+#   nanopulldown --run-config config_bpm6_pxd013906_fragments.yaml inputs expand
 #   NANOPULLDOWN_RUN_CONFIG=config_bpm6_pxd013906_fragments.yaml snakemake --use-conda --cores 4 \
 #       --resources gpu=1 docker_heavy=2 --keep-going --retries 2 --rerun-incomplete
 #   (detached, caffeinated: README "Launching a long run")

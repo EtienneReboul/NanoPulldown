@@ -7,7 +7,7 @@ logs/
 __pycache__/
 *.pyc
 .DS_Store
-# Auto-generated pair specs (scripts/expand_pairs.py output) -- reproducible
+# Auto-generated pair specs (`nanopulldown inputs expand` output) -- reproducible
 # from configs/baits.txt + configs/preys.txt, so not tracked. Hand-curated
 # domains (configs/curated_domains.yaml) ARE tracked (see configs/_schema.md).
 configs/pairs.parquet
