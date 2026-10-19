@@ -1,0 +1,8 @@
+# Run overlay: the full-length BPM6 (A1L4W5) screen -- config.yaml's own
+# `pairs:` list, dirs results/ reports/ logs/ as before -- rerun with the
+# token limit raised to 1200 (+122 pairs; 193 stay over it).
+# Usage:
+#   NANOPULLDOWN_RUN_CONFIG=config_bpm6_full.yaml snakemake ...
+
+esmfold2:
+  max_tokens: 1200   # run-specific bump (config.yaml: 1050), as the q9m548/drm2/dne1 runs; swapping is accepted

@@ -145,3 +145,25 @@ def minimize_failures_main() -> int:
     df.to_csv(out, index=False)
     print(f"[collect_minimize_failures] {len(df)} pair(s) -> {out}")
     return 0
+
+
+def by_bait_main() -> int:
+    """`table by-bait`: the rows of one bait protein (every fragment of it) of
+    run-wide CSVs keyed by `pair`, for the report's per-bait sections. Each
+    table keeps its file name under --outdir, so a datavzrd config that names
+    them relatively renders against the per-bait copies."""
+    ap = argparse.ArgumentParser(description="per-bait copies of run-wide pair tables")
+    ap.add_argument("--bait", required=True, help="bait UniProt accession")
+    ap.add_argument("--tables", nargs="+", required=True)
+    ap.add_argument("--outdir", required=True)
+    a = ap.parse_args()
+
+    out = Path(a.outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    specs = load_pairs()
+    for path in map(Path, a.tables):
+        df = pd.read_csv(path)
+        bait = df["pair"].map(lambda p: (specs.get(p) or {}).get("bait", {}).get("uniprot"))
+        df[bait == a.bait].to_csv(out / path.name, index=False)
+        print(f"[table by-bait] {a.bait}: {int((bait == a.bait).sum())}/{len(df)} row(s) of {path.name}")
+    return 0

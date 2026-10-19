@@ -127,6 +127,23 @@ LABELS = {p: pair_labels(SPECS[p], PROTEINS) for p in PAIRS}
 LABEL_KEY = {p: label_digest(SPECS[p], PROTEINS) for p in PAIRS}
 INPUTS_TABLE = inputs_table_path(CFG, REPO)
 
+# Report sections are split per bait PROTEIN (all its fragments together):
+# per-pair figures get the bait as their subcategory, run-level pages are
+# built once per bait from that bait's rows (<reports>/folding/by_bait/<acc>/).
+BAITS = sorted({SPECS[p]["bait"]["uniprot"] for p in PAIRS})
+PAIRS_OF = {b: [p for p in PAIRS if SPECS[p]["bait"]["uniprot"] == b] for b in BAITS}
+BAIT_LABEL = {b: protein_name(b, PROTEINS) if b in protein_name(b, PROTEINS) else f"{protein_name(b, PROTEINS)} ({b})"
+              for b in BAITS}
+
+
+def bait_subcategory(wc):
+    return BAIT_LABEL[SPECS[wc.pair]["bait"]["uniprot"]]
+
+
+wildcard_constraints:
+    pair="[^/]+",
+    bait="[^/]+",
+
 # Controls (nanopulldown/inputs/controls.py, added by inputs expand): decoy_calibration
 # runs only when this run's preys include decoys -- a run expanded before
 # the controls existed (or with controls.decoys off) builds as before.
@@ -169,6 +186,9 @@ RPT = CFG["report"]
 FIG_THEME = f"{RPT.get('figure_theme', 'dark')}/{bool(RPT.get('figure_transparent', False))}"
 DOCKER_HEAVY_POOL = int(CFG["scheduling"]["docker_heavy_pool"])
 DATAVZRD = bool(RPT.get("datavzrd", False))
+BY_BAIT = FOLD_REP / "by_bait"
+BAIT_PAGES = (["metric_violins", "plip_type_violins", "clash_test"]
+              + (["decoy_calibration"] if HAS_DECOYS else []) + (["tables"] if DATAVZRD else []))
 FMTS = ",".join(RPT["figure_formats"])
 N_SAMPLES = int(EF["num_diffusion_samples"])
 SAMPLE_IDX = list(range(N_SAMPLES))
@@ -212,16 +232,13 @@ rule all:
         [str(FOLD_REP / p / "minimize_energy.svg") for p in PAIRS],
         [str(POST / p / "plip" / f"sample_{i}_report" / f"sample_{i}.cxc")
          for p in PAIRS for i in SAMPLE_IDX],
-        str(FOLD_REP / "clash_test"),
         str(FOLD_REP / "clash_test_stats.csv"),
         str(FOLD_REP / "clash_counts.csv"),
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
-        str(FOLD_REP / "metric_violins_interactive"),
-        str(FOLD_REP / "plip_type_violins"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
-        ([str(FOLD_REP / "tables")] if DATAVZRD else []),
-        ([str(FOLD_REP / "decoy_calibration")] if HAS_DECOYS else []),
+        # per-bait report sections (the run-wide pages above are on-demand targets)
+        [str(BY_BAIT / b / page) for b in BAITS for page in BAIT_PAGES],
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -377,7 +394,19 @@ if PAIRS_PER_LOAD <= 0:
             """
 
 else:
-    for _k, _chunk in enumerate(PAIRS[i:i + PAIRS_PER_LOAD] for i in range(0, len(PAIRS), PAIRS_PER_LOAD)):
+    # Already-folded and still-to-fold pairs are chunked separately (list order
+    # otherwise), so pairs added to a run -- a raised max_tokens, new preys --
+    # never share a chunk with finished ones: a chunk reruns as a whole, and
+    # rerunning one that holds finished pairs relinks them and so reruns
+    # everything downstream of them (minimize, PLIP, ...). With
+    # `--rerun-triggers mtime`, a chunk whose outputs all exist is not rerun even
+    # though its membership changed.
+    def _chunks(pairs):
+        return [pairs[i:i + PAIRS_PER_LOAD] for i in range(0, len(pairs), PAIRS_PER_LOAD)]
+
+    _folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
+    _todo = [p for p in PAIRS if p not in set(_folded)]
+    for _k, _chunk in enumerate(_chunks(_folded) + _chunks(_todo)):
         rule:
             name: f"run_esmfold2_chunk_{_k:03d}"
             output:
@@ -559,7 +588,7 @@ rule fig_plip_contacts:
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
     output:
         report(str(FOLD_REP / "{pair}" / "plip_contacts.svg"),
-               category="PLIP contacts", labels=pair_report_labels),
+               category="PLIP contacts", subcategory=bait_subcategory, labels=pair_report_labels),
     conda:
         "envs/analysis.yaml"
     params:
@@ -583,7 +612,7 @@ rule fig_domain_heatmap:
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
     output:
         report(str(FOLD_REP / "{pair}" / "domain_heatmap.svg"),
-               category="Bait x prey domain confidence",
+               category="Bait x prey domain confidence", subcategory=bait_subcategory,
                labels=pair_report_labels),
     conda:
         "envs/analysis.yaml"
@@ -606,7 +635,7 @@ rule fig_minimize_energy:
         energy=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}_energy.parquet"), s=SAMPLE_IDX),
     output:
         svg=report(str(FOLD_REP / "{pair}" / "minimize_energy.svg"),
-                   category="Minimization energy", labels=pair_report_labels),
+                   category="Minimization energy", subcategory=bait_subcategory, labels=pair_report_labels),
         table=str(FOLD_REP / "{pair}" / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
@@ -648,8 +677,7 @@ rule fig_clash_test:
     input:
         [str(POST / p / "clashes.csv") for p in PAIRS],
     output:
-        html=report(directory(str(FOLD_REP / "clash_test")),
-                    category="Minimization clashes", htmlindex="index.html"),
+        html=directory(str(FOLD_REP / "clash_test")),
         stats=str(FOLD_REP / "clash_test_stats.csv"),
         counts=str(FOLD_REP / "clash_counts.csv"),
     conda:
@@ -688,8 +716,7 @@ rule fig_metric_violins_interactive:
     input:
         str(FOLD_REP / "results_table.csv"),
     output:
-        report(directory(str(FOLD_REP / "metric_violins_interactive")),
-               category="Metric distributions", htmlindex="index.html"),
+        directory(str(FOLD_REP / "metric_violins_interactive")),
     conda:
         "envs/analysis.yaml"
     shell:
@@ -711,8 +738,7 @@ rule fig_plip_type_violins:
     input:
         str(FOLD_REP / "results_table.csv"),
     output:
-        report(directory(str(FOLD_REP / "plip_type_violins")),
-               category="PLIP contacts by interaction type", htmlindex="index.html"),
+        directory(str(FOLD_REP / "plip_type_violins")),
     conda:
         "envs/analysis.yaml"
     params:
@@ -733,8 +759,7 @@ rule decoy_calibration:
     input:
         str(FOLD_REP / "results_table.csv"),
     output:
-        report(directory(str(FOLD_REP / "decoy_calibration")),
-               category="Controls: decoy calibration and known partners", htmlindex="index.html"),
+        directory(str(FOLD_REP / "decoy_calibration")),
     conda:
         "envs/analysis.yaml"
     log:
@@ -765,6 +790,133 @@ rule collect_minimize_failures:
 
 
 # ── interactive tables — datavzrd bundle embedded in the .zip report ───────
+# ── per-bait report sections ─────────────────────────────────────────────
+# Each run-level page is built once per bait protein (all its fragments)
+# from that bait's rows only, and filed under the bait as report subcategory,
+# so baits never mix. The run-wide pages (metric_violins_interactive,
+# plip_type_violins, decoy_calibration, clash_test, tables) stay buildable on
+# demand but are no longer in the report.
+
+rule bait_tables:
+    input:
+        results=str(FOLD_REP / "results_table.csv"),
+        failures=str(FOLD_REP / "minimize_failure_rate.csv"),
+    output:
+        results=str(BY_BAIT / "{bait}" / "results_table.csv"),
+        failures=str(BY_BAIT / "{bait}" / "minimize_failure_rate.csv"),
+    conda:
+        "envs/analysis.yaml"
+    shell:
+        r"""
+        {NP} table by-bait --bait {wildcards.bait} --tables {input.results} {input.failures} \
+          --outdir $(dirname {output.results})
+        """
+
+
+rule fig_metric_violins_bait:
+    input:
+        str(BY_BAIT / "{bait}" / "results_table.csv"),
+    output:
+        report(directory(str(BY_BAIT / "{bait}" / "metric_violins")),
+               category="Metric distributions", subcategory=lambda wc: BAIT_LABEL[wc.bait],
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        title=lambda wc: f"Metric distributions — {BAIT_LABEL[wc.bait]} (all pairs, samples, chain pairs)",
+    shell:
+        r"""
+        {NP} plot violins --table {input[0]} --outdir {output[0]} --title "{params.title}"
+        """
+
+
+rule fig_plip_type_violins_bait:
+    input:
+        str(BY_BAIT / "{bait}" / "results_table.csv"),
+    output:
+        report(directory(str(BY_BAIT / "{bait}" / "plip_type_violins")),
+               category="PLIP contacts by interaction type", subcategory=lambda wc: BAIT_LABEL[wc.bait],
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        cols=" ".join(PLIP_TYPE_COLS),
+        labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
+        title=lambda wc: f"PLIP bait-prey contacts per interaction type — {BAIT_LABEL[wc.bait]} "
+                         "(all pairs, samples, chain pairs)",
+    shell:
+        r"""
+        {NP} plot violins --table {input[0]} \
+          --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
+          --skip-all-zero --ncols 3 --title "{params.title}"
+        """
+
+
+rule fig_clash_test_bait:
+    input:
+        lambda wc: [str(POST / p / "clashes.csv") for p in PAIRS_OF[wc.bait]],
+    output:
+        html=report(directory(str(BY_BAIT / "{bait}" / "clash_test")),
+                    category="Minimization clashes", subcategory=lambda wc: BAIT_LABEL[wc.bait],
+                    labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+        stats=str(BY_BAIT / "{bait}" / "clash_test_stats.csv"),
+        counts=str(BY_BAIT / "{bait}" / "clash_counts.csv"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        alt=CL["alternative"],
+    shell:
+        r"""
+        {NP} plot clash-test --tables {input} --outdir {output.html} \
+          --out-stats {output.stats} --out-counts {output.counts} \
+          --alternative {params.alt}
+        """
+
+
+rule decoy_calibration_bait:
+    input:
+        str(BY_BAIT / "{bait}" / "results_table.csv"),
+    output:
+        report(directory(str(BY_BAIT / "{bait}" / "decoy_calibration")),
+               category="Controls: decoy calibration and known partners",
+               subcategory=lambda wc: BAIT_LABEL[wc.bait],
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+    conda:
+        "envs/analysis.yaml"
+    log:
+        str(FOLD_LOG / "decoy_calibration" / "{bait}.log"),
+    params:
+        decoy=DECOY_TAG,
+        positive=POSITIVE_TAG,
+    shell:
+        r"""
+        {NP} calibrate --table {input[0]} --outdir {output[0]} \
+          --decoy-tag {params.decoy} --positive-tag {params.positive} > {log} 2>&1
+        """
+
+
+rule datavzrd_bait:
+    input:
+        config=str(REPO / "report" / "datavzrd" / "nanopulldown.datavzrd.yaml"),
+        css=str(REPO / "src" / "nanopulldown" / "report" / "assets" / "datavzrd-dark.css"),
+        results=str(BY_BAIT / "{bait}" / "results_table.csv"),
+        failures=str(BY_BAIT / "{bait}" / "minimize_failure_rate.csv"),
+        clash_stats=str(BY_BAIT / "{bait}" / "clash_test_stats.csv"),
+        clash_counts=str(BY_BAIT / "{bait}" / "clash_counts.csv"),
+    output:
+        report(directory(str(BY_BAIT / "{bait}" / "tables")),
+               category="Interactive tables", subcategory=lambda wc: BAIT_LABEL[wc.bait],
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+    conda:
+        "envs/analysis.yaml"
+    log:
+        str(FOLD_LOG / "datavzrd" / "{bait}.log"),
+    shell:
+        r"""
+        {NP} report tables --config {input.config} --outdir {output[0]} --css {input.css} > {log} 2>&1
+        """
+
+
 rule datavzrd_folding:
     input:
         config=str(REPO / "report" / "datavzrd" / "nanopulldown.datavzrd.yaml"),
@@ -774,8 +926,7 @@ rule datavzrd_folding:
         clash_stats=str(FOLD_REP / "clash_test_stats.csv"),
         clash_counts=str(FOLD_REP / "clash_counts.csv"),
     output:
-        report(directory(str(FOLD_REP / "tables")),
-               category="Interactive tables", htmlindex="index.html"),
+        directory(str(FOLD_REP / "tables")),
     conda:
         "envs/analysis.yaml"
     log:

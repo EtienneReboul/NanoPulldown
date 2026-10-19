@@ -339,27 +339,68 @@ def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, prot_a
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    baits = list(summ.bait_spec.unique())
-    si = summ.set_index(["bait_spec", "metric"])
-    # short subplot titles (metric + numbers); the bait labels its row once, on the
-    # first column's y axis; x titles only on the bottom row (one metric per column).
-    # Spacing is fixed in pixels so the grid scales with the number of baits.
-    titles = [f"{m} · AUC {si.at[(b, m), 'auc_prey_vs_decoy']:.2f} · hits {si.at[(b, m), f'hits_q{alpha:g}']}"
-              for b in baits for m in metrics]
+    # Fragment mode: one curve point per bait PROTEIN x prey protein (its best
+    # fragment pair), rows = bait proteins, titles = protein-level AUC best (fair).
+    # A partner binds through one domain; its other fragment pairs only bury it.
+    frag = bool(g.pair.str.contains("x", regex=False).any()) and not prot_auc.empty
+    if frag:
+        cls = np.where(g.is_decoy, "decoys", np.where(g.is_positive, "known partners", "preys"))
+        plot = (g.assign(cls=cls).groupby(["bait_uniprot", "prey_uniprot", "cls"], as_index=False)
+                [metrics].max().rename(columns={"bait_uniprot": "row"}))
+        pa = prot_auc.set_index(["bait_uniprot", "metric"])
+        has_pos = prot_auc.groupby("bait_uniprot").n_positive_proteins.max() > 0
+        label = g.drop_duplicates("bait_uniprot").set_index("bait_uniprot")["bait"] if "bait" in g \
+            else pd.Series(dtype=str)
+
+        def title(b: str, m: str) -> str:
+            r = pa.loc[(b, m)]
+            t = f"{m} · AUC prey {r.auc_prey_vs_decoy_best:.2f} ({r.auc_prey_vs_decoy_fair:.2f})"
+            if has_pos.get(b, False):
+                t += f" · known {r.auc_positive_vs_decoy_best:.2f} ({r.auc_positive_vs_decoy_fair:.2f})"
+            return t
+
+        def row_name(b: str) -> str:
+            return f"{str(label.get(b, b)).split(' ')[0]} · best fragment"
+        what = ("bait protein (rows; best fragment pair per prey protein) and metric (columns)",
+                "AUC = best fragment pair per protein vs decoys, (Sidak-fair) in brackets: the best-of view "
+                "is biased up for proteins with more fragments")
+    else:
+        si = summ.set_index(["bait_spec", "metric"])
+        cls = np.where(g.is_decoy, "decoys", np.where(g.is_positive, "known partners", "preys"))
+        plot = g.assign(cls=cls).rename(columns={"bait_spec": "row"})
+        has_pos = summ.groupby("bait_spec").n_positives.max() > 0
+        label = g.drop_duplicates("bait_spec").set_index("bait_spec")["bait"] if "bait" in g \
+            else pd.Series(dtype=str)
+
+        def title(b: str, m: str) -> str:
+            t = f"{m} · AUC prey {si.at[(b, m), 'auc_prey_vs_decoy']:.2f}"
+            if has_pos.get(b, False):
+                t += f" · known {si.at[(b, m), 'auc_positive_vs_decoy']:.2f}"
+            return t + f" · hits {si.at[(b, m), f'hits_q{alpha:g}']}"
+
+        def row_name(b: str) -> str:
+            region = b.split("x", 1)[1] if "x" in b else "full length"
+            return f"{str(label.get(b, b)).split(' ')[0]} · {region}"
+        what = ("bait fragment (rows) and metric (columns)",
+                f"AUC prey / known = screen preys / known direct partners vs decoys, per fragment pair; "
+                f"hits: BH q ≤ {alpha:g} on conformal p against the decoys")
+    # rows with known partners first (stable order otherwise): they carry the green line
+    rows = sorted(plot.row.unique(), key=lambda b: not has_pos.get(b, False))
+    # short subplot titles; the row labels itself once, on the first column's y axis;
+    # x titles only on the bottom row. Spacing is fixed in pixels so the grid scales.
+    titles = [title(b, m) for b in rows for m in metrics]
     row_h, gap_px, top_px = 260, 70, 120
-    height = top_px + len(baits) * row_h + (len(baits) - 1) * gap_px + 60
-    fig = make_subplots(rows=len(baits), cols=len(metrics), subplot_titles=titles,
+    height = top_px + len(rows) * row_h + (len(rows) - 1) * gap_px + 60
+    fig = make_subplots(rows=len(rows), cols=len(metrics), subplot_titles=titles,
                         horizontal_spacing=0.035, vertical_spacing=gap_px / height)
-    fig.update_annotations(font_size=11)
-    label = g.drop_duplicates("bait_spec").set_index("bait_spec")["bait"] if "bait" in g else pd.Series(dtype=str)
+    fig.update_annotations(font_size=11 if not frag else 10)
     colors = {"decoys": "#d95926", "preys": "#3987e5", "known partners": "#199e70"}   # dataviz categorical slots 1-3, dark steps
     shown: set[str] = set()
-    for i, b in enumerate(baits, start=1):
-        d = g[g.bait_spec == b]
+    for i, b in enumerate(rows, start=1):
+        d = plot[plot.row == b]
         for j, m in enumerate(metrics, start=1):
-            for lab, sub in (("decoys", d[d.is_decoy]), ("preys", d[~d.is_decoy & ~d.is_positive]),
-                             ("known partners", d[d.is_positive])):
-                x = np.sort(sub[m].dropna().to_numpy())
+            for lab in ("decoys", "preys", "known partners"):
+                x = np.sort(d.loc[d.cls == lab, m].dropna().to_numpy())
                 if not len(x):
                     continue
                 fig.add_trace(go.Scatter(x=x, y=np.arange(1, len(x) + 1) / len(x), mode="lines",
@@ -367,27 +408,30 @@ def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, prot_a
                                          showlegend=(lab not in shown and not shown.add(lab)),
                                          hovertemplate=f"{lab}: {m}=%{{x:.3g}}, ECDF=%{{y:.2f}}<extra></extra>"),
                               row=i, col=j)
-            if i == len(baits):
+            if i == len(rows):
                 fig.update_xaxes(title_text=m, row=i, col=j)
-        gene = str(label.get(b, b)).split(" ")[0]           # display name, short
-        region = b.split("x", 1)[1] if "x" in b else "full length"
-        fig.update_yaxes(title_text=f"{gene} · {region}<br>ECDF", title_font_size=11, row=i, col=1)
+        note = "" if has_pos.get(b, False) else "<br><i>no known partner</i>"
+        fig.update_yaxes(title_text=f"{row_name(b)}{note}<br>ECDF", title_font_size=11, row=i, col=1)
     fig.update_layout(
         template="plotly_dark", height=height, margin=dict(t=top_px, l=110, r=30, b=60),
-        title=dict(text=f"Controls — score ECDFs per bait fragment (rows) and metric (columns)<br>"
-                        f"<sup>AUC = preys vs decoys per fragment pair; hits: BH q ≤ {alpha:g} on conformal p "
-                        "against the decoys</sup>", y=1 - 20 / height, yanchor="top"),
+        title=dict(text=f"Controls — score ECDFs per {what[0]}<br><sup>{what[1]}. Rows with no known "
+                        "direct partner (no green line) come last.</sup>", y=1 - 20 / height, yanchor="top"),
         legend=dict(orientation="h", x=0, xanchor="left", y=1 + 32 / (height - top_px - 60), yanchor="bottom"))
     hit_cols = [f"{m}_hit" for m in metrics]
     hits = g[g[hit_cols].fillna(False).any(axis=1)].copy()
     show = ["bait_spec", "prey"] + [c for m in metrics for c in (m, f"{m}_q")]
     hits = hits[[c for c in show if c in hits]].round(4).sort_values(["bait_spec", show[3]])
+    def tbl(df: pd.DataFrame, digits: int = 3) -> str:
+        return df.round(digits).to_html(index=False, border=0, classes="t", na_rep="—")
+
+    if "note" in recall:
+        recall = recall.assign(note=recall.note.fillna(""))
     html = fig.to_html(include_plotlyjs=True, full_html=True)
     html = html.replace("</body>", (
         "<style>body{background:#111;color:#f0efec;font-family:sans-serif}.t{border-collapse:collapse;"
         "margin:24px;font-size:13px}.t th,.t td{padding:4px 10px;border-bottom:1px solid #333;text-align:left}"
         "</style><h3 style='margin-left:24px'>Known partners recovered (any of their pairs a hit)</h3>"
-        + (recall.round(3).to_html(index=False, border=0, classes="t") if not recall.empty
+        + (tbl(recall) if not recall.empty
            else "<p style='margin-left:24px'>no positive control in this run</p>")
         + "<h3 style='margin-left:24px'>Known direct partners per bait (positives)</h3>"
           "<p style='margin-left:24px;max-width:900px'>A known partner is a positive only for the "
@@ -396,16 +440,18 @@ def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, prot_a
           "so a miss there says little about the metric.</p>"
         + (positives[[c for c in ("bait_uniprot", "prey_uniprot", "prey_name", "n_pairs", "bait_coverage",
                                   "prey_coverage", "partial") if c in positives]]
-           .round(2).to_html(index=False, border=0, classes="t") if not positives.empty
+           .pipe(tbl, 2) if not positives.empty
            else "<p style='margin-left:24px'>no positive control in this run</p>")
         + "<h3 style='margin-left:24px'>Protein-level AUC per bait protein (best fragment pair; "
           "_fair = Sidak-adjusted min p, the truth lies between _best and _fair)</h3>"
-        + (prot_auc.round(3).to_html(index=False, border=0, classes="t") if not prot_auc.empty
+          "<p style='margin-left:24px'>— = not applicable: the bait has no known direct partner.</p>"
+        + (tbl(prot_auc) if not prot_auc.empty
            else "<p style='margin-left:24px'>no protein ids in the table</p>")
         + "<h3 style='margin-left:24px'>Per bait (fragment) and metric</h3>"
-        + summ.round(3).to_html(index=False, border=0, classes="t")
+          "<p style='margin-left:24px'>— = not applicable: the bait has no known direct partner.</p>"
+        + tbl(summ)
         + f"<h3 style='margin-left:24px'>Hits on any metric ({len(hits)})</h3>"
-        + hits.to_html(index=False, border=0, classes="t") + "</body>"))
+        + tbl(hits, 4) + "</body>"))
     path.write_text(html)
 
 

@@ -60,6 +60,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
     "table": {
         "results": ("report.tables:results_main", "the run-wide results table"),
         "minimize-failures": ("report.tables:minimize_failures_main", "per-pair minimization failure rates"),
+        "by-bait": ("report.tables:by_bait_main", "one bait's rows of run-wide pair tables"),
     },
     "report": {
         "tables": ("report.bundle:tables_main", "datavzrd table bundle (dark skin)"),
