@@ -53,7 +53,6 @@ Usage (one command, both stages):
 """
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -65,9 +64,9 @@ from nanopulldown.core.specs import (inputs_table_path, load_pairs, pair_tokens,
                                      protein_chains, spec_digest)
 
 # Jobs (in any --use-conda env) import the package from the checkout itself.
-os.environ["PYTHONPATH"] = os.pathsep.join(
-    [str(REPO / "src")] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p])
-NP = "python -m nanopulldown"
+# PYTHONPATH goes IN the command: Snakemake deletes it from a conda job's
+# environment (conda_block_conflicting_envvars), so os.environ would not reach it.
+NP = f'PYTHONPATH="{REPO / "src"}" python -m nanopulldown'
 
 configfile: str(REPO / "config.yaml")
 if (REPO / "config.local.yaml").exists():
