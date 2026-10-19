@@ -467,8 +467,9 @@ rule run_plip:
         image=PLIP["image"],
         memory=PLIP["docker_memory"],
         platform=(f"--platform {PLIP['docker_platform']}" if PLIP.get("docker_platform") else ""),
-        chains=lambda wc: '--chains "[{},{}]"'.format(
-            SPECS[wc.pair]["bait_chains"], SPECS[wc.pair]["prey_chains"]),
+        bait=lambda wc: ",".join(SPECS[wc.pair]["bait_chains"]),
+        prey=lambda wc: ",".join(SPECS[wc.pair]["prey_chains"]),
+        max_chain_len=int(PLIP.get("max_chain_len", 850)),
         outdir=str(POST / "{pair}" / "plip" / "sample_{sample}_report"),
     log:
         str(FOLD_LOG / "plip" / "{pair}" / "sample_{sample}.log"),
@@ -485,11 +486,15 @@ rule run_plip:
         mkdir -p {params.outdir}
         pdb="{params.outdir}/sample_{wildcards.sample}.pdb"
         gunzip -c {input.pdb} > "$pdb"
+        # chains over max_chain_len get extra ids for PLIP only (it segfaults on them)
+        chains=$(python scripts/plip_chain_split.py split --pdb "$pdb" \
+          --bait {params.bait} --prey {params.prey} --max-len {params.max_chain_len})
         docker run --rm --memory={params.memory} {params.platform} \
           -v $(pwd):/work -w /work {params.image} \
-          -f "$pdb" -t {params.chains} -o {params.outdir} > {log} 2>&1 \
-          || {{ rm -f "$pdb"; exit 1; }}
-        rm -f "$pdb" "{params.outdir}/sample_{wildcards.sample}_protonated.pdb"
+          -f "$pdb" -t --chains "$chains" -o {params.outdir} > {log} 2>&1 \
+          || {{ rm -f "$pdb" "$pdb.chainmap.json"; exit 1; }}
+        python scripts/plip_chain_split.py restore --report {output.report} --map "$pdb.chainmap.json"
+        rm -f "$pdb" "$pdb.chainmap.json" "{params.outdir}/sample_{wildcards.sample}_protonated.pdb"
         """
 
 

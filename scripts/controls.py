@@ -31,7 +31,9 @@ are the direct ones and the decoy exclusions are all of them.
 Columns carried into configs/inputs_<run>.parquet / the results table
 (prefix = `controls.positives.name`, default `known`):
   known_databases, known_n_databases, known_string_score,
-  known_direct_databases, known_direct_methods, known_n_direct_publications
+  known_direct_databases, known_direct_methods, known_n_direct_publications,
+  known_direct_of (the baits a partner has direct evidence with: it is a
+  positive control for those baits only, scripts/decoy_calibration.py)
 
 Preview the positives of a run (fetches, writes only the snapshot):
     NANOPULLDOWN_RUN_CONFIG=config_drm2_ppi.yaml python scripts/controls.py
@@ -59,7 +61,7 @@ POSITIVE_DEFAULTS = {
     "max_partners": None,
 }
 COLUMNS = ("databases", "n_databases", "string_score", "direct_databases", "direct_methods",
-           "n_direct_publications")
+           "n_direct_publications", "direct_of")
 
 
 def positives_config(cfg: dict) -> dict:
@@ -94,6 +96,9 @@ def add_positives(res, cfg: dict, refresh: bool = False, verbose: bool = True) -
     positives, everyone = known_partners(cfg, baits, refresh=refresh)
     tag = pcfg["name"]
     extra = {p["partner"]: {f"{tag}_{c}": p[c] for c in COLUMNS} for p in everyone}
+    direct_of = {p["partner"]: p["direct_of"] for p in positives}    # under this run's thresholds
+    for acc, ex in extra.items():
+        ex[f"{tag}_direct_of"] = direct_of.get(acc, "")
     if not pcfg["enabled"]:
         positives = []
     excluded = res.excluded.get("prey", set())

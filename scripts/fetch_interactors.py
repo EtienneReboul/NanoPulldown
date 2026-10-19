@@ -415,7 +415,11 @@ def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None,
               direct: tuple[set[str], set[str]] | None = None) -> list[dict]:
     """Long table -> one record per unique partner, filtered and ranked:
     {partner, databases, n_databases, evidence, string_score, of,
-     direct_databases, direct_methods, n_direct_publications}.
+     direct_databases, direct_methods, n_direct_publications, direct_of}.
+    `of` lists every query the partner is reported with (any evidence);
+    `direct_of` only the queries it has direct evidence with in
+    >= min_direct_publications publications -- the baits it is a positive
+    control for.
 
       min_databases: 2       reported by at least N databases
       same_organism: true    drop partners from another species than their query
@@ -443,7 +447,7 @@ def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None,
         a = agg.setdefault(r["partner"], {"partner": r["partner"], "databases": set(),
                                           "of": set(), "evidence": 0, "string_score": None,
                                           "direct_databases": set(), "direct_methods": set(),
-                                          "direct_pubs": set()})
+                                          "direct_pubs": set(), "direct_pubs_by": {}})
         a["databases"].add(r["database"])
         a["of"].add(r["query"])
         if r["database"] == "string":
@@ -454,17 +458,20 @@ def summarize(rows: list[dict], src: dict, query_taxa: dict | None = None,
             a["direct_databases"].add(r["database"])
             a["direct_methods"].add(_label(r.get("detection_method") or r.get("interaction_type")))
             pubs = [x for x in (r.get("publications") or "").split("|") if x]
-            a["direct_pubs"] |= set(pubs) or {f"{r['database']}:{r['query']}:{r.get('detection_method')}"}
+            pubs = set(pubs) or {f"{r['database']}:{r['query']}:{r.get('detection_method')}"}
+            a["direct_pubs"] |= pubs
+            a["direct_pubs_by"].setdefault(r["query"], set()).update(pubs)
+    min_pubs = int(src.get("min_direct_publications", DIRECT_DEFAULTS["min_direct_publications"]))
     out = []
     for a in agg.values():
         a["n_databases"] = len(a["databases"])
         a["n_direct_publications"] = len(a.pop("direct_pubs"))
+        a["direct_of"] = ";".join(sorted(q for q, ps in a.pop("direct_pubs_by").items() if len(ps) >= min_pubs))
         for k in ("databases", "of", "direct_databases", "direct_methods"):
             a[k] = ";".join(sorted(a[k]))
         if a["n_databases"] < int(src.get("min_databases", 1)):
             continue
-        if direct_only and a["n_direct_publications"] < int(
-                src.get("min_direct_publications", DIRECT_DEFAULTS["min_direct_publications"])):
+        if direct_only and not a["direct_of"]:      # direct with no single query often enough
             continue
         out.append(a)
     out.sort(key=lambda a: (-(a["n_direct_publications"] if direct_only else 0), -a["n_databases"],

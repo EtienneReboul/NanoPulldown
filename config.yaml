@@ -1779,6 +1779,9 @@ plip:
   image: "docker.io/pharmai/plip:latest"
   docker_memory: "8g"
   docker_platform: "linux/amd64"   # pharmai/plip has no arm64 build -- required on Apple Silicon
+  max_chain_len: 850             # PLIP 3.0 segfaults (exit 139) on chains of ~880+ residues: longer chains
+                                 # are given extra chain ids for PLIP only, mapped back in the report
+                                 # (scripts/plip_chain_split.py). Contacts are identical (tested 2026-10-19).
   # ChimeraX visualization script (rule plip_parse, pliparser csv2cxc)
   cxc:
     bait_color: "gray"

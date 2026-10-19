@@ -27,6 +27,16 @@ Per bait and metric:
     preys behave like decoys (the median/MAD and adjusted-boxplot fences on
     the screen alone are then justified); AUC well above 0.5 with few hits
     means the screen is shifted as a whole (a matching or bait problem).
+  * protein-level AUCs per bait PROTEIN (protein_auc.csv): one value per
+    prey protein over all its fragment pairs, as the best score (biased up for
+    proteins with more fragments) and as a Sidak-adjusted min p (slightly
+    conservative) -- see protein_auc(). In fragment mode these are the AUCs to
+    read: a partner binding through one domain is not diluted by the others.
+  * positives are PER BAIT: a known partner counts only for the baits it has
+    direct evidence with (`known_direct_of`, scripts/controls.py); a
+    control-only partner of another bait is dropped for this one. Each
+    positive carries the fraction of the bait and of the partner folded in
+    the run; below 0.9 it is flagged `partial` (positives.csv, index.html).
   * positive controls: AUC = P(positive score > decoy score) per bait
     (fragment), and recall per bait PROTEIN: a known partner is recovered when
     any of its pairs (any bait fragment x any of its fragments) is a hit. In
@@ -42,7 +52,8 @@ in the decoy null. "Higher is better" for every metric (all defaults are).
 Outputs (--outdir): calibration.csv (one row per bait x prey: score, p, q,
 hit per metric), summary.csv (per bait x metric: n decoys/preys/positives,
 AUCs, KS, hits), positives.csv (per bait protein x known partner: best q and
-recovered per metric), recall.csv (per bait protein x metric), index.html
+recovered per metric), recall.csv (per bait protein x metric),
+protein_auc.csv (per bait protein x metric: best-fragment and fair AUCs), index.html
 (decoy / prey / positive ECDFs per bait x metric + the recall and hit tables).
 
 Usage (report env: envs/report.yaml):
@@ -62,7 +73,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lib_pipeline import load_pairs  # noqa: E402
+from lib_pipeline import load_pairs, load_proteins  # noqa: E402
 
 METRICS = ["pinc", "ipsae", "pair_iptm", "ilis", "pdockq"]
 
@@ -120,7 +131,24 @@ def main() -> int:
     src = t.get("prey_sources", pd.Series("", index=t.index)).fillna("").astype(str)
     tags = src.str.split(r",\s*")
     t["is_decoy"] = tags.map(lambda s: a.decoy_tag in s)
-    t["is_positive"] = tags.map(lambda s: a.positive_tag in s) & ~t["is_decoy"]
+    tagged = tags.map(lambda s: a.positive_tag in s) & ~t["is_decoy"]
+    of_col = f"{a.positive_tag}_direct_of"
+    if of_col in t:
+        # a known partner is a positive for the baits it has direct evidence with only;
+        # a control-only partner (no other source) means nothing for the other baits: dropped
+        direct_of = t[of_col].fillna("").astype(str).str.split(";")
+        own = [str(b) in d for b, d in zip(t.get("bait_uniprot", pd.Series("", index=t.index)), direct_of)]
+        t["is_positive"] = tagged & pd.Series(own, index=t.index)
+        control_only = tags.map(lambda s: set(x for x in s if x) == {a.positive_tag})
+        n_drop = int((control_only & tagged & ~t["is_positive"]).sum())
+        t = t[~(control_only & tagged & ~t["is_positive"])].copy()
+        if n_drop:
+            print(f"[decoy_calibration] dropped {n_drop} row(s): positive controls of another bait")
+    else:
+        print(f"[decoy_calibration] WARNING: no {of_col} column (expanded before per-bait positives): "
+              "every known partner counts as a positive for every bait -- re-run expand_pairs.py",
+              file=sys.stderr)
+        t["is_positive"] = tagged
     first = {c: (c, "first") for c in ("bait", "prey", "prey_name", "prey_sources", "bait_uniprot",
                                        "prey_uniprot") if c in t}
     g = t.groupby(["bait_spec", "pair"], as_index=False).agg(
@@ -168,6 +196,9 @@ def main() -> int:
     positives, recall = positive_recovery(g, metrics)
     if not recall.empty:
         print(recall.round(3).to_string(index=False))
+    prot_auc = protein_auc(g, metrics)
+    if not prot_auc.empty:
+        print(prot_auc.round(3).to_string(index=False))
 
     out = Path(a.outdir)
     out.mkdir(parents=True, exist_ok=True)
@@ -175,44 +206,152 @@ def main() -> int:
     summ.to_csv(out / "summary.csv", index=False)
     positives.to_csv(out / "positives.csv", index=False)
     recall.to_csv(out / "recall.csv", index=False)
-    write_html(g, summ, recall, metrics, a.alpha, out / "index.html")
-    print(f"[decoy_calibration] -> {out}/calibration.csv, summary.csv, positives.csv, recall.csv, index.html")
+    prot_auc.to_csv(out / "protein_auc.csv", index=False)
+    write_html(g, summ, recall, prot_auc, positives, metrics, a.alpha, out / "index.html")
+    print(f"[decoy_calibration] -> {out}/calibration.csv, summary.csv, positives.csv, recall.csv, "
+          "protein_auc.csv, index.html")
     return 0
 
 
-def positive_recovery(g: pd.DataFrame, metrics: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def protein_auc(g: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
+    """Protein-level AUCs per bait PROTEIN x metric: one value per bait protein
+    x prey protein over all its fragment pairs, so a partner that binds through
+    one domain is not diluted by its other fragments.
+
+      *_best  -- best score over the protein's fragment pairs. Biased upward
+                 for proteins with more fragment pairs (more draws).
+      *_fair  -- min conformal p over its fragment pairs, Sidak-adjusted for
+                 their number k: 1 - (1 - p_min)^k, decoys alike (each decoy's
+                 p is leave-one-out against its bait fragment's other decoys).
+                 Exact for independent fragments, slightly conservative since
+                 fragments of one protein are correlated: the truth lies
+                 between _best and _fair.
+    """
+    if "bait_uniprot" not in g or "prey_uniprot" not in g:
+        return pd.DataFrame()
+    g = g.copy()
+    for m in metrics:
+        p = pd.Series(np.nan, index=g.index)
+        for _, d in g.groupby("bait_spec"):
+            null = d.loc[d.is_decoy, m].dropna().to_numpy()
+            if not len(null):
+                continue
+            ok = d[m].notna()
+            scr, dec = ok & ~d.is_decoy, ok & d.is_decoy
+            p[scr[scr].index] = conformal_p(d.loc[scr, m].to_numpy(), null)
+            srt = np.sort(null)                    # leave-one-out: n_ge includes the decoy itself
+            n_ge = len(srt) - np.searchsorted(srt, d.loc[dec, m].to_numpy(), side="left")
+            p[dec[dec].index] = n_ge / len(srt)
+        g[f"{m}__p"] = p
+    g["cls"] = np.where(g.is_decoy, "decoy", np.where(g.is_positive, "positive", "prey"))
+    rows = []
+    for bait, d in g.groupby("bait_uniprot"):
+        for m in metrics:
+            prot = d.groupby(["prey_uniprot", "cls"], as_index=False).agg(
+                best=(m, "max"), pmin=(f"{m}__p", "min"), k=(f"{m}__p", "count"))
+            prot = prot[prot.k > 0]
+            prot["padj"] = 1 - (1 - prot.pmin) ** prot.k
+            dec, pos, pr = (prot[prot.cls == c] for c in ("decoy", "positive", "prey"))
+            if dec.empty:
+                continue
+            row = {"bait_uniprot": bait, "metric": m, "n_decoy_proteins": len(dec),
+                   "n_prey_proteins": len(pr), "n_positive_proteins": len(pos),
+                   "frag_pairs_per_positive": pos.k.mean() if len(pos) else np.nan,
+                   "frag_pairs_per_decoy": dec.k.mean()}
+            for lab, x in (("positive", pos), ("prey", pr)):
+                row[f"auc_{lab}_vs_decoy_best"] = (auc(x.best.dropna().to_numpy(), dec.best.dropna().to_numpy())
+                                                    if x.best.notna().any() else np.nan)
+                row[f"auc_{lab}_vs_decoy_fair"] = auc(-x.padj.to_numpy(), -dec.padj.to_numpy()) if len(x) else np.nan
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _coverage(specs: set[str], length: float) -> float:
+    """Fraction of a protein covered by the union of its folded specs
+    (ACC = whole protein, ACCxSTART-END = a fragment)."""
+    spans = []
+    for sp in specs:
+        if "x" not in sp:
+            return 1.0
+        lo, hi = sp.split("x", 1)[1].split("-")
+        spans.append((int(lo), int(hi)))
+    if not spans or not length or np.isnan(length):
+        return np.nan
+    covered, end = 0, 0
+    for lo, hi in sorted(spans):
+        lo = max(lo, end + 1)
+        if hi >= lo:
+            covered += hi - lo + 1
+        end = max(end, hi)
+    return covered / length
+
+
+def positive_recovery(g: pd.DataFrame, metrics: list[str],
+                      partial_below: float = 0.9) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(per bait protein x known partner: n pairs, best q + recovered per
-    metric; per bait protein x metric: n positives, recovered, recall)."""
-    pos = g[g.is_positive]
-    if pos.empty or "bait_uniprot" not in pos or "prey_uniprot" not in pos:
+    metric, and how much of the bait / the partner was folded; per bait
+    protein x metric: n positives, recovered, recall -- baits with no known
+    direct partner get one row saying so).
+
+    bait_coverage / prey_coverage: fraction of the protein covered by the
+    fragments folded in this run (1 = folded whole). Below `partial_below`
+    the pair is flagged `partial`: the known interface may lie in a region
+    that was never folded, so a miss there says little about the metric."""
+    if "bait_uniprot" not in g or "prey_uniprot" not in g:
         return (pd.DataFrame(columns=["bait_uniprot", "prey_uniprot"]),
                 pd.DataFrame(columns=["bait_uniprot", "metric", "n_positives", "recovered", "recall"]))
-    agg = {"n_pairs": ("pair", "size")}
-    agg |= {c: (c, "first") for c in ("bait", "prey", "prey_name") if c in pos}
-    for m in metrics:
-        agg[f"{m}_best_q"] = (f"{m}_q", "min")
-        agg[f"{m}_recovered"] = (f"{m}_hit", lambda h: bool(h.fillna(False).astype(bool).any()))
-    per = pos.groupby(["bait_uniprot", "prey_uniprot"], as_index=False).agg(**agg)
+    lengths = {acc: float(r.get("length") or np.nan) for acc, r in load_proteins().items()}
+    bait_cov = {b: _coverage(set(d.bait_spec), lengths.get(b, np.nan)) for b, d in g.groupby("bait_uniprot")}
+    pos = g[g.is_positive]
     rec = []
-    for bait, d in per.groupby("bait_uniprot"):
+    if not pos.empty:
+        agg = {"n_pairs": ("pair", "size")}
+        agg |= {c: (c, "first") for c in ("bait", "prey", "prey_name") if c in pos}
+        for m in metrics:
+            agg[f"{m}_best_q"] = (f"{m}_q", "min")
+            agg[f"{m}_recovered"] = (f"{m}_hit", lambda h: bool(h.fillna(False).astype(bool).any()))
+        per = pos.groupby(["bait_uniprot", "prey_uniprot"], as_index=False).agg(**agg)
+        prey_specs = pos.assign(prey_spec=pos.pair.str.split("__").str[1]).groupby(
+            ["bait_uniprot", "prey_uniprot"]).prey_spec.agg(set)
+        per["bait_coverage"] = per.bait_uniprot.map(bait_cov)
+        per["prey_coverage"] = [_coverage(prey_specs[(b, p)], lengths.get(p, np.nan))
+                                for b, p in zip(per.bait_uniprot, per.prey_uniprot)]
+        per["partial"] = (per.bait_coverage < partial_below) | (per.prey_coverage < partial_below)
+    else:
+        per = pd.DataFrame(columns=["bait_uniprot", "prey_uniprot"])
+    for bait in sorted(g.bait_uniprot.dropna().unique()):
+        d = per[per.bait_uniprot == bait]
+        name = g.loc[g.bait_uniprot == bait, "bait"].iloc[0] if "bait" in g else bait
+        if d.empty:
+            rec.append({"bait_uniprot": bait, "bait": name, "metric": "", "n_positives": 0,
+                        "recovered": np.nan, "recall": np.nan, "note": "no known direct partner"})
+            continue
         for m in metrics:
             k = int(d[f"{m}_recovered"].sum())
-            rec.append({"bait_uniprot": bait, "bait": d["bait"].iloc[0] if "bait" in d else bait,
-                        "metric": m, "n_positives": len(d), "recovered": k, "recall": k / len(d)})
+            rec.append({"bait_uniprot": bait, "bait": name, "metric": m, "n_positives": len(d),
+                        "n_partial": int(d.partial.sum()), "recovered": k, "recall": k / len(d),
+                        "note": ""})
     return per, pd.DataFrame(rec)
 
 
-def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, metrics: list[str], alpha: float,
-               path: Path) -> None:
+def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, prot_auc: pd.DataFrame,
+               positives: pd.DataFrame, metrics: list[str], alpha: float, path: Path) -> None:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
     baits = list(summ.bait_spec.unique())
     si = summ.set_index(["bait_spec", "metric"])
-    titles = [f"{b} · {m} (AUC {si.at[(b, m), 'auc_prey_vs_decoy']:.2f}, "
-              f"hits {si.at[(b, m), f'hits_q{alpha:g}']})" for b in baits for m in metrics]
+    # short subplot titles (metric + numbers); the bait labels its row once, on the
+    # first column's y axis; x titles only on the bottom row (one metric per column).
+    # Spacing is fixed in pixels so the grid scales with the number of baits.
+    titles = [f"{m} · AUC {si.at[(b, m), 'auc_prey_vs_decoy']:.2f} · hits {si.at[(b, m), f'hits_q{alpha:g}']}"
+              for b in baits for m in metrics]
+    row_h, gap_px, top_px = 260, 70, 120
+    height = top_px + len(baits) * row_h + (len(baits) - 1) * gap_px + 60
     fig = make_subplots(rows=len(baits), cols=len(metrics), subplot_titles=titles,
-                        horizontal_spacing=0.04, vertical_spacing=0.12 / max(len(baits), 1))
+                        horizontal_spacing=0.035, vertical_spacing=gap_px / height)
+    fig.update_annotations(font_size=11)
+    label = g.drop_duplicates("bait_spec").set_index("bait_spec")["bait"] if "bait" in g else pd.Series(dtype=str)
     colors = {"decoys": "#d95926", "preys": "#3987e5", "known partners": "#199e70"}   # dataviz categorical slots 1-3, dark steps
     shown: set[str] = set()
     for i, b in enumerate(baits, start=1):
@@ -228,10 +367,17 @@ def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, metric
                                          showlegend=(lab not in shown and not shown.add(lab)),
                                          hovertemplate=f"{lab}: {m}=%{{x:.3g}}, ECDF=%{{y:.2f}}<extra></extra>"),
                               row=i, col=j)
-            fig.update_xaxes(title_text=m, row=i, col=j)
-    fig.update_layout(template="plotly_dark", height=380 * len(baits), title=(
-        f"Controls — decoy / prey / known-partner score ECDFs per bait (hits: BH q ≤ {alpha:g} "
-        "on conformal p against the decoys)"))
+            if i == len(baits):
+                fig.update_xaxes(title_text=m, row=i, col=j)
+        gene = str(label.get(b, b)).split(" ")[0]           # display name, short
+        region = b.split("x", 1)[1] if "x" in b else "full length"
+        fig.update_yaxes(title_text=f"{gene} · {region}<br>ECDF", title_font_size=11, row=i, col=1)
+    fig.update_layout(
+        template="plotly_dark", height=height, margin=dict(t=top_px, l=110, r=30, b=60),
+        title=dict(text=f"Controls — score ECDFs per bait fragment (rows) and metric (columns)<br>"
+                        f"<sup>AUC = preys vs decoys per fragment pair; hits: BH q ≤ {alpha:g} on conformal p "
+                        "against the decoys</sup>", y=1 - 20 / height, yanchor="top"),
+        legend=dict(orientation="h", x=0, xanchor="left", y=1 + 32 / (height - top_px - 60), yanchor="bottom"))
     hit_cols = [f"{m}_hit" for m in metrics]
     hits = g[g[hit_cols].fillna(False).any(axis=1)].copy()
     show = ["bait_spec", "prey"] + [c for m in metrics for c in (m, f"{m}_q")]
@@ -243,7 +389,20 @@ def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, metric
         "</style><h3 style='margin-left:24px'>Known partners recovered (any of their pairs a hit)</h3>"
         + (recall.round(3).to_html(index=False, border=0, classes="t") if not recall.empty
            else "<p style='margin-left:24px'>no positive control in this run</p>")
-        + "<h3 style='margin-left:24px'>Per bait and metric</h3>"
+        + "<h3 style='margin-left:24px'>Known direct partners per bait (positives)</h3>"
+          "<p style='margin-left:24px;max-width:900px'>A known partner is a positive only for the "
+          "bait(s) it has direct evidence with. Coverage = fraction of the protein folded in this "
+          "run (1 = whole); <b>partial</b> pairs may bind through a region that was never folded, "
+          "so a miss there says little about the metric.</p>"
+        + (positives[[c for c in ("bait_uniprot", "prey_uniprot", "prey_name", "n_pairs", "bait_coverage",
+                                  "prey_coverage", "partial") if c in positives]]
+           .round(2).to_html(index=False, border=0, classes="t") if not positives.empty
+           else "<p style='margin-left:24px'>no positive control in this run</p>")
+        + "<h3 style='margin-left:24px'>Protein-level AUC per bait protein (best fragment pair; "
+          "_fair = Sidak-adjusted min p, the truth lies between _best and _fair)</h3>"
+        + (prot_auc.round(3).to_html(index=False, border=0, classes="t") if not prot_auc.empty
+           else "<p style='margin-left:24px'>no protein ids in the table</p>")
+        + "<h3 style='margin-left:24px'>Per bait (fragment) and metric</h3>"
         + summ.round(3).to_html(index=False, border=0, classes="t")
         + f"<h3 style='margin-left:24px'>Hits on any metric ({len(hits)})</h3>"
         + hits.to_html(index=False, border=0, classes="t") + "</body>"))
