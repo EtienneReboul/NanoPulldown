@@ -64,9 +64,9 @@ from lib_pipeline import (PAIRS_TABLE, REPO_ROOT, inputs_table_path, load_config
 from fetch_uniprot import fetch_metadata, fetch_sequence, parse_protein_spec  # noqa: E402
 from fragment_domains import (Fragment, fragment_config, load_overrides, prefetch_annotation,  # noqa: E402
                               protein_fragments, write_fragments_table)
-from resolve_inputs import Resolved, read_specs, resolve_inputs, write_inputs_table  # noqa: E402
+from resolve_inputs import Resolved, collapse_same_gene, read_specs, resolve_inputs, write_inputs_table  # noqa: E402
 from build_decoys import decoy_config, decoy_fragments  # noqa: E402
-from controls import add_positives, positives_config, screen_prey_fragments  # noqa: E402
+from controls import add_positives, loci_of, positives_config, screen_prey_fragments  # noqa: E402
 
 
 def slug(spec: str) -> str:
@@ -174,6 +174,14 @@ def prepare(cfg: dict, baits_file: str | None = None, preys_file: str | None = N
     partners = []
     if pcfg["enabled"] or (dcfg["enabled"] and dcfg["exclude_interactors"]):
         partners = add_positives(res, cfg, refresh=refresh)
+    # one spec per gene: several UniProt entries of one gene are folded once
+    accs = {parse_protein_spec(s).uniprot for r in ("bait", "prey") for s in res.specs[r]}
+    meta = fetch_metadata(sorted(accs), cfg)
+    locus = {a: str(m["locus"]).upper() for a, m in meta.items() if m.get("locus")}
+    collapsed = collapse_same_gene(res, locus, {pcfg["name"], dcfg["name"]},
+                                   {a: bool(m.get("reviewed")) for a, m in meta.items()})
+    if collapsed:
+        print(f"[expand_pairs] same gene, folded once: {', '.join(collapsed)}")
     n_pos = len({parse_protein_spec(s).uniprot for s in res.specs["prey"]}) - n_screen
     baits, preys = res.specs["bait"], res.specs["prey"]
     if not preys:
@@ -189,6 +197,8 @@ def prepare(cfg: dict, baits_file: str | None = None, preys_file: str | None = N
     if dcfg["enabled"]:
         exclude = ({parse_protein_spec(s).uniprot for s in baits + preys} | res.excluded["bait"]
                    | res.excluded["prey"] | {p["partner"] for p in partners})
+        # and their genes: another UniProt entry of an excluded gene is no decoy either
+        exclude |= {f"locus:{l}" for l in loci_of(exclude, cfg).values()}
         decoys = decoy_fragments(cfg, screen_prey_fragments(sides, res, cfg), sides["bait"], exclude,
                                  dcfg, rebuild=rebuild_decoys, dry_run=dry_run)
         for f in decoys:

@@ -72,6 +72,47 @@ class Resolved:
         rec.update(extra or {})
 
 
+def collapse_same_gene(res: Resolved, locus: dict[str, str], control_tags: set[str],
+                       reviewed: dict[str, bool] | None = None) -> list[str]:
+    """Keep ONE spec per gene and role: UniProt often has several entries for
+    one gene (Swiss-Prot canonical + TrEMBL gene models), and folding each would
+    fold the gene twice. Specs only collapse when they ask for the same thing
+    (copies and regions). Kept: a spec some non-control source selected, then a
+    reviewed entry, then the first listed. Its provenance gets the dropped
+    entries' sources and columns (`alias_accessions` lists them). Returns
+    "dropped->kept (locus)" strings."""
+    reviewed = reviewed or {}
+    notes = []
+    for role in ("bait", "prey"):
+        groups: dict[tuple, list[str]] = {}
+        for spec in res.specs[role]:
+            ps = parse_protein_spec(spec)
+            if ps.uniprot in locus:
+                groups.setdefault((locus[ps.uniprot], ps.copies, str(ps.regions)), []).append(spec)
+        for (loc, _, _), specs in groups.items():
+            if len(specs) < 2:
+                continue
+            def rank(spec: str) -> tuple:
+                acc = parse_protein_spec(spec).uniprot
+                srcs = set(res.provenance.get((acc, role), {}).get("sources", []))
+                return (not (srcs - control_tags), not reviewed.get(acc, False), res.specs[role].index(spec))
+            keep, *drop = sorted(specs, key=rank)
+            kacc = parse_protein_spec(keep).uniprot
+            krec = res.provenance.setdefault((kacc, role), {"sources": []})
+            for spec in drop:
+                acc = parse_protein_spec(spec).uniprot
+                rec = res.provenance.pop((acc, role), {"sources": []})
+                for src in rec.pop("sources", []):
+                    if src not in krec["sources"]:
+                        krec["sources"].append(src)
+                for k, v in rec.items():
+                    krec.setdefault(k, v)
+                krec["alias_accessions"] = ";".join(filter(None, [krec.get("alias_accessions", ""), acc]))
+                res.specs[role].remove(spec)
+                notes.append(f"{acc}->{kacc} ({loc})")
+    return notes
+
+
 def read_specs(path: Path) -> list[str]:
     """AlphaPulldown-style list file: one spec per line, `#` comments and blank lines ignored."""
     if not path.exists():

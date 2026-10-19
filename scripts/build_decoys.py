@@ -199,6 +199,7 @@ def select_decoys(cfg: dict, dcfg: dict, ref: pd.DataFrame, bait_len: int,
 
     query = pool_query(dcfg)
     pool = [acc for acc in run_query(f"decoy_pool_{run}", query, cfg) if acc not in exclude]
+    pool = _drop_excluded_genes(pool, exclude, cfg)
     rng.shuffle(pool)
     print(f"[build_decoys] pool: {len(pool)} protein(s) after exclusions\n  query: {query}")
 
@@ -323,6 +324,17 @@ def write_decoys(dec: pd.DataFrame, cfg: dict, dcfg: dict, query: str, meta: dic
     return dec
 
 
+def _drop_excluded_genes(accs: list[str], exclude: set[str], cfg: dict) -> list[str]:
+    """Drop accessions whose gene locus is excluded (`exclude` holds
+    "locus:<AGI>" entries next to accessions): another UniProt entry of a
+    screen protein or known partner is no decoy."""
+    loci = {e[6:] for e in exclude if e.startswith("locus:")}
+    if not loci or not accs:
+        return accs
+    md = fetch_metadata(accs, cfg)
+    return [a for a in accs if str((md.get(a) or {}).get("locus") or "").upper() not in loci]
+
+
 def _digest(ref: pd.DataFrame) -> str:
     return hashlib.sha1("\n".join(sorted(ref.spec)).encode()).hexdigest()[:12]
 
@@ -351,6 +363,12 @@ def decoy_fragments(cfg: dict, ref_frags: list[Fragment], bait_frags: list[Fragm
             print(f"[build_decoys] the run's preys changed since its {len(dec)} decoys were drawn; "
                   "keeping them (their folds stay valid). Redraw with build_decoys.py / "
                   "expand_pairs.py --rebuild-decoys", file=sys.stderr)
+        keep = set(_drop_excluded_genes(sorted(set(dec.accession)), exclude, cfg))
+        if len(keep) < dec.accession.nunique():
+            gone = sorted(set(dec.accession) - keep)
+            print(f"[build_decoys] dropping {len(gone)} stored decoy protein(s) whose gene is a screen "
+                  f"protein or a known partner: {', '.join(gone)}", file=sys.stderr)
+            dec = dec[dec.accession.isin(keep)]
         print(f"[build_decoys] reusing {len(dec)} decoy(s) from {out_prov}")
     else:
         if stored and not rebuild:
