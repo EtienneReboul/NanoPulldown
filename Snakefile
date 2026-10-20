@@ -50,7 +50,7 @@ Every step is a `nanopulldown` CLI command (src/nanopulldown/, run as
 
 Usage (one command, both stages):
   snakemake --use-conda --cores 4
-On the IFB SLURM cluster (CUDA folding, apptainer images; README "Running on
+On the IFB SLURM cluster (CUDA folding, same conda envs; README "Running on
 the IFB cluster"):
   snakemake --profile profiles/ifb
 """
@@ -62,7 +62,7 @@ from pathlib import Path
 REPO = Path(workflow.basedir)
 sys.path.insert(0, str(REPO / "src"))
 from nanopulldown.core.config import load_config  # noqa: E402
-from nanopulldown.core.containers import run_command, runtime, sif_path  # noqa: E402
+from nanopulldown.core.containers import run_command  # noqa: E402
 from nanopulldown.core.fold_table import samples_per_pair  # noqa: E402
 from nanopulldown.core.proteins import label_digest, load_proteins, pair_labels, protein_name  # noqa: E402
 from nanopulldown.core.specs import (inputs_table_path, load_pairs, pair_tokens,  # noqa: E402
@@ -84,19 +84,9 @@ DIRS = CFG["dirs"]
 EF = CFG["esmfold2"]
 MAX_TOKENS = int(EF.get("max_tokens", 0))
 
-# Software per rule. Each rule names its conda env (used with --use-conda /
-# --sdm conda, the Mac) AND an image (used with --sdm apptainer, the IFB
-# cluster: execution.container_runtime: apptainer). IMG() is None off
-# apptainer, so locally nothing changes. The images are those envs, prebuilt
-# (containers/Dockerfile, scripts/ifb/build_images.sh) -- one .sif inode each
-# instead of a ~20-50k-file conda env on the cluster's inode-capped storage.
-APPTAINER = runtime(CFG) == "apptainer"
-
-
-def IMG(env):
-    return str(sif_path(CFG, f"nanopulldown-{env}")) if APPTAINER else None
-
-
+# Software: every rule env is a conda env (envs/*.yaml, --use-conda) on the
+# Mac AND on the IFB cluster; only the fold env differs by machine (MLX vs CUDA).
+# Third-party tool images (PLIP, AIUPred) run via execution.container_runtime.
 FOLD_BACKEND = EF.get("backend", "mlx")
 ESMFOLD_ENV = "esmfold2_cuda" if FOLD_BACKEND == "torch" else "esmfold2"
 
@@ -285,8 +275,6 @@ rule annotate_domains_batch:
         str(PRE_LOG / "annotate_domains_batch.log"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     priority: 50
     params:
         pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
@@ -303,8 +291,6 @@ rule annotate_disorder_batch:
         str(PRE_LOG / "annotate_disorder_batch.log"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     priority: 50
     params:
         pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
@@ -330,8 +316,6 @@ rule merge_annotation:
         str(PRE_LOG / "merge_annotation" / "{pair}.log"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
@@ -355,8 +339,6 @@ rule fig_domain_bar:
                    "pairs": str(len(DOMAIN_PROTEINS[wc.protein]["pairs"]))}),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         theme=FIG_THEME,
         fmts=",".join(CFG["report"]["figure_formats"]),
@@ -431,8 +413,6 @@ if PAIRS_PER_LOAD <= 0:
             str(FOLD_LOG / "run_esmfold2" / "{pair}.log"),
         conda:
             f"envs/{ESMFOLD_ENV}.yaml"
-        container:
-            IMG(ESMFOLD_ENV)
         resources:
             # gpu=1 caps run_esmfold2 at one concurrent job -- REQUIRED, not a
             # hint: the -Fast checkpoint loads ~25GB into Apple Silicon's shared
@@ -488,8 +468,6 @@ else:
                 str(FOLD_LOG / "run_esmfold2" / f"chunk_{_k:03d}.log"),
             conda:
                 f"envs/{ESMFOLD_ENV}.yaml"
-            container:
-                IMG(ESMFOLD_ENV)
             resources:
                 # same single-model-at-a-time guard as the per-pair rule above
                 gpu=1,
@@ -520,8 +498,6 @@ rule compute_metrics:
         str(FOLD_LOG / "compute_metrics" / "{pair}.log"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         enabled=",".join(MET["enabled"]),
         pae=MET["pae_cutoff"], cb=MET["contact_cutoff_cb"], pairs=MET["pairs"],
@@ -550,8 +526,6 @@ rule minimize_cif:
         str(FOLD_LOG / "minimize" / "{pair}" / "sample_{sample}.log"),
     conda:
         "envs/minimize.yaml"
-    container:
-        IMG("minimize")
     resources:
         # Shares config.yaml's docker_heavy pool with run_esmfold2/run_plip
         # -- see run_esmfold2's resources: comment.
@@ -638,9 +612,7 @@ rule plip_parse:
         bait_color=CXC["bait_color"], prey_color=CXC["prey_color"],
         transparency=CXC["transparency"],
     conda:
-        "envs/pliparser.yaml"
-    container:
-        IMG("pliparser")
+        "envs/analysis.yaml"
     log:
         str(FOLD_LOG / "pliparser" / "{pair}" / "sample_{sample}.log"),
     shell:
@@ -665,8 +637,6 @@ rule aggregate_plip:
         str(POST / "{pair}" / "plip_contacts.parquet"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     log:
         str(FOLD_LOG / "aggregate_plip" / "{pair}.log"),
     shell:
@@ -684,8 +654,6 @@ rule fig_plip_contacts:
                category="PLIP contacts", subcategory=bait_subcategory, labels=pair_report_labels),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         theme=FIG_THEME,
         fmts=FMTS,
@@ -711,8 +679,6 @@ rule fig_domain_heatmap:
                labels=pair_report_labels),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         theme=FIG_THEME,
         pae=MET["pae_cutoff"], fmts=FMTS,
@@ -736,8 +702,6 @@ rule fig_minimize_energy:
         table=str(FOLD_REP / "{pair}" / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         theme=FIG_THEME,
         n=N_SAMPLES, maxe=MZ["max_abs_energy"], fmts=FMTS,
@@ -760,8 +724,6 @@ rule count_clashes:
         str(POST / "{pair}" / "clashes.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         n=N_SAMPLES, cutoff=CL["overlap_cutoff"], hb=CL["hbond_allowance"],
         sep=CL["bond_separation"],
@@ -783,8 +745,6 @@ rule fig_clash_test:
         counts=str(FOLD_REP / "clash_counts.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         alt=CL["alternative"],
     shell:
@@ -803,8 +763,6 @@ rule collect_results_table:
         str(FOLD_REP / "results_table.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         pairs=" ".join(PAIRS),
         inputs=str(INPUTS_TABLE),
@@ -824,8 +782,6 @@ rule fig_metric_violins_interactive:
         directory(str(FOLD_REP / "metric_violins_interactive")),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     shell:
         r"""
         {NP} plot violins --table {input[0]} --outdir {output[0]}
@@ -848,8 +804,6 @@ rule fig_plip_type_violins:
         directory(str(FOLD_REP / "plip_type_violins")),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         cols=" ".join(PLIP_TYPE_COLS),
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
@@ -871,8 +825,6 @@ rule decoy_calibration:
         directory(str(FOLD_REP / "decoy_calibration")),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     log:
         str(FOLD_LOG / "decoy_calibration.log"),
     params:
@@ -892,8 +844,6 @@ rule collect_minimize_failures:
         str(FOLD_REP / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         labels=hashlib.sha1(" ".join(LABEL_KEY[p] for p in PAIRS).encode()).hexdigest()[:12],
     shell:
@@ -919,8 +869,6 @@ rule bait_tables:
         failures=str(BY_BAIT / "{bait}" / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     shell:
         r"""
         {NP} table by-bait --bait {wildcards.bait} --tables {input.results} {input.failures} \
@@ -937,8 +885,6 @@ rule fig_metric_violins_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         title=lambda wc: f"Metric distributions — {BAIT_LABEL[wc.bait]} (all pairs, samples, chain pairs)",
     shell:
@@ -956,8 +902,6 @@ rule fig_plip_type_violins_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         cols=" ".join(PLIP_TYPE_COLS),
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
@@ -982,8 +926,6 @@ rule fig_clash_test_bait:
         counts=str(BY_BAIT / "{bait}" / "clash_counts.csv"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     params:
         alt=CL["alternative"],
     shell:
@@ -1004,8 +946,6 @@ rule decoy_calibration_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     log:
         str(FOLD_LOG / "decoy_calibration" / "{bait}.log"),
     params:
@@ -1032,8 +972,6 @@ rule datavzrd_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     log:
         str(FOLD_LOG / "datavzrd" / "{bait}.log"),
     shell:
@@ -1054,8 +992,6 @@ rule datavzrd_folding:
         directory(str(FOLD_REP / "tables")),
     conda:
         "envs/analysis.yaml"
-    container:
-        IMG("analysis")
     log:
         str(FOLD_LOG / "datavzrd.log"),
     shell:

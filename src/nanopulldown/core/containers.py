@@ -10,10 +10,8 @@ two tools that ship as container images (PLIP, AIUPred), under config.yaml's
              (no docker daemon there). `apptainer run` executes the image's
              ENTRYPOINT with the arguments, like `docker run` does.
 
-AIUPred is the exception on apptainer: its caller (annotate disorder) already
-runs inside the analysis image, which is built FROM the AIUPred image
-(containers/Dockerfile), so AIUPred is called directly, not nested --
-see aiupred_command().
+The rule envs themselves are conda envs on both machines; only these
+third-party images go through here.
 
 Stdlib only.
 """
@@ -27,7 +25,7 @@ def runtime(cfg: dict) -> str:
 
 
 def sif_path(cfg: dict, name: str) -> Path:
-    """<images_dir>/<name>.sif -- names as scripts/ifb/build_images.sh writes them."""
+    """<images_dir>/<name>.sif -- as scripts/ifb/setup.sh pulls them."""
     images_dir = (cfg.get("execution") or {}).get("images_dir") or ""
     if not images_dir:
         raise ValueError("execution.images_dir is not set (needed with container_runtime: apptainer)")
@@ -69,24 +67,15 @@ def run_command(cfg: dict, *, image: str, sif: str, args: list[str],
     return cmd + [image] + args
 
 
-# The AIUPred image's own interpreter and package dir (ghcr.io/doszilab/aiupred,
-# Debian, python 3.11; WORKDIR /opt/aiupred). The analysis image keeps them
-# intact underneath its micromamba env.
-AIUPRED_PYTHON = "/usr/local/bin/python3"
-AIUPRED_DIR = "/opt/aiupred"
-
-
 def aiupred_command(cfg: dict, acfg: dict, workdir: Path, aiupred_args: list[str]) -> tuple[list[str], dict]:
     """(argv, subprocess kwargs) running `python3 -m aiupred.cli <aiupred_args>`
-    with `workdir` (host) visible as /work. On apptainer it runs directly:
-    we are already inside the analysis image, so /work is just `workdir`."""
+    in the AIUPred image, with `workdir` (host) mounted at /work. The image
+    sets no ENTRYPOINT and runs from WORKDIR /opt/aiupred, hence the explicit
+    interpreter (and, on apptainer, --pwd: it starts in the host cwd)."""
     gpu = bool(acfg.get("use_gpu"))
-    if runtime(cfg) == "apptainer":
-        args = [a.replace("/work", str(workdir)) for a in aiupred_args]
-        env = {"PYTHONPATH": AIUPRED_DIR, "PATH": "/usr/local/bin:/usr/bin:/bin"}
-        return [AIUPRED_PYTHON, "-m", "aiupred.cli", *args], {"cwd": AIUPRED_DIR, "env": env}
     image = acfg["image_gpu"] if gpu else acfg["image_cpu"]
-    cmd = run_command(cfg, image=image, sif="", args=["-m", "aiupred.cli", *aiupred_args],
-                      mounts={str(workdir): "/work"}, platform=acfg.get("docker_platform", ""),
-                      gpu=gpu, entrypoint="python3")
-    return cmd, {}
+    sif = "aiupred_gpu" if gpu else "aiupred"
+    return run_command(cfg, image=image, sif=sif, args=["-m", "aiupred.cli", *aiupred_args],
+                       mounts={str(workdir): "/work"}, platform=acfg.get("docker_platform", ""),
+                       gpu=gpu, entrypoint="python3",
+                       workdir="/opt/aiupred" if runtime(cfg) == "apptainer" else None), {}

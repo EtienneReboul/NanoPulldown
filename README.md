@@ -150,14 +150,17 @@ What differs from the Mac:
 
 | Aspect | Mac | IFB |
 | --- | --- | --- |
-| fold backend | MLX (`esmfold2.backend: mlx`) | torch on CUDA (`torch`, [envs/esmfold2_cuda.yaml](envs/esmfold2_cuda.yaml)) |
-| rule software | conda envs (`--use-conda`) | one Apptainer image per env (`--sdm apptainer`) |
-| PLIP / AIUPred | `docker run` | `apptainer run plip.sif` / AIUPred inside the analysis image |
+| fold backend | MLX (`esmfold2.backend: mlx`, [envs/esmfold2.yaml](envs/esmfold2.yaml)) | torch on CUDA (`torch`, [envs/esmfold2_cuda.yaml](envs/esmfold2_cuda.yaml)) |
+| rule software | conda envs (`--use-conda`) | the same conda envs, built once by `setup.sh` |
+| PLIP / AIUPred images | `docker run` | `apptainer run plip.sif` / `aiupred.sif` (no docker daemon) |
 | scheduling | `--resources gpu=1 docker_heavy=N` | [profiles/ifb](profiles/ifb/config.yaml): SLURM, up to 8 GPU jobs |
 
-Images instead of conda envs because `/shared/projects/npf_abinitio` is capped
-at 500k inodes and sits near it (443k on 2026-10-19). A conda env is 20-50k
-files, while a `.sif` is one; a full project fails **every** write in it.
+**Inode quota.** `/shared/projects/npf_abinitio` is capped at 500k inodes,
+and a full project fails **every** write in it. Measured on Linux builds of
+these env files, the rule envs take ~146k (analysis 48k incl. pliparser,
+esmfold2_cuda 74k, minimize 24k), and a pair at 5 samples ~120 more (results,
+fold cache, logs, figures, Snakemake metadata). Check the headroom first:
+`getfattr --only-values -n ceph.dir.rentries /shared/projects/npf_abinitio`.
 
 Fold jobs pick their GPU from config.yaml's `hpc.gpu_classes`, by the chunk's
 largest pair: an L40S up to 1200 tokens, else an H200 (nodes 7 and 9
@@ -166,26 +169,26 @@ excluded). Their walltime is estimated from the Mac timings. CPU jobs go to
 
 ### One-time IFB setup
 
-1. On the Mac (when no run is using Docker): `scripts/ifb/build_images.sh`
-   builds the four env images (linux/amd64, slow under emulation) into
-   `build/images/*.tar`.
-2. Copy them to `/shared/projects/npf_abinitio/nanopulldown_images/tar/`, and
-   the checkout to the cluster.
-3. On the login node: `scripts/ifb/setup.sh`. It converts the tarballs to
-   `.sif` (unpacking in local `/tmp`, not on the project), pulls `plip.sif`,
-   and downloads the ESMFold2-Fast weights and `ccd.pkl` into
-   `/shared/projects/npf_abinitio/hf_cache`, so the GPU nodes run offline.
-4. `cp config.ifb.yaml.example config.local.yaml`, and add the Mac
+1. Copy the checkout to the cluster, and `configs/pairs.parquet` (not tracked).
+2. `cp config.ifb.yaml.example config.local.yaml`, and add the Mac
    config.local.yaml's `annotate:` block.
+3. As a SLURM job, not on the shared login node (the command is in the
+   script's header): `scripts/ifb/setup.sh`. It pulls `plip.sif` and
+   `aiupred.sif`, builds the conda envs with `snakemake --conda-create-envs-only`
+   (conda's package cache in node-local scratch, not on the project; it
+   refuses to start without ~170k free inodes), and downloads the
+   ESMFold2-Fast weights and `ccd.pkl` into
+   `/shared/projects/npf_abinitio/hf_cache`, so the GPU nodes run offline.
 
 ### Launching on IFB
 
 From the checkout on the login node, inside `tmux`/`screen`. The
 controller is the existing `abcfold-npf-pipeline` env (snakemake 9.24, SLURM
-plugin 2.7.1, pyarrow), so no new env is needed:
+plugin 2.7.1, pyarrow); it has no `conda`, so IFB's system one goes on PATH
+after it:
 
 ```bash
-export PATH=/shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline/bin:$PATH
+export PATH=/shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline/bin:$PATH:/shared/software/miniconda_deployment/bin
 NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
 ```
 
@@ -334,7 +337,7 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --reso
 | `configs/curated_domains.yaml`             | hand-curated domain maps, by pair (tracked)                                                      |
 | `configs/fragment_domains.yaml`            | fragment mode: hand-picked domain fragments, by accession (tracked)                              |
 | `configs/fragments_<run>.parquet`          | fragment mode: every bait/prey fragment a run pairs (generated)                                  |
-| `envs/`                                    | `analysis` (annotation, metrics, figures, tables), `esmfold2`, `minimize`, `pliparser`; built by `--use-conda` |
+| `envs/`                                    | `analysis` (annotation, metrics, pliparser, figures, tables), `esmfold2` (MLX) / `esmfold2_cuda` (IFB), `minimize`; built by `--use-conda` |
 | `src/nanopulldown/`                        | the package + `nanopulldown` CLI every rule calls (see "Code layout" below)                       |
 | `scripts/legacy/`                          | one-off migrations and comparisons, not part of the pipeline                                     |
 | `cookiecutter/`                            | project template: `cookiecutter cookiecutter/` starts a new screen                               |
@@ -359,7 +362,7 @@ downward, and each layer adds as few dependencies as it can:
 | `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
 | `fold`         | ESMFold2-Fast (MLX), single pair or one model load per chunk                | esm, mlx, numpy               |
 | `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc)    | openmm / gemmi, scipy, numpy  |
-| `plip`         | pliparser's cxc config, per-pair contact table (the docker PLIP run and the pliparser calls stay shell in the Snakefile) | none / pandas |
+| `plip`         | pliparser's cxc config, per-pair contact table (the PLIP image run and the pliparser calls stay shell in the Snakefile) | none / pandas |
 | `report`       | figures (`report.plots`), tables, decoy calibration, datavzrd + report zip  | matplotlib, plotly, pandas    |
 
 ```bash

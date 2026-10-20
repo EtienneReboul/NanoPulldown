@@ -1,8 +1,16 @@
-# Run overlay: the full-length BPM6 (A1L4W5) screen -- config.yaml's own
-# `pairs:` list, dirs results/ reports/ logs/ as before -- rerun with the
-# token limit raised to 1200 (+122 pairs; 193 stay over it).
+# Run overlay: the full-length BPM6 (A1L4W5) screen -- configs/baits.txt x
+# configs/preys.txt, dirs results/ reports/ logs/ as before (so every pair
+# already folded there is reused) -- with the token limit raised to 1200 and
+# the controls of config.yaml `controls:` (the baits' known direct partners
+# as positives, a matched decoy set as negatives).
 # Usage:
+#   nanopulldown --run-config config_bpm6_full.yaml inputs expand
 #   NANOPULLDOWN_RUN_CONFIG=config_bpm6_full.yaml snakemake ...
+
+run_name: "bpm6_full"          # configs/inputs_bpm6_full.parquet, decoys_bpm6_full, ...
+
+# written by `inputs expand`; replaces config.yaml's inline `pairs:` list
+pairs_file: configs/pairs_bpm6_full.txt
 
 esmfold2:
   max_tokens: 1200   # run-specific bump (config.yaml: 1050), as the q9m548/drm2/dne1 runs; swapping is accepted

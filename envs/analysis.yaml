@@ -1,15 +1,16 @@
 name: nanopulldown-analysis
 # Everything light the pipeline runs (one env instead of four):
 #   annotate  -- domains (ScanProsite + InterProScan v6 MATCH API) and
-#                disorder + binding/MoRF (AIUPred, via docker -- the `docker`
-#                CLI must be on PATH and the daemon running; nothing
+#                disorder + binding/MoRF (AIUPred's image, via docker on the Mac /
+#                apptainer on IFB -- execution.container_runtime; nothing
 #                AIUPred-specific installs here)
 #   metrics   -- PAE-based interface metrics (vendored ipSAE / Pinc under
 #                src/nanopulldown/structure/vendor/), steric clash counting
+#   plip      -- pliparser (PLIP report -> contact CSVs -> ChimeraX .cxc)
 #   report    -- figures (matplotlib, plotly), tables, decoy calibration, and
 #                the interactive datavzrd table bundle embedded in the report
-# The heavy stages keep their own envs: esmfold2.yaml (MLX), minimize.yaml
-# (OpenMM), pliparser.yaml (pip-pinned pliparser).
+# The heavy stages keep their own envs: esmfold2.yaml (MLX) / esmfold2_cuda.yaml
+# (CUDA, IFB) and minimize.yaml (OpenMM).
 channels:
   - conda-forge
   - bioconda
@@ -26,3 +27,6 @@ dependencies:
   - matplotlib>=3.8
   - plotly>=5.18
   - datavzrd>=2.36
+  - pip
+  - pip:
+      - python-pliparser==1.0.0   # no dependencies; was its own env (envs/pliparser.yaml)

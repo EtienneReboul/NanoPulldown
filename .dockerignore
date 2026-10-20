@@ -1,4 +1,0 @@
-# docker build context = repo root; the image recipes only need these
-*
-!envs/
-!containers/

@@ -1,6 +1,8 @@
 # Snakemake profile for the IFB Core Cluster (SLURM). From the checkout on the
-# login node, with config.local.yaml copied from config.ifb.yaml.example:
+# login node, with config.local.yaml copied from config.ifb.yaml.example and
+# the envs built by scripts/ifb/setup.sh:
 #
+#   export PATH=/shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline/bin:$PATH:/shared/software/miniconda_deployment/bin
 #   NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
 #
 # Fold jobs (run_esmfold2_chunk_NNN, one per esmfold2.pairs_per_load pairs)
@@ -9,8 +11,7 @@
 # known at parse time, so they can't be listed under set-resources here.
 # Everything else is a CPU job on `fast`, sized below.
 executor: slurm
-software-deployment-method: apptainer   # images from execution.images_dir, no conda env built
-apptainer-args: "--nv --bind /shared"    # --nv: the fold jobs' GPU (a no-op warning on CPU nodes)
+software-deployment-method: conda   # the same envs/*.yaml as on the Mac, prebuilt by scripts/ifb/setup.sh
 jobs: 100                    # max SLURM jobs queued/running at once
 latency-wait: 90             # CephFS lag before a job's outputs are visible
 retries: 1

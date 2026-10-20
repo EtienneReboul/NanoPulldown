@@ -3,10 +3,8 @@ name: nanopulldown-esmfold2-cuda
 # L40S / H200 GPUs. Same `esm` as envs/esmfold2.yaml (the featurizer/builder
 # AND, here, the model itself: esm.models.esmfold2.EsmFold2Model), no mlx.
 # torch comes from the cu128 wheel index: CUDA 12.8 runtime inside the wheel,
-# so only the node's driver is needed (apptainer --nv), no CUDA module.
-#
-# On IFB this env is not built by --use-conda (inode quota): it is baked into
-# nanopulldown-esmfold2_cuda.sif by scripts/ifb/build_images.sh.
+# so only the GPU node's driver is needed, no CUDA module. Built by --use-conda
+# like every rule env (on IFB once, by scripts/ifb/setup.sh: ~74k files).
 channels:
   - conda-forge
   - nodefaults

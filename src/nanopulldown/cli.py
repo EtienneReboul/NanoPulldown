@@ -4,7 +4,7 @@ nanopulldown.cli
 `nanopulldown <group> <command> [args]` (or `python -m nanopulldown ...`).
 
 Stdlib only, and nothing below a command is imported until that command
-runs: every per-rule conda env (the pliparser env has nothing but python)
+runs: every per-rule conda env (minimize has no plotting stack, for one)
 can load the dispatcher, and each command pulls in only its own deps. A
 command is a module-level `main()` that parses `sys.argv[1:]` itself, so the
 modules also stay runnable on their own.

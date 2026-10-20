@@ -1,50 +1,81 @@
 #!/usr/bin/env bash
-# One-time (and after an env change) setup on the IFB login node, from the
-# checkout:   scripts/ifb/setup.sh
+# One-time (and after an env change) setup on the IFB cluster. Heavy (conda
+# solves + ~150k files), so run it as a SLURM job, NOT on the login node. From
+# the checkout, with config.local.yaml copied from config.ifb.yaml.example:
 #
-#  1. <images>/tar/nanopulldown-<env>.tar (scripts/ifb/build_images.sh, copied
-#     from the Mac) -> <images>/nanopulldown-<env>.sif
-#  2. <images>/plip.sif from docker://pharmai/plip
-#  3. ESMFold2-Fast weights + ccd.pkl into $HF_HOME, so GPU jobs run offline
-#     (esmfold2.hf_home, HF_HUB_OFFLINE=1)
+#   sbatch --account=npf_abinitio --partition=fast --cpus-per-task=8 --mem=32G \
+#     --time=03:00:00 --output=ifb_tests/logs/setup.log scripts/ifb/setup.sh
 #
-# Inodes: /shared/projects/npf_abinitio is capped at 500k files and already
-# near it -- a full project blocks EVERY write. So everything that unpacks
-# (apptainer's layer extraction, its cache) goes to the login node's local
-# /tmp; only the finished .sif files (one inode each) and the HF cache
-# (~15 files) land on project storage.
+#   scripts/ifb/setup.sh [images] [envs] [weights]    # default: all three
+#
+#  images   <images_dir>/plip.sif and aiupred.sif, pulled from their docker images
+#           (IFB has no docker daemon; one inode each)
+#  envs     the rule conda envs, built by Snakemake from envs/*.yaml into
+#           .snakemake/conda/ (--conda-create-envs-only) -- the same env files as
+#           on the Mac; the fold env is envs/esmfold2_cuda.yaml (esmfold2.backend: torch)
+#  weights  ESMFold2-Fast weights + ccd.pkl into $HF_HOME, so GPU jobs run offline
+#
+# Inodes: /shared/projects/npf_abinitio is capped at 500k files and a full
+# project fails EVERY write in it. The envs are ~146k files (measured from
+# Linux builds of the same env files), so `envs` refuses to start below
+# MIN_FREE_INODES free. conda's package cache goes to node-local scratch, not to
+# ~/.condarc's pkgs_dirs on the project (it would double the count).
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/../..}"
 
-IMAGES=${IMAGES:-/shared/projects/npf_abinitio/nanopulldown_images}
-HF_HOME=${HF_HOME:-/shared/projects/npf_abinitio/hf_cache}
-SCRATCH=$(mktemp -d /tmp/nanopulldown_setup.XXXXXX)
+STEPS=("$@")
+[ ${#STEPS[@]} -gt 0 ] || STEPS=(images envs weights)
+want() { [[ " ${STEPS[*]} " == *" $1 "* ]]; }
+
+PROJECT=/shared/projects/npf_abinitio
+IMAGES=${IMAGES:-$PROJECT/nanopulldown_images}
+HF_HOME=${HF_HOME:-$PROJECT/hf_cache}
+MIN_FREE_INODES=${MIN_FREE_INODES:-170000}   # ~146k envs + margin
+CONTROLLER=$PROJECT/conda/envs/abcfold-npf-pipeline/bin   # snakemake 9 + slurm plugin
+CONDA_BIN=/shared/software/miniconda_deployment/bin       # `conda` itself (the controller has none)
+export PATH=$CONTROLLER:$PATH:$CONDA_BIN
+
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/nanopulldown_setup.XXXXXX")
 trap 'rm -rf "$SCRATCH"' EXIT
-export APPTAINER_TMPDIR=$SCRATCH/tmp APPTAINER_CACHEDIR=$SCRATCH/cache
-mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR" "$IMAGES" "$HF_HOME"
+export APPTAINER_TMPDIR=$SCRATCH/tmp APPTAINER_CACHEDIR=$SCRATCH/cache CONDA_PKGS_DIRS=$SCRATCH/pkgs
+mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR" "$CONDA_PKGS_DIRS" "$IMAGES" "$HF_HOME"
 
-echo "project inodes before: $(getfattr --only-values -n ceph.dir.rentries /shared/projects/npf_abinitio 2>/dev/null) / 500000"
+inodes() { getfattr --only-values -n ceph.dir.rentries "$PROJECT" 2>/dev/null; }
+echo "host $(hostname), ${SLURM_CPUS_PER_TASK:-?} cpus, steps: ${STEPS[*]}; scratch $SCRATCH"
+echo "project inodes before: $(inodes) / 500000"
 
-# 1. rule-env images (rebuilt only when the tarball is newer than the .sif)
-for tar in "$IMAGES"/tar/nanopulldown-*.tar; do
-  [ -e "$tar" ] || { echo "no tarballs in $IMAGES/tar -- run scripts/ifb/build_images.sh on the Mac first" >&2; exit 1; }
-  sif="$IMAGES/$(basename "$tar" .tar).sif"
-  if [ ! -e "$sif" ] || [ "$tar" -nt "$sif" ]; then
-    echo "== $sif"
-    apptainer build --force "$sif" "docker-archive://$tar"
+pull() {  # name, docker ref -- written under a temporary name, so a killed pull leaves no truncated .sif
+  [ -e "$IMAGES/$1.sif" ] && return 0
+  apptainer pull "$IMAGES/$1.sif.partial" "docker://$2"
+  mv "$IMAGES/$1.sif.partial" "$IMAGES/$1.sif"
+}
+if want images; then
+  pull plip pharmai/plip:latest
+  pull aiupred ghcr.io/doszilab/aiupred:cpu
+fi
+
+if want envs; then
+  free=$((500000 - $(inodes)))
+  if [ "$free" -lt "$MIN_FREE_INODES" ]; then
+    echo "REFUSING to build the conda envs: $free inodes free < $MIN_FREE_INODES needed" >&2
+    exit 1
   fi
-done
+  snakemake --use-conda --conda-create-envs-only --cores "${SLURM_CPUS_PER_TASK:-4}"
+  echo "project inodes after envs: $(inodes) / 500000"
+fi
 
-# 2. PLIP
-[ -e "$IMAGES/plip.sif" ] || apptainer pull "$IMAGES/plip.sif" docker://pharmai/plip:latest
-
-# 3. weights, downloaded with the fold image's own huggingface_hub
-apptainer exec --cleanenv --env HF_HOME="$HF_HOME" --bind /shared \
-  "$IMAGES/nanopulldown-esmfold2_cuda.sif" python -c '
+# weights, downloaded with the fold env's own huggingface_hub
+if want weights; then
+  py=$(ls -d .snakemake/conda/*/ | while read -r d; do
+         [ -e "$d/lib/python3.12/site-packages/esm" ] && [ -e "$d/lib/python3.12/site-packages/torch" ] && echo "$d/bin/python"
+       done | head -1)
+  [ -n "$py" ] || { echo "no esmfold2_cuda env in .snakemake/conda -- run the envs step first" >&2; exit 1; }
+  HF_HOME=$HF_HOME "$py" -c '
 from huggingface_hub import hf_hub_download, snapshot_download
 print(snapshot_download("biohub/ESMFold2-Fast"))
 print(hf_hub_download("biohub/ESMFold2", "ccd.pkl"))   # read by ESMFold2InputBuilder()
 '
+fi
 
-echo "project inodes after:  $(getfattr --only-values -n ceph.dir.rentries /shared/projects/npf_abinitio 2>/dev/null) / 500000"
+echo "project inodes after:  $(inodes) / 500000"
 ls -lh "$IMAGES"/*.sif

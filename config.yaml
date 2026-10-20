@@ -1811,18 +1811,16 @@ plip:
 scheduling:
   docker_heavy_pool: 3
 
-# ── Execution: containers and the SLURM cluster (IFB) ───────────────────────
-# Defaults are the Mac's: docker for the PLIP / AIUPred images, conda envs via
-# --use-conda, everything local. On IFB, config.local.yaml (copied from
-# config.ifb.yaml.example) switches to apptainer + the profiles/ifb/ SLURM
-# profile -- see README "Running on the IFB cluster".
+# ── Execution: tool images and the SLURM cluster (IFB) ──────────────────────
+# Rule envs are conda envs (envs/*.yaml, --use-conda) on the Mac and on IFB.
+# Only the two third-party tools that ship as images, PLIP and AIUPred, go
+# through a container runtime: docker on the Mac, apptainer on IFB (no docker
+# daemon there). config.local.yaml on IFB (from config.ifb.yaml.example)
+# switches it -- see README "Running on the IFB cluster".
 execution:
-  container_runtime: "docker"     # docker | apptainer. apptainer: every conda rule also runs in
-                                   # <images_dir>/nanopulldown-<env>.sif (`--sdm apptainer`, no conda env
-                                   # is built -- one inode per image, the project's inode quota is tight),
-                                   # PLIP runs from <images_dir>/plip.sif, AIUPred from inside the analysis image
-  images_dir: ""                  # apptainer only: directory holding the .sif images (scripts/ifb/build_images.sh)
-  apptainer_args: "--bind /shared"   # PLIP's `apptainer run` (rule images get --apptainer-args from the profile)
+  container_runtime: "docker"     # docker | apptainer (<images_dir>/plip.sif, aiupred.sif)
+  images_dir: ""                  # apptainer only: where scripts/ifb/setup.sh pulls the .sif images
+  apptainer_args: "--bind /shared"
 
 # SLURM resources (snakemake-executor-plugin-slurm), used only when run with
 # --profile profiles/ifb. CPU rules take theirs from the profile; the fold

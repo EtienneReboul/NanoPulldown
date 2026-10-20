@@ -6,10 +6,10 @@
 
 execution:
   container_runtime: "apptainer"
-  images_dir: "/shared/projects/npf_abinitio/nanopulldown_images"   # scripts/ifb/setup.sh
+  images_dir: "/shared/projects/npf_abinitio/nanopulldown_images"   # plip.sif + aiupred.sif (scripts/ifb/setup.sh)
 
 esmfold2:
-  backend: "torch"                                   # CUDA, envs/esmfold2_cuda.yaml
+  backend: "torch"                                   # CUDA: the fold rule uses envs/esmfold2_cuda.yaml
   hf_home: "/shared/projects/npf_abinitio/hf_cache"  # pre-downloaded by scripts/ifb/setup.sh
   # The point of folding on IFB: 5 independent runs per pair at ESMFold2's
   # regular settings. Runs, not samples per run: lm_dropout acts in the trunk,
@@ -30,4 +30,4 @@ minimize:
 
 annotate:
   aiupred:
-    docker_platform: ""          # docker-only setting; AIUPred runs inside the analysis image here
+    docker_platform: ""          # docker-only setting (apptainer runs the amd64 image natively)
