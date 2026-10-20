@@ -1,0 +1,33 @@
+# IFB Core Cluster machine config. On the cluster, copy this file to
+# config.local.yaml (gitignored) in the checkout -- it is deep-merged over
+# config.yaml, under any run overlay (config_<run>.yaml). Also carry over the
+# Mac config.local.yaml's `annotate:` block (InterProScan email, rate limits).
+# See README "Running on the IFB cluster".
+
+execution:
+  container_runtime: "apptainer"
+  images_dir: "/shared/projects/npf_abinitio/nanopulldown_images"   # scripts/ifb/setup.sh
+
+esmfold2:
+  backend: "torch"                                   # CUDA, envs/esmfold2_cuda.yaml
+  hf_home: "/shared/projects/npf_abinitio/hf_cache"  # pre-downloaded by scripts/ifb/setup.sh
+  # The point of folding on IFB: 5 independent runs per pair at ESMFold2's
+  # regular settings. Runs, not samples per run: lm_dropout acts in the trunk,
+  # which all samples of one run share, and one sample per run keeps memory
+  # (and so the token limits below) the same as the Mac's 1-sample setup.
+  num_seeds: 5
+  num_diffusion_samples: 1
+  lm_dropout: 0.3              # esm's own default (the paper's folding eval) -- diversifies the 5 runs
+  num_loops: 20                # esm fold() / checkpoint default (config.yaml: 10)
+  num_sampling_steps: 200      # esm fold() default (config.yaml: 100)
+  max_tokens: 2000             # pairs up to 1200 tokens go to an L40S (48 GB), larger ones to an H200
+                               # (141 GB; ~86 GB at 2000 tokens by the Mac's n^2.2 memory fit -- untested on CUDA).
+                               # `nanopulldown inputs expand` skips pairs over this limit, so re-expand with it.
+  pairs_per_load: 20           # ~9x the Mac's per-pair work: keep a fold job to a few hours
+
+minimize:
+  platform_preference: ["CPU"]   # CPU nodes (no OpenCL); threads = the job's SLURM cpus_per_task
+
+annotate:
+  aiupred:
+    docker_platform: ""          # docker-only setting; AIUPred runs inside the analysis image here

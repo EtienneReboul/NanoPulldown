@@ -25,3 +25,5 @@ configs/*.yaml
 results_*/
 reports_*/
 logs_*/
+# scripts/ifb/build_images.sh output (image tarballs)
+build/

@@ -121,6 +121,10 @@ def results_main() -> int:
         inp["sources"] = inp["sources"].map(lambda v: ", ".join(v) if v is not None else "")
         inp = inp.rename(columns={"accession": "prey_uniprot", "sources": "prey_sources"})
         df = df.merge(inp, on="prey_uniprot", how="left")
+    if "prey_sources" not in df.columns:
+        # a run without an inputs table (expanded before they existed): the
+        # datavzrd view still expects the column
+        df["prey_sources"] = ""
     df.to_csv(out, index=False)
     print(f"[collect_results_table] {len(df)} row(s) across {len(a.pairs)} pair(s) -> {out}")
     return 0

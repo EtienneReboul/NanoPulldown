@@ -22,7 +22,7 @@ straight into folding.
       filed under Baits / Preys in the one report.zip (built after folding,
       below).
 
-  2. folding (Apple Silicon GPU via MLX/Metal)
+  2. folding (Apple Silicon GPU via MLX/Metal, or CUDA on the IFB cluster)
     ESMFold2-Fast folding (one seed, esmfold2.num_diffusion_samples
     diffusion samples, no MSA/templates) -> OpenMM minimization -> PAE-based
     rescoring (ipSAE/iLIS/Pinc) -> ONE report. Structures are stored gzipped
@@ -34,7 +34,7 @@ straight into folding.
                          results/<pair>/interface_metrics.parquet
       minimize_cif       OpenMM energy minimization -> minimized/sample_<i>.pdb.gz
                          + sample_<i>_energy.parquet, no ChimeraX / antechamber
-      run_plip           PLIP (docker) on each minimized sample, bait_chains
+      run_plip           PLIP (docker / apptainer) on each minimized sample, bait_chains
                          vs prey_chains -> per-sample TXT report (the
                          decompressed input and PLIP's protonated copy are
                          deleted afterwards)
@@ -50,6 +50,9 @@ Every step is a `nanopulldown` CLI command (src/nanopulldown/, run as
 
 Usage (one command, both stages):
   snakemake --use-conda --cores 4
+On the IFB SLURM cluster (CUDA folding, apptainer images; README "Running on
+the IFB cluster"):
+  snakemake --profile profiles/ifb
 """
 import hashlib
 import json
@@ -59,6 +62,8 @@ from pathlib import Path
 REPO = Path(workflow.basedir)
 sys.path.insert(0, str(REPO / "src"))
 from nanopulldown.core.config import load_config  # noqa: E402
+from nanopulldown.core.containers import run_command, runtime, sif_path  # noqa: E402
+from nanopulldown.core.fold_table import samples_per_pair  # noqa: E402
 from nanopulldown.core.proteins import label_digest, load_proteins, pair_labels, protein_name  # noqa: E402
 from nanopulldown.core.specs import (inputs_table_path, load_pairs, pair_tokens,  # noqa: E402
                                      protein_chains, spec_digest)
@@ -78,6 +83,22 @@ CFG = load_config(REPO)
 DIRS = CFG["dirs"]
 EF = CFG["esmfold2"]
 MAX_TOKENS = int(EF.get("max_tokens", 0))
+
+# Software per rule. Each rule names its conda env (used with --use-conda /
+# --sdm conda, the Mac) AND an image (used with --sdm apptainer, the IFB
+# cluster: execution.container_runtime: apptainer). IMG() is None off
+# apptainer, so locally nothing changes. The images are those envs, prebuilt
+# (containers/Dockerfile, scripts/ifb/build_images.sh) -- one .sif inode each
+# instead of a ~20-50k-file conda env on the cluster's inode-capped storage.
+APPTAINER = runtime(CFG) == "apptainer"
+
+
+def IMG(env):
+    return str(sif_path(CFG, f"nanopulldown-{env}")) if APPTAINER else None
+
+
+FOLD_BACKEND = EF.get("backend", "mlx")
+ESMFOLD_ENV = "esmfold2_cuda" if FOLD_BACKEND == "torch" else "esmfold2"
 
 # Specs come from configs/pairs.parquet (+ configs/curated_domains.yaml). A
 # pair is dropped (with a warning) when it isn't in the table -- inputs expand
@@ -191,7 +212,7 @@ BY_BAIT = FOLD_REP / "by_bait"
 BAIT_PAGES = (["metric_violins", "plip_type_violins", "clash_test"]
               + (["decoy_calibration"] if HAS_DECOYS else []) + (["tables"] if DATAVZRD else []))
 FMTS = ",".join(RPT["figure_formats"])
-N_SAMPLES = int(EF["num_diffusion_samples"])
+N_SAMPLES = samples_per_pair(EF)   # num_seeds x num_diffusion_samples
 SAMPLE_IDX = list(range(N_SAMPLES))
 
 
@@ -264,6 +285,8 @@ rule annotate_domains_batch:
         str(PRE_LOG / "annotate_domains_batch.log"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     priority: 50
     params:
         pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
@@ -280,6 +303,8 @@ rule annotate_disorder_batch:
         str(PRE_LOG / "annotate_disorder_batch.log"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     priority: 50
     params:
         pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
@@ -305,6 +330,8 @@ rule merge_annotation:
         str(PRE_LOG / "merge_annotation" / "{pair}.log"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
@@ -328,6 +355,8 @@ rule fig_domain_bar:
                    "pairs": str(len(DOMAIN_PROTEINS[wc.protein]["pairs"]))}),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         theme=FIG_THEME,
         fmts=",".join(CFG["report"]["figure_formats"]),
@@ -350,8 +379,8 @@ rule fig_domain_bar:
 # STAGE 2 — folding
 # ═══════════════════════════════════════════════════════════════════════════
 
-# All N diffusion samples are declared as outputs (N is static, from
-# esmfold2.num_diffusion_samples) so minimize_cif's per-sample input can wire
+# All N samples are declared as outputs (N is static: esmfold2.num_seeds x
+# num_diffusion_samples) so minimize_cif's per-sample input can wire
 # back to this rule. fold.parquet is written last, so it also marks the pair
 # as complete.
 # Fold granularity. pairs_per_load = 0: one process (and one ~25 GB model load,
@@ -361,6 +390,38 @@ rule fig_domain_bar:
 # PLIP, ...) only start once the whole chunk is done, so keep chunks to ~1-2 h.
 PAIRS_PER_LOAD = int(EF.get("pairs_per_load", 0))
 
+HPC = CFG.get("hpc") or {}
+# Shell-level globals, not params: a new param would mark every finished fold
+# outdated under the README's `--rerun-triggers mtime params input`.
+# Pre-downloaded weights (esmfold2.hf_home): the GPU nodes need no internet.
+FOLD_HF_ENV = f'HF_HOME="{EF["hf_home"]}" HF_HUB_OFFLINE=1 ' if EF.get("hf_home") else ""
+
+
+def fold_resources(pairs):
+    """SLURM resources of one fold job holding `pairs` (snakemake-executor-plugin-slurm
+    keys; the local executor ignores them). gpu=1 + gpu_model -> --gpus=<model>:1.
+    Walltime: the Mac per-fold fit t(n) = 2.6 s + 46.8 s * (n/600)^2.16 (5,768 folds
+    at 10 loops / 100 steps / 1 sample), scaled ~linearly by loops (trunk, ~90%)
+    and steps (diffusion) and by the number of runs, times hpc.fold_runtime_safety --
+    the Mac being the slower machine, this errs long."""
+    n = [pair_tokens(SPECS[p]) for p in pairs]
+    classes = HPC.get("gpu_classes") or [{}]
+    cls = next((c for c in classes if not c.get("max_tokens") or max(n) <= c["max_tokens"]), classes[-1])
+    scale = (0.9 * (int(EF["num_loops"]) + 1) / 11 + 0.1 * int(EF["num_sampling_steps"]) / 100) \
+        * int(EF.get("num_seeds", 1)) * (1 + 0.1 * (int(EF["num_diffusion_samples"]) - 1))
+    secs = sum(2.6 + 46.8 * (t / 600) ** 2.16 for t in n) * scale
+    minutes = 10 + secs / 60 * float(HPC.get("fold_runtime_safety", 3.0))
+    res = dict(
+        gpu_model=cls.get("gpu_model", ""),
+        slurm_partition=HPC.get("gpu_partition", "gpu"),
+        mem_mb=int(cls.get("mem_mb", 64000)),
+        cpus_per_task=int(cls.get("cpus", 8)),
+        runtime=int(min(4320, max(float(HPC.get("fold_runtime_min", 60)), minutes))),
+    )
+    if HPC.get("exclude_nodes"):
+        res["slurm_extra"] = f"--exclude={HPC['exclude_nodes']}"
+    return res
+
 if PAIRS_PER_LOAD <= 0:
     rule run_esmfold2:
         output:
@@ -369,7 +430,9 @@ if PAIRS_PER_LOAD <= 0:
         log:
             str(FOLD_LOG / "run_esmfold2" / "{pair}.log"),
         conda:
-            "envs/esmfold2.yaml"
+            f"envs/{ESMFOLD_ENV}.yaml"
+        container:
+            IMG(ESMFOLD_ENV)
         resources:
             # gpu=1 caps run_esmfold2 at one concurrent job -- REQUIRED, not a
             # hint: the -Fast checkpoint loads ~25GB into Apple Silicon's shared
@@ -383,15 +446,20 @@ if PAIRS_PER_LOAD <= 0:
             # run at once. Also requires a matching `--resources` flag.
             gpu=1,
             docker_heavy=DOCKER_HEAVY_POOL,
+            # on SLURM (profiles/ifb): GPU model, partition, memory, walltime
+            **{k: (lambda wc, k=k: fold_resources([wc.pair]).get(k, ""))
+               for k in ("gpu_model", "slurm_partition", "mem_mb", "cpus_per_task", "runtime", "slurm_extra")},
         params:
             out=lambda wc: str(POST / wc.pair / "raw"),
             spec=lambda wc: SPEC_KEY[wc.pair],
         shell:
             r"""
-            python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
-              "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
-              > {log} 2>&1
-            {NP} fold --pair {wildcards.pair} --out-dir {params.out} >> {log} 2>&1
+            : > {log}
+            if [ "{FOLD_BACKEND}" = mlx ]; then
+              python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
+                "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" >> {log} 2>&1
+            fi
+            {FOLD_HF_ENV}{NP} fold --pair {wildcards.pair} --out-dir {params.out} >> {log} 2>&1
             """
 
 else:
@@ -406,7 +474,10 @@ else:
         return [pairs[i:i + PAIRS_PER_LOAD] for i in range(0, len(pairs), PAIRS_PER_LOAD)]
 
     _folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
-    _todo = [p for p in PAIRS if p not in set(_folded)]
+    # still-to-fold pairs chunked by size: a fold job's GPU class (fold_resources)
+    # follows its largest pair, so mixing sizes would send small pairs to the
+    # few big GPUs; on the Mac it just evens out chunk durations
+    _todo = sorted((p for p in PAIRS if p not in set(_folded)), key=lambda p: pair_tokens(SPECS[p]))
     for _k, _chunk in enumerate(_chunks(_folded) + _chunks(_todo)):
         rule:
             name: f"run_esmfold2_chunk_{_k:03d}"
@@ -416,21 +487,27 @@ else:
             log:
                 str(FOLD_LOG / "run_esmfold2" / f"chunk_{_k:03d}.log"),
             conda:
-                "envs/esmfold2.yaml"
+                f"envs/{ESMFOLD_ENV}.yaml"
+            container:
+                IMG(ESMFOLD_ENV)
             resources:
                 # same single-model-at-a-time guard as the per-pair rule above
                 gpu=1,
                 docker_heavy=DOCKER_HEAVY_POOL,
+                # on SLURM (profiles/ifb): GPU model, partition, memory, walltime
+                **fold_resources(_chunk),
             params:
                 pairs=" ".join(_chunk),
                 specs=" ".join(SPEC_KEY[_p] for _p in _chunk),
                 root=str(POST),
             shell:
                 r"""
-                python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
-                  "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" \
-                  > {log} 2>&1
-                {NP} fold --pairs {params.pairs} --out-root {params.root} >> {log} 2>&1
+                : > {log}
+                if [ "{FOLD_BACKEND}" = mlx ]; then
+                  python -c "import mlx_lm" 2>/dev/null || pip install --no-deps \
+                    "mlx-lm @ git+https://github.com/faustomilletari/mlx-lm.git@main" >> {log} 2>&1
+                fi
+                {FOLD_HF_ENV}{NP} fold --pairs {params.pairs} --out-root {params.root} >> {log} 2>&1
                 """
 
 
@@ -443,6 +520,8 @@ rule compute_metrics:
         str(FOLD_LOG / "compute_metrics" / "{pair}.log"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         enabled=",".join(MET["enabled"]),
         pae=MET["pae_cutoff"], cb=MET["contact_cutoff_cb"], pairs=MET["pairs"],
@@ -471,6 +550,8 @@ rule minimize_cif:
         str(FOLD_LOG / "minimize" / "{pair}" / "sample_{sample}.log"),
     conda:
         "envs/minimize.yaml"
+    container:
+        IMG("minimize")
     resources:
         # Shares config.yaml's docker_heavy pool with run_esmfold2/run_plip
         # -- see run_esmfold2's resources: comment.
@@ -479,6 +560,14 @@ rule minimize_cif:
         r"""
         {NP} minimize {input.cif} {output.pdb} > {log} 2>&1
         """
+
+
+# `docker run ... <image>` on the Mac, `apptainer run ... plip.sif` on IFB. A
+# global, not a param (see FOLD_HF_ENV); the image/memory/platform params stay
+# so a change to them still reruns PLIP.
+PLIP_RUN = " ".join(run_command(CFG, image=PLIP["image"], sif="plip", args=[],
+                                mounts={"$(pwd)": "/work"}, workdir="/work",
+                                platform=PLIP.get("docker_platform", ""), memory=PLIP["docker_memory"]))
 
 
 # ── 2e. PLIP contact identification ──────────────────────────────────────
@@ -520,8 +609,7 @@ rule run_plip:
         # chains over max_chain_len get extra ids for PLIP only (it segfaults on them)
         chains=$({NP} plip split-chains --pdb "$pdb" \
           --bait {params.bait} --prey {params.prey} --max-len {params.max_chain_len})
-        docker run --rm --memory={params.memory} {params.platform} \
-          -v $(pwd):/work -w /work {params.image} \
+        {PLIP_RUN} \
           -f "$pdb" -t --chains "$chains" -o {params.outdir} > {log} 2>&1 \
           || {{ rm -f "$pdb" "$pdb.chainmap.json"; exit 1; }}
         {NP} plip restore-chains --report {output.report} --map "$pdb.chainmap.json"
@@ -551,6 +639,8 @@ rule plip_parse:
         transparency=CXC["transparency"],
     conda:
         "envs/pliparser.yaml"
+    container:
+        IMG("pliparser")
     log:
         str(FOLD_LOG / "pliparser" / "{pair}" / "sample_{sample}.log"),
     shell:
@@ -575,6 +665,8 @@ rule aggregate_plip:
         str(POST / "{pair}" / "plip_contacts.parquet"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     log:
         str(FOLD_LOG / "aggregate_plip" / "{pair}.log"),
     shell:
@@ -592,6 +684,8 @@ rule fig_plip_contacts:
                category="PLIP contacts", subcategory=bait_subcategory, labels=pair_report_labels),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         theme=FIG_THEME,
         fmts=FMTS,
@@ -617,6 +711,8 @@ rule fig_domain_heatmap:
                labels=pair_report_labels),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         theme=FIG_THEME,
         pae=MET["pae_cutoff"], fmts=FMTS,
@@ -640,6 +736,8 @@ rule fig_minimize_energy:
         table=str(FOLD_REP / "{pair}" / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         theme=FIG_THEME,
         n=N_SAMPLES, maxe=MZ["max_abs_energy"], fmts=FMTS,
@@ -662,6 +760,8 @@ rule count_clashes:
         str(POST / "{pair}" / "clashes.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         n=N_SAMPLES, cutoff=CL["overlap_cutoff"], hb=CL["hbond_allowance"],
         sep=CL["bond_separation"],
@@ -683,6 +783,8 @@ rule fig_clash_test:
         counts=str(FOLD_REP / "clash_counts.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         alt=CL["alternative"],
     shell:
@@ -701,6 +803,8 @@ rule collect_results_table:
         str(FOLD_REP / "results_table.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         pairs=" ".join(PAIRS),
         inputs=str(INPUTS_TABLE),
@@ -720,6 +824,8 @@ rule fig_metric_violins_interactive:
         directory(str(FOLD_REP / "metric_violins_interactive")),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     shell:
         r"""
         {NP} plot violins --table {input[0]} --outdir {output[0]}
@@ -742,6 +848,8 @@ rule fig_plip_type_violins:
         directory(str(FOLD_REP / "plip_type_violins")),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         cols=" ".join(PLIP_TYPE_COLS),
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
@@ -763,6 +871,8 @@ rule decoy_calibration:
         directory(str(FOLD_REP / "decoy_calibration")),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     log:
         str(FOLD_LOG / "decoy_calibration.log"),
     params:
@@ -782,6 +892,8 @@ rule collect_minimize_failures:
         str(FOLD_REP / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         labels=hashlib.sha1(" ".join(LABEL_KEY[p] for p in PAIRS).encode()).hexdigest()[:12],
     shell:
@@ -807,6 +919,8 @@ rule bait_tables:
         failures=str(BY_BAIT / "{bait}" / "minimize_failure_rate.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     shell:
         r"""
         {NP} table by-bait --bait {wildcards.bait} --tables {input.results} {input.failures} \
@@ -823,6 +937,8 @@ rule fig_metric_violins_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         title=lambda wc: f"Metric distributions — {BAIT_LABEL[wc.bait]} (all pairs, samples, chain pairs)",
     shell:
@@ -840,6 +956,8 @@ rule fig_plip_type_violins_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         cols=" ".join(PLIP_TYPE_COLS),
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
@@ -864,6 +982,8 @@ rule fig_clash_test_bait:
         counts=str(BY_BAIT / "{bait}" / "clash_counts.csv"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     params:
         alt=CL["alternative"],
     shell:
@@ -884,6 +1004,8 @@ rule decoy_calibration_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     log:
         str(FOLD_LOG / "decoy_calibration" / "{bait}.log"),
     params:
@@ -910,6 +1032,8 @@ rule datavzrd_bait:
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     log:
         str(FOLD_LOG / "datavzrd" / "{bait}.log"),
     shell:
@@ -930,6 +1054,8 @@ rule datavzrd_folding:
         directory(str(FOLD_REP / "tables")),
     conda:
         "envs/analysis.yaml"
+    container:
+        IMG("analysis")
     log:
         str(FOLD_LOG / "datavzrd.log"),
     shell:

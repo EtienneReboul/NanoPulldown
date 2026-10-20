@@ -37,35 +37,28 @@ from pathlib import Path
 
 from nanopulldown.core.cache import annotation_cache_dir
 from nanopulldown.core.config import LazyConfig
+from nanopulldown.core.containers import aiupred_command
 from nanopulldown.core.io import atomic_write, seq_md5
 from nanopulldown.core.specs import load_pair, protein_chains
 
 CFG = LazyConfig()
 
 
-def _run_aiupred_container(seq: str, cfg: dict) -> dict[str, list[float]] | None:
-    image = cfg["image_gpu"] if cfg.get("use_gpu") else cfg["image_cpu"]
-    platform_args = ["--platform", cfg["docker_platform"]] if cfg.get("docker_platform") else []
-    gpu_args = ["--gpus", "all"] if cfg.get("use_gpu") else []
+def _aiupred_args(cfg: dict) -> list[str]:
     cpu_args = [] if cfg.get("use_gpu") else ["--force-cpu"]
+    return ["-i", "/work/input.fasta", "-o", "/work/aiupred.tsv", "-b", "-l", *cpu_args]
 
+
+def _run_aiupred_container(seq: str, cfg: dict) -> dict[str, list[float]] | None:
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         fasta_path = td / "input.fasta"
         out_path = td / "aiupred.tsv"
         fasta_path.write_text(f">query\n{seq}\n")
 
-        cmd = [
-            "docker", "run", "--rm", *platform_args, *gpu_args,
-            "-v", f"{td}:/work",
-            "--entrypoint", "python3",
-            image,
-            "-m", "aiupred.cli",
-            "-i", "/work/input.fasta", "-o", "/work/aiupred.tsv",
-            "-b", "-l", *cpu_args,
-        ]
+        cmd, kw = aiupred_command(CFG, cfg, td, _aiupred_args(cfg))
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, **kw)
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             print(f"[disorder] AIUPred docker invocation failed: {e}", file=sys.stderr)
             return None
@@ -115,19 +108,13 @@ def run_aiupred_batch(seqs: list[str], cfg: dict, timeout: int = 3600) -> dict[s
     {md5: tracks} for the sequences that parsed. This is the efficient path:
     per-chain `docker run` costs ~2.6 s each on Apple Silicon (amd64 image,
     emulated) vs ~0.26 s/sequence inside a single container."""
-    image = cfg["image_gpu"] if cfg.get("use_gpu") else cfg["image_cpu"]
-    platform_args = ["--platform", cfg["docker_platform"]] if cfg.get("docker_platform") else []
-    gpu_args = ["--gpus", "all"] if cfg.get("use_gpu") else []
-    cpu_args = [] if cfg.get("use_gpu") else ["--force-cpu"]
     by_md5 = {seq_md5(q): q for q in seqs}
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         (td / "input.fasta").write_text("".join(f">{m}\n{q}\n" for m, q in by_md5.items()))
-        cmd = ["docker", "run", "--rm", *platform_args, *gpu_args, "-v", f"{td}:/work",
-               "--entrypoint", "python3", image, "-m", "aiupred.cli",
-               "-i", "/work/input.fasta", "-o", "/work/aiupred.tsv", "-b", "-l", *cpu_args]
+        cmd, kw = aiupred_command(CFG, cfg, td, _aiupred_args(cfg))
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kw)
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             print(f"[disorder] AIUPred batch invocation failed: {e}", file=sys.stderr)
             return {}

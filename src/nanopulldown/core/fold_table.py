@@ -42,10 +42,16 @@ FOLD_TABLE_DESCRIPTION = (
     "structure_path. Written by nanopulldown.fold.esmfold2, read via nanopulldown.core.fold_table."
 )
 _F16 = pa.list_(pa.float16())
+
+
+def samples_per_pair(ef_cfg: dict) -> int:
+    """Samples (sample_<i>.cif.gz) per pair: esmfold2.num_seeds separate runs
+    x esmfold2.num_diffusion_samples each."""
+    return int(ef_cfg.get("num_seeds", 1)) * int(ef_cfg["num_diffusion_samples"])
 FOLD_COLUMNS: dict[str, tuple[pa.DataType, str]] = {
     "pair": (pa.string(), "Bait__prey pair identifier"),
-    "seed": (pa.int32(), "Random seed of this pair's ESMFold2-Fast run"),
-    "sample_index": (pa.int32(), "Diffusion sample index within that seed (0-based)"),
+    "seed": (pa.int32(), "Random seed of the ESMFold2-Fast run (fold() call) this sample comes from"),
+    "sample_index": (pa.int32(), "Sample index within the pair, over all its seeds (0-based, seed-major)"),
     "structure_path": (pa.string(), "This sample's gzipped mmCIF, relative to the results root"),
     "ptm": (pa.float32(), "Predicted TM-score (pTM)"),
     "iptm": (pa.float32(), "Predicted interface TM-score (ipTM)"),

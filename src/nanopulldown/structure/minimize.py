@@ -46,6 +46,12 @@ def energy_path(pdb_path: Path) -> Path:
 
 
 def _get_platform(preference: list[str]):
+    import os
+
+    # OpenMM's CPU platform otherwise starts one thread per core of the whole
+    # node, not of the SLURM allocation
+    if os.environ.get("SLURM_CPUS_PER_TASK") and not os.environ.get("OPENMM_CPU_THREADS"):
+        os.environ["OPENMM_CPU_THREADS"] = os.environ["SLURM_CPUS_PER_TASK"]
     from openmm import Platform
 
     for name in preference:

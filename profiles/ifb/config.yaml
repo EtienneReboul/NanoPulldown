@@ -1,0 +1,64 @@
+# Snakemake profile for the IFB Core Cluster (SLURM). From the checkout on the
+# login node, with config.local.yaml copied from config.ifb.yaml.example:
+#
+#   NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
+#
+# Fold jobs (run_esmfold2_chunk_NNN, one per esmfold2.pairs_per_load pairs)
+# take their GPU model / partition / memory / walltime from config.yaml's
+# `hpc:` block (the Snakefile's fold_resources()): chunk rule names are only
+# known at parse time, so they can't be listed under set-resources here.
+# Everything else is a CPU job on `fast`, sized below.
+executor: slurm
+software-deployment-method: apptainer   # images from execution.images_dir, no conda env built
+apptainer-args: "--nv --bind /shared"    # --nv: the fold jobs' GPU (a no-op warning on CPU nodes)
+jobs: 100                    # max SLURM jobs queued/running at once
+latency-wait: 90             # CephFS lag before a job's outputs are visible
+retries: 1
+keep-going: true
+rerun-incomplete: true
+printshellcmds: true
+
+# Global caps the scheduler enforces (as --resources): at most 8 fold jobs
+# (GPUs) at once. docker_heavy is deliberately left out = uncapped -- on the
+# Mac it keeps PLIP/minimize off the GPU's memory; here each job has its own.
+resources:
+  - gpu=8
+
+default-resources:
+  slurm_account: "npf_abinitio"
+  slurm_partition: "fast"
+  mem_mb: 4000
+  runtime: 60                # minutes
+  cpus_per_task: 1
+
+set-resources:
+  annotate_domains_batch:    # throttled InterPro / ScanProsite web calls
+    runtime: 720
+    cpus_per_task: 2
+  annotate_disorder_batch:   # AIUPred, CPU
+    runtime: 240
+    mem_mb: 16000
+    cpus_per_task: 8
+  minimize_cif:              # OpenMM CPU platform (threads = cpus_per_task)
+    runtime: 120
+    mem_mb: 8000
+    cpus_per_task: 4
+  run_plip:
+    runtime: 60
+    mem_mb: 8000
+  collect_results_table:
+    mem_mb: 16000
+  fig_metric_violins_interactive:
+    mem_mb: 16000
+  bait_tables:
+    mem_mb: 8000
+  datavzrd_bait:
+    mem_mb: 8000
+  datavzrd_folding:
+    mem_mb: 8000
+
+# Not grouped (yet): with 5 samples a pair is ~20 short CPU jobs (minimize,
+# PLIP, parse x 5, ...), each its own SLURM job, throttled by `jobs:`. Snakemake
+# `groups` + `group-components` could bundle them, but it sizes a group job by
+# SUMMING its parallel members (10 pairs x 5 minimizations ~ 400 GB / 200 CPUs),
+# so it needs tuning against a real run before it is turned on.

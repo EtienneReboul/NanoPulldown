@@ -1,9 +1,10 @@
 """
 nanopulldown.fold.esmfold2 — Stage 2a
 =====================================
-Fold bait/prey pairs with ESMFold2-Fast on Apple Silicon (MLX/Metal): one
-random seed, `esmfold2.num_diffusion_samples` diffusion samples (5 by
-default), no MSA, no templates -- the -Fast checkpoint ignores an MSA even
+Fold bait/prey pairs with ESMFold2-Fast -- on Apple Silicon (MLX/Metal) or on
+CUDA (esmfold2.backend: torch, the IFB cluster): `esmfold2.num_seeds` runs
+(seeds seed, seed+1, ...) of `esmfold2.num_diffusion_samples` diffusion
+samples each, no MSA, no templates -- the -Fast checkpoint ignores an MSA even
 if one were passed, so simply never passing one is the "no MSA" requirement.
 
 Writes, per pair, into --out-dir (results/<pair>/raw/):
@@ -59,17 +60,44 @@ import traceback
 from pathlib import Path
 
 from nanopulldown.core.config import REPO_ROOT, load_config
-from nanopulldown.core.fold_table import FOLD_FILE, fold_row, write_fold
+from nanopulldown.core.fold_table import FOLD_FILE, fold_row, samples_per_pair, write_fold
 from nanopulldown.core.specs import load_pair, protein_chains
 
 
-def _load_model_and_builder(checkpoint: str):
+def _load_model_and_builder(ef_cfg: dict):
+    """esmfold2.backend: mlx = mlx-lm's MLX port (Apple Silicon); torch = esm's
+    own EsmFold2Model on CUDA (the IFB GPUs). Both are driven by the same
+    ESMFold2InputBuilder.fold(), so everything downstream is shared."""
     from esm.models.esmfold2 import ESMFold2InputBuilder
-    from mlx_lm.models.esmfold2 import ESMFold2Model
 
-    model = ESMFold2Model.from_pretrained(checkpoint)
-    builder = ESMFold2InputBuilder()
-    return model, builder
+    if ef_cfg.get("backend", "mlx") == "torch":
+        import torch
+        from esm.models.esmfold2 import EsmFold2Model
+
+        if not torch.cuda.is_available():
+            raise RuntimeError("esmfold2.backend is torch but no CUDA device is visible "
+                               "(GPU job without --nv / --gpus?)")
+        model = EsmFold2Model.from_pretrained(ef_cfg["checkpoint"], device="cuda").eval()
+    else:
+        from mlx_lm.models.esmfold2 import ESMFold2Model
+
+        model = ESMFold2Model.from_pretrained(ef_cfg["checkpoint"])
+    return model, ESMFold2InputBuilder()
+
+
+def _memory_fns(backend: str):
+    """(clear, peak, reset, active) for the backend's GPU allocator, in bytes."""
+    if backend == "torch":
+        import torch
+
+        return (torch.cuda.empty_cache, torch.cuda.max_memory_allocated,
+                torch.cuda.reset_peak_memory_stats, torch.cuda.memory_allocated)
+    import mlx.core as mx
+
+    return (getattr(mx, "clear_cache", None) or mx.metal.clear_cache,
+            getattr(mx, "get_peak_memory", None) or mx.metal.get_peak_memory,
+            getattr(mx, "reset_peak_memory", None) or mx.metal.reset_peak_memory,
+            getattr(mx, "get_active_memory", None) or mx.metal.get_active_memory)
 
 
 def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
@@ -78,43 +106,53 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
     from esm.models.esmfold2 import ProteinInput, StructurePredictionInput
 
     ef_cfg = cfg["esmfold2"]
-    model, builder = loaded or _load_model_and_builder(ef_cfg["checkpoint"])
+    model, builder = loaded or _load_model_and_builder(ef_cfg)
 
     spi = StructurePredictionInput(sequences=[
         ProteinInput(id=ch["id"], sequence=ch["sequence"])
         for ch in protein_chains(spec)
     ])
 
+    # num_seeds separate fold() calls (seed, seed+1, ...) of num_diffusion_samples
+    # each. Separate calls, not more samples per call: one call's samples share
+    # ONE trunk pass, so lm_dropout (applied in the trunk) only diversifies
+    # across calls -- and each call's buffers are freed before the next, so peak
+    # memory stays that of one call. sample_index runs over all of them.
     n_requested = int(ef_cfg["num_diffusion_samples"])
-    results = builder.fold(
-        model, spi,
-        num_loops=int(ef_cfg["num_loops"]),
-        num_sampling_steps=int(ef_cfg["num_sampling_steps"]),
-        num_diffusion_samples=n_requested,
-        seed=int(ef_cfg["seed"]),
-    )
-    print(f"[run_esmfold2] builder.fold() returned {type(results).__name__} "
-          f"of length {len(results) if hasattr(results, '__len__') else 'n/a'} "
-          f"(requested {n_requested})", flush=True)
-    if isinstance(results, list) and len(results) != n_requested:
-        # Seen in practice: under GPU memory pressure, builder.fold() can
-        # silently return fewer samples than requested with no exception --
-        # exit 0, no traceback, the loop below just has fewer items. Fail
-        # loud here instead of writing a partial `raw/` dir that Snakemake
-        # would only catch later (and less clearly) via MissingOutputException.
-        raise RuntimeError(
-            f"builder.fold() returned {len(results)} sample(s), expected "
-            f"{n_requested} -- likely Metal/unified-memory pressure "
-            "(silently dropped samples rather than raising). Try again, or "
-            "lower esmfold2.num_diffusion_samples in config.yaml."
+    clear = _memory_fns(ef_cfg.get("backend", "mlx"))[0]
+    seeds = [int(ef_cfg["seed"]) + k for k in range(int(ef_cfg.get("num_seeds", 1)))]
+    results = []
+    for seed in seeds:
+        res = builder.fold(
+            model, spi,
+            num_loops=int(ef_cfg["num_loops"]),
+            num_sampling_steps=int(ef_cfg["num_sampling_steps"]),
+            num_diffusion_samples=n_requested,
+            seed=seed,
+            lm_dropout=float(ef_cfg.get("lm_dropout", 0.0)),
         )
-    if not isinstance(results, list):
-        results = [results]
+        print(f"[run_esmfold2] seed {seed}: builder.fold() returned {type(res).__name__} "
+              f"of length {len(res) if hasattr(res, '__len__') else 'n/a'} "
+              f"(requested {n_requested})", flush=True)
+        if isinstance(res, list) and len(res) != n_requested:
+            # Seen in practice: under GPU memory pressure, builder.fold() can
+            # silently return fewer samples than requested with no exception --
+            # exit 0, no traceback, the loop below just has fewer items. Fail
+            # loud here instead of writing a partial `raw/` dir that Snakemake
+            # would only catch later (and less clearly) via MissingOutputException.
+            raise RuntimeError(
+                f"builder.fold() returned {len(res)} sample(s), expected "
+                f"{n_requested} -- likely Metal/unified-memory pressure "
+                "(silently dropped samples rather than raising). Try again, or "
+                "lower esmfold2.num_diffusion_samples in config.yaml."
+            )
+        results += [(seed, r) for r in (res if isinstance(res, list) else [res])]
+        clear()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     pair = spec["name"]
     written, rows = [], []
-    for i, result in enumerate(results):
+    for i, (seed, result) in enumerate(results):
         cif_path = out_dir / f"sample_{i}.cif.gz"
         # mtime=0: identical structures give byte-identical files
         with gzip.GzipFile(cif_path, "wb", mtime=0) as fh:
@@ -123,7 +161,7 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
         rows.append(fold_row(
             # always the results/<pair>/raw/ location, even when written to
             # run_esmfold2_batch.py's cache dir (hard-linked there afterwards)
-            pair, ef_cfg["seed"], i, f"{pair}/raw/{cif_path.name}",
+            pair, seed, i, f"{pair}/raw/{cif_path.name}",
             ptm=result.ptm, iptm=result.iptm, plddt=result.plddt, pae=result.pae,
             chain_id=result.complex.chain_id,
             chain_lookup=dict(result.complex.metadata.chain_lookup),
@@ -134,9 +172,11 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
         print(f"[run_esmfold2] sample {i}: ptm={result.ptm:.3f} iptm={result.iptm}"
               if result.ptm is not None else f"[run_esmfold2] sample {i} written")
 
-    write_fold(out_dir / FOLD_FILE, rows, run_params={
-        k: ef_cfg[k] for k in ("checkpoint", "num_loops", "num_sampling_steps",
-                               "num_diffusion_samples", "seed")})
+    run_params = {k: ef_cfg[k] for k in ("checkpoint", "num_loops", "num_sampling_steps",
+                                         "num_diffusion_samples", "seed")}
+    run_params.update(backend=ef_cfg.get("backend", "mlx"), num_seeds=len(seeds),
+                      lm_dropout=float(ef_cfg.get("lm_dropout", 0.0)))
+    write_fold(out_dir / FOLD_FILE, rows, run_params=run_params)
     return written
 
 
@@ -168,13 +208,9 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
     root = Path(out_root)
     cache_root = root / "_fold_cache"
 
-    import mlx.core as mx
-    clear = getattr(mx, "clear_cache", None) or mx.metal.clear_cache
-    peak = getattr(mx, "get_peak_memory", None) or mx.metal.get_peak_memory
-    reset = getattr(mx, "reset_peak_memory", None) or mx.metal.reset_peak_memory
-    active = getattr(mx, "get_active_memory", None) or mx.metal.get_active_memory
     cfg = load_config()
-    n_samples = int(cfg["esmfold2"]["num_diffusion_samples"])
+    clear, peak, reset, active = _memory_fns(cfg["esmfold2"].get("backend", "mlx"))
+    n_samples = samples_per_pair(cfg["esmfold2"])
 
     todo = [p for p in pairs if not _complete(cache_root / p, n_samples)]
     print(f"[fold_batch] {len(pairs)} pair(s) in chunk, {len(todo)} to fold, "
@@ -183,7 +219,7 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
     loaded, failed = None, []
     if todo:
         t0 = time.time()
-        loaded = _load_model_and_builder(cfg["esmfold2"]["checkpoint"])
+        loaded = _load_model_and_builder(cfg["esmfold2"])
         print(f"[fold_batch] model loaded once in {time.time() - t0:.0f}s, "
               f"{active() / 2**30:.1f} GiB resident", flush=True)
 

@@ -137,6 +137,68 @@ nohup env -i HOME=$HOME USER=$USER TERM=xterm zsh -lic '
   `https://www.ebi.ac.uk/interpro/api/entry/pfam/protein/uniprot/<ACC>`)
   and rerun; the other annotations are cached.
 
+## Running on the IFB cluster
+
+The whole pipeline also runs on the IFB Core Cluster
+(`core.cluster.france-bioinformatique.fr`) under SLURM, with folding on its
+GPUs. The point is ensembles: [config.ifb.yaml.example](config.ifb.yaml.example)
+folds every pair as **5 independent runs** (`num_seeds: 5`, 1 sample each) at
+ESMFold2's regular settings (20 loops, 200 steps) with `lm_dropout: 0.3`, about
+9x the Mac's per-pair compute. The Mac defaults in config.yaml are unchanged.
+
+What differs from the Mac:
+
+| Aspect | Mac | IFB |
+| --- | --- | --- |
+| fold backend | MLX (`esmfold2.backend: mlx`) | torch on CUDA (`torch`, [envs/esmfold2_cuda.yaml](envs/esmfold2_cuda.yaml)) |
+| rule software | conda envs (`--use-conda`) | one Apptainer image per env (`--sdm apptainer`) |
+| PLIP / AIUPred | `docker run` | `apptainer run plip.sif` / AIUPred inside the analysis image |
+| scheduling | `--resources gpu=1 docker_heavy=N` | [profiles/ifb](profiles/ifb/config.yaml): SLURM, up to 8 GPU jobs |
+
+Images instead of conda envs because `/shared/projects/npf_abinitio` is capped
+at 500k inodes and sits near it (443k on 2026-10-19). A conda env is 20-50k
+files, while a `.sif` is one; a full project fails **every** write in it.
+
+Fold jobs pick their GPU from config.yaml's `hpc.gpu_classes`, by the chunk's
+largest pair: an L40S up to 1200 tokens, else an H200 (nodes 7 and 9
+excluded). Their walltime is estimated from the Mac timings. CPU jobs go to
+`fast`, sized in the profile.
+
+### One-time IFB setup
+
+1. On the Mac (when no run is using Docker): `scripts/ifb/build_images.sh`
+   builds the four env images (linux/amd64, slow under emulation) into
+   `build/images/*.tar`.
+2. Copy them to `/shared/projects/npf_abinitio/nanopulldown_images/tar/`, and
+   the checkout to the cluster.
+3. On the login node: `scripts/ifb/setup.sh`. It converts the tarballs to
+   `.sif` (unpacking in local `/tmp`, not on the project), pulls `plip.sif`,
+   and downloads the ESMFold2-Fast weights and `ccd.pkl` into
+   `/shared/projects/npf_abinitio/hf_cache`, so the GPU nodes run offline.
+4. `cp config.ifb.yaml.example config.local.yaml`, and add the Mac
+   config.local.yaml's `annotate:` block.
+
+### Launching on IFB
+
+From the checkout on the login node, inside `tmux`/`screen`. The
+controller is the existing `abcfold-npf-pipeline` env (snakemake 9.24, SLURM
+plugin 2.7.1, pyarrow), so no new env is needed:
+
+```bash
+export PATH=/shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline/bin:$PATH
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
+```
+
+- Run overlays merge **after** config.local.yaml, so a value in
+  config_<run>.yaml (e.g. `esmfold2.max_tokens: 1200`) overrides the IFB one.
+  Put IFB-specific overrides in the overlay itself when they conflict.
+- `nanopulldown inputs expand` leaves out pairs over `esmfold2.max_tokens`.
+  Expand with the IFB limit (2000) to fold the larger pairs on the H200s.
+- IFB results (5 samples, dropout, more loops/steps) are a different series
+  from the Mac's 1-sample folds: give them their own `dirs:` in the overlay.
+- Progress: `squeue -u $USER`, and `grep "^\[fold_batch\]"` on the chunk logs
+  as on the Mac.
+
 ## Fragment mode (domain x domain, as in yeast two-hybrid)
 
 Set `fragments.enabled: true` in a run overlay (see `config_drm2_fragments.yaml`)

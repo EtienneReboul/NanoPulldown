@@ -1723,7 +1723,13 @@ fragments:
 
 # ── Stage 2a: ESMFold2-Fast folding ─────────────────────────────────────────
 esmfold2:
+  backend: "mlx"                  # mlx (Apple Silicon, mlx-lm) | torch (CUDA -- the IFB cluster; envs/esmfold2_cuda.yaml)
   checkpoint: "biohub/ESMFold2-Fast"
+  hf_home: ""                     # HF_HOME for the fold jobs ("" = the default ~/.cache/huggingface); on IFB a
+                                   # pre-downloaded cache in project storage, so GPU nodes need no internet
+  lm_dropout: 0.0                 # ESM LM-embedding dropout per loop. MLX never applies it (so every Mac fold is
+                                   # 0.0); esm's torch fold() defaults to 0.3, so it is passed explicitly to keep
+                                   # CUDA folds comparable with the Mac ones
   num_loops: 10
   num_sampling_steps: 100
   num_diffusion_samples: 1        # ONE sample per run: peak GPU memory scales with samples (~4 GiB per
@@ -1743,6 +1749,10 @@ esmfold2:
                                    # fold). 0 = one process per pair. Downstream steps of a chunk wait for the
                                    # whole chunk, so ~1-2 h per chunk is a good size.
   seed: 1
+  num_seeds: 1                    # separate fold runs per pair (seeds seed .. seed+num_seeds-1), each giving
+                                   # num_diffusion_samples samples; samples per pair = the product. Runs, not
+                                   # samples, are what lm_dropout diversifies (one run's samples share a trunk),
+                                   # and memory stays that of one run. IFB: 5 runs x 1 sample, lm_dropout 0.3.
 
 # ── Stage 2b: interface metrics (PAE-based, over all 5 diffusion samples) ──
 metrics:
@@ -1779,9 +1789,11 @@ plip:
   image: "docker.io/pharmai/plip:latest"
   docker_memory: "8g"
   docker_platform: "linux/amd64"   # pharmai/plip has no arm64 build -- required on Apple Silicon
-  max_chain_len: 850             # PLIP 3.0 segfaults (exit 139) on chains of ~880+ residues: longer chains
-                                 # are given extra chain ids for PLIP only, mapped back in the report
+  max_chain_len: 700             # PLIP 3.0 segfaults (exit 139) on long chains: longer chains are given
+                                 # extra chain ids for PLIP only, mapped back in the report
                                  # (nanopulldown.plip.chain_split). Contacts are identical (tested 2026-10-19).
+                                 # 850 was not enough: A1L4W5__F4K4Y5 (415 + 778 aa) crashed at 850 and
+                                 # passed split at 700 (2026-10-20); dne1 crashed from ~880 aa.
   # ChimeraX visualization script (rule plip_parse, pliparser csv2cxc)
   cxc:
     bait_color: "gray"
@@ -1798,6 +1810,36 @@ plip:
 # lower this if that turns out to contend.
 scheduling:
   docker_heavy_pool: 3
+
+# ── Execution: containers and the SLURM cluster (IFB) ───────────────────────
+# Defaults are the Mac's: docker for the PLIP / AIUPred images, conda envs via
+# --use-conda, everything local. On IFB, config.local.yaml (copied from
+# config.ifb.yaml.example) switches to apptainer + the profiles/ifb/ SLURM
+# profile -- see README "Running on the IFB cluster".
+execution:
+  container_runtime: "docker"     # docker | apptainer. apptainer: every conda rule also runs in
+                                   # <images_dir>/nanopulldown-<env>.sif (`--sdm apptainer`, no conda env
+                                   # is built -- one inode per image, the project's inode quota is tight),
+                                   # PLIP runs from <images_dir>/plip.sif, AIUPred from inside the analysis image
+  images_dir: ""                  # apptainer only: directory holding the .sif images (scripts/ifb/build_images.sh)
+  apptainer_args: "--bind /shared"   # PLIP's `apptainer run` (rule images get --apptainer-args from the profile)
+
+# SLURM resources (snakemake-executor-plugin-slurm), used only when run with
+# --profile profiles/ifb. CPU rules take theirs from the profile; the fold
+# chunks are named per chunk (run_esmfold2_chunk_000, ...), so theirs are
+# set here: the first gpu_classes entry whose max_tokens covers the chunk's
+# largest pair (0 = any size).
+hpc:
+  gpu_partition: "gpu"
+  exclude_nodes: "gpu-node-7,gpu-node-9"   # IFB nodes with known infra issues
+  gpu_classes:
+    - {gpu_model: "l40s", max_tokens: 1200, mem_mb: 64000, cpus: 8}     # 48 GB; 5 nodes x 4 GPUs
+    - {gpu_model: "h200", max_tokens: 0, mem_mb: 160000, cpus: 8}       # 141 GB; gpu-node-4 only
+  # fold job walltime: model load + per-pair estimate (the Mac fit in
+  # notebooks/esmfold2_memory_model.ipynb's terms, scaled by loops/steps/samples),
+  # times this safety factor, capped at the gpu partition's 3 days
+  fold_runtime_safety: 3.0
+  fold_runtime_min: 60            # minutes
 
 # ── Stage 2e: reports ────────────────────────────────────────────────────────
 report:

@@ -1,8 +1,10 @@
 name: nanopulldown
 # Controller environment — drives Snakemake orchestration for both stages.
 # Per-rule compute envs are the other envs/*.yaml, built automatically via
-# --use-conda. No cluster executor plugin is needed: everything here runs
-# locally on one Mac.
+# --use-conda. The SLURM executor plugin is only used on the IFB cluster
+# (--profile profiles/ifb); there, the existing
+# /shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline env (snakemake
+# 9.24 + plugin 2.7.1 + pyarrow) serves as the controller -- see README.
 #
 # Install:
 #   conda env create -f envs/controller.yaml
@@ -15,6 +17,7 @@ channels:
 dependencies:
   - python=3.11
   - snakemake>=8.4
+  - snakemake-executor-plugin-slurm>=2.7   # IFB: `gpu` + `gpu_model` resources -> --gpus
   - snakemake-wrapper-utils>=0.6
   - datavzrd>=2.36
   - pyyaml>=6.0
