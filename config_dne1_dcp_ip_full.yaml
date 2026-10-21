@@ -1,0 +1,42 @@
+# Run overlay: FULL-LENGTH DNE1/DCP1/DCP2 IP screen on the IFB cluster -- the
+# complement of config_dne1_dcp_ip_fragments.yaml: same 5 baits x 112 preys
+# (AT3G49490 excluded), whole proteins, 5 seeds x 1 sample (config.local.yaml
+# from config.ifb.yaml.example). Both GYF baits are ~1490 aa, so pairs run to
+# ~4000 tokens; up to 2400 fit an H200 (141 GB) at 1 sample by the Mac's
+# n^2.2 memory fit (untested on CUDA): 490 of 560 pairs.
+# Controls: positives only -- decoys (n x 5 baits) don't fit the project's
+# inode quota (2026-10-20).
+#   NANOPULLDOWN_RUN_CONFIG=config_dne1_dcp_ip_full.yaml nanopulldown inputs expand
+#   NANOPULLDOWN_RUN_CONFIG=config_dne1_dcp_ip_full.yaml snakemake --profile profiles/ifb
+
+run_name: "dne1_dcp_ip_full"
+
+esmfold2:
+  max_tokens: 2400
+  pairs_per_load: 30          # one H200 job per 30 pairs (model loaded once)
+
+hpc:
+  gpu_classes:                # every fold job on an H200 (gpu-node-4, 4 GPUs)
+    - {gpu_model: "h200", max_tokens: 0, mem_mb: 160000, cpus: 8}
+
+fragments:
+  enabled: false
+
+controls:
+  decoys:
+    enabled: false
+
+dirs:
+  annotation:  "data/annotation_dne1_dcp_ip_full"
+  postproc:    "results_dne1_dcp_ip_full"
+  reports:     "reports_dne1_dcp_ip_full"
+  logs:        "logs_dne1_dcp_ip_full"
+
+inputs:
+  baits:
+    - list: configs/baits_dne1_dcp_ip.txt
+  preys:
+    - list: configs/preys_dne1_dcp_ip.txt
+    - exclude: [Q9SCK9]   # AT3G49490: PLIP segfaults (exit 139) in --chains mode (fragment run, 2026-10-18)
+
+pairs_file: configs/pairs_dne1_dcp_ip_full.txt

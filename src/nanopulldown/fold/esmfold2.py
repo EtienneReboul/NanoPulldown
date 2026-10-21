@@ -85,6 +85,25 @@ def _load_model_and_builder(ef_cfg: dict):
     return model, ESMFold2InputBuilder()
 
 
+def _stage_weights(ef_cfg: dict) -> None:
+    """esmfold2.stage_weights: copy the checkpoint's (and ccd.pkl's) HF cache repos
+    to the node-local $TMPDIR and load from there -- on IFB the job's own NVMe
+    scratch, vs the shared CephFS the cache lives on. A no-op off, or without
+    $HF_HOME / $TMPDIR. Must run before esm / huggingface_hub are imported
+    (they read HF_HOME at import)."""
+    src, tmp = os.environ.get("HF_HOME"), os.environ.get("TMPDIR")
+    if not (ef_cfg.get("stage_weights") and src and tmp):
+        return
+    dst = Path(tmp) / "nanopulldown_hf"
+    t0 = time.time()
+    for repo in (ef_cfg["checkpoint"], "biohub/ESMFold2"):   # biohub/ESMFold2: ccd.pkl only
+        name = "models--" + repo.replace("/", "--")
+        if (Path(src) / "hub" / name).exists():
+            shutil.copytree(Path(src) / "hub" / name, dst / "hub" / name, symlinks=True, dirs_exist_ok=True)
+    os.environ["HF_HOME"] = str(dst)
+    print(f"[fold] weights staged {src} -> {dst} in {time.time() - t0:.0f}s", flush=True)
+
+
 def _memory_fns(backend: str):
     """(clear, peak, reset, active) for the backend's GPU allocator, in bytes."""
     if backend == "torch":
@@ -123,6 +142,7 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
     seeds = [int(ef_cfg["seed"]) + k for k in range(int(ef_cfg.get("num_seeds", 1)))]
     results = []
     for seed in seeds:
+        t0 = time.time()
         res = builder.fold(
             model, spi,
             num_loops=int(ef_cfg["num_loops"]),
@@ -133,7 +153,7 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
         )
         print(f"[run_esmfold2] seed {seed}: builder.fold() returned {type(res).__name__} "
               f"of length {len(res) if hasattr(res, '__len__') else 'n/a'} "
-              f"(requested {n_requested})", flush=True)
+              f"(requested {n_requested}) in {time.time() - t0:.0f}s", flush=True)
         if isinstance(res, list) and len(res) != n_requested:
             # Seen in practice: under GPU memory pressure, builder.fold() can
             # silently return fewer samples than requested with no exception --
@@ -218,6 +238,7 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
 
     loaded, failed = None, []
     if todo:
+        _stage_weights(cfg["esmfold2"])
         t0 = time.time()
         loaded = _load_model_and_builder(cfg["esmfold2"])
         print(f"[fold_batch] model loaded once in {time.time() - t0:.0f}s, "
@@ -263,7 +284,9 @@ def main() -> int:
         return fold_batch(args.pairs, Path(args.out_root))
     if not args.out_dir:
         ap.error("--pair needs --out-dir")
-    fold_pair(load_pair(args.pair), load_config(), Path(args.out_dir))
+    cfg = load_config()
+    _stage_weights(cfg["esmfold2"])
+    fold_pair(load_pair(args.pair), cfg, Path(args.out_dir))
     return 0
 
 if __name__ == "__main__":

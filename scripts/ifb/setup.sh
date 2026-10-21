@@ -38,6 +38,9 @@ export PATH=$CONTROLLER:$PATH:$CONDA_BIN
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/nanopulldown_setup.XXXXXX")
 trap 'rm -rf "$SCRATCH"' EXIT
 export APPTAINER_TMPDIR=$SCRATCH/tmp APPTAINER_CACHEDIR=$SCRATCH/cache CONDA_PKGS_DIRS=$SCRATCH/pkgs
+# strict channel priority: conda-forge first in every envs/*.yaml; much faster solves
+# (an unconfigured conda took ~20 min for one env) and what conda-forge/bioconda require
+export CONDA_CHANNEL_PRIORITY=strict
 mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR" "$CONDA_PKGS_DIRS" "$IMAGES" "$HF_HOME"
 
 inodes() { getfattr --only-values -n ceph.dir.rentries "$PROJECT" 2>/dev/null; }
@@ -66,9 +69,12 @@ fi
 
 # weights, downloaded with the fold env's own huggingface_hub
 if want weights; then
-  py=$(ls -d .snakemake/conda/*/ | while read -r d; do
-         [ -e "$d/lib/python3.12/site-packages/esm" ] && [ -e "$d/lib/python3.12/site-packages/torch" ] && echo "$d/bin/python"
-       done | head -1)
+  py=""
+  for d in .snakemake/conda/*/; do
+    if compgen -G "$d/lib/python3*/site-packages/esm" >/dev/null && compgen -G "$d/lib/python3*/site-packages/torch" >/dev/null; then
+      py="$d/bin/python"; break
+    fi
+  done
   [ -n "$py" ] || { echo "no esmfold2_cuda env in .snakemake/conda -- run the envs step first" >&2; exit 1; }
   HF_HOME=$HF_HOME "$py" -c '
 from huggingface_hub import hf_hub_download, snapshot_download

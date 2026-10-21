@@ -189,6 +189,7 @@ after it:
 
 ```bash
 export PATH=/shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline/bin:$PATH:/shared/software/miniconda_deployment/bin
+export CONDA_CHANNEL_PRIORITY=strict   # as setup.sh, if a missing env gets built
 NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
 ```
 

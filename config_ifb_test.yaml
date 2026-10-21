@@ -1,0 +1,21 @@
+# Run overlay: one-pair end-to-end test of every pipeline stage on IFB
+# (scripts/ifb/test_pipeline.sh), with the IFB machine config
+# (config.local.yaml from config.ifb.yaml.example): CUDA fold, 5 seeds.
+#   NANOPULLDOWN_RUN_CONFIG=config_ifb_test.yaml snakemake ...
+
+run_name: "ifb_test"
+
+pairs:
+  - A1L4W5__P31169      # 481 tokens, also folded on the Mac (results/A1L4W5__P31169)
+
+esmfold2:
+  pairs_per_load: 1
+
+minimize:
+  platform_preference: ["CUDA", "OpenCL", "CPU"]   # GPU node: CUDA failed on its first test (PTX newer than the driver); OpenCL next
+
+dirs:
+  annotation:  "data/annotation_ifb_test"
+  postproc:    "results_ifb_test"
+  reports:     "reports_ifb_test"
+  logs:        "logs_ifb_test"

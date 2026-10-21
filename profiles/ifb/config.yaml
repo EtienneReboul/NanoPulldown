@@ -3,6 +3,7 @@
 # the envs built by scripts/ifb/setup.sh:
 #
 #   export PATH=/shared/projects/npf_abinitio/conda/envs/abcfold-npf-pipeline/bin:$PATH:/shared/software/miniconda_deployment/bin
+#   export CONDA_CHANNEL_PRIORITY=strict
 #   NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
 #
 # Fold jobs (run_esmfold2_chunk_NNN, one per esmfold2.pairs_per_load pairs)
@@ -19,11 +20,14 @@ keep-going: true
 rerun-incomplete: true
 printshellcmds: true
 
-# Global caps the scheduler enforces (as --resources): at most 8 fold jobs
-# (GPUs) at once. docker_heavy is deliberately left out = uncapped -- on the
+# Global caps the scheduler enforces (as --resources): GPU jobs submitted at
+# once -- fold jobs plus the short minimize_cif ones, which share the `gpu`
+# resource (the SLURM plugin maps it to --gpus). Keep it above the number of fold
+# chunks: queued-but-waiting fold jobs hold slots, and at 12 they blocked every
+# minimize job behind 12 of DNE1's 17 H200 chunks. SLURM itself limits what runs. docker_heavy is deliberately left out = uncapped -- on the
 # Mac it keeps PLIP/minimize off the GPU's memory; here each job has its own.
 resources:
-  - gpu=8
+  - gpu=25
 
 default-resources:
   slurm_account: "npf_abinitio"
@@ -40,10 +44,14 @@ set-resources:
     runtime: 240
     mem_mb: 16000
     cpus_per_task: 8
-  minimize_cif:              # OpenMM CPU platform (threads = cpus_per_task)
-    runtime: 120
+  minimize_cif:              # OpenMM on a GPU node's OpenCL: seconds per sample, vs ~22 min on
+    slurm_partition: "gpu"   # CPU (2026-10-20 test; CUDA fails there: PTX newer than the driver)
+    gpu: 1
+    gpu_model: "l40s"        # leaves the H200s to the fold jobs
+    slurm_extra: "--exclude=gpu-node-7,gpu-node-9"
+    runtime: 30
     mem_mb: 8000
-    cpus_per_task: 4
+    cpus_per_task: 2
   run_plip:
     runtime: 60
     mem_mb: 8000

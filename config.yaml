@@ -1727,6 +1727,8 @@ esmfold2:
   checkpoint: "biohub/ESMFold2-Fast"
   hf_home: ""                     # HF_HOME for the fold jobs ("" = the default ~/.cache/huggingface); on IFB a
                                    # pre-downloaded cache in project storage, so GPU nodes need no internet
+  stage_weights: false            # copy the weights to the node-local $TMPDIR before loading (IFB: CephFS
+                                   # -> NVMe; see config.ifb.yaml.example)
   lm_dropout: 0.0                 # ESM LM-embedding dropout per loop. MLX never applies it (so every Mac fold is
                                    # 0.0); esm's torch fold() defaults to 0.3, so it is passed explicitly to keep
                                    # CUDA folds comparable with the Mac ones
@@ -1831,7 +1833,8 @@ hpc:
   gpu_partition: "gpu"
   exclude_nodes: "gpu-node-7,gpu-node-9"   # IFB nodes with known infra issues
   gpu_classes:
-    - {gpu_model: "l40s", max_tokens: 1200, mem_mb: 64000, cpus: 8}     # 48 GB; 5 nodes x 4 GPUs
+    - {gpu_model: "l40s", max_tokens: 1200, mem_mb: 128000, cpus: 8}    # 48 GB; 5 nodes x 4 GPUs. 64 GB host RAM
+                                                                       # made a cold import 494 s (page-cache thrash)
     - {gpu_model: "h200", max_tokens: 0, mem_mb: 160000, cpus: 8}       # 141 GB; gpu-node-4 only
   # fold job walltime: model load + per-pair estimate (the Mac fit in
   # notebooks/esmfold2_memory_model.ipynb's terms, scaled by loops/steps/samples),

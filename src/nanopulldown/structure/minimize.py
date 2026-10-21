@@ -45,21 +45,33 @@ def energy_path(pdb_path: Path) -> Path:
     return pdb_path.with_name(f"{stem}_energy.parquet")
 
 
-def _get_platform(preference: list[str]):
+def _make_simulation(topology, system, preference: list[str]):
+    """Simulation on the first platform of `preference` that both exists AND
+    starts: a platform can be listed yet fail on its first Context -- e.g.
+    OpenMM's CUDA kernels built for a newer CUDA than the node's driver
+    (CUDA_ERROR_UNSUPPORTED_PTX_VERSION on IFB). Reference is the last resort."""
     import os
 
     # OpenMM's CPU platform otherwise starts one thread per core of the whole
     # node, not of the SLURM allocation
     if os.environ.get("SLURM_CPUS_PER_TASK") and not os.environ.get("OPENMM_CPU_THREADS"):
         os.environ["OPENMM_CPU_THREADS"] = os.environ["SLURM_CPUS_PER_TASK"]
-    from openmm import Platform
+    from openmm import LangevinMiddleIntegrator, Platform, unit
+    from openmm.app import Simulation
 
-    for name in preference:
+    for name in [*preference, "Reference"]:
         try:
-            return Platform.getPlatformByName(name)
-        except Exception:                                     # noqa: BLE001
+            platform = Platform.getPlatformByName(name)
+            # an integrator belongs to one Context: a fresh one per attempt
+            integrator = LangevinMiddleIntegrator(300 * unit.kelvin, 1 / unit.picosecond,
+                                                  0.002 * unit.picoseconds)
+            simulation = Simulation(topology, system, integrator, platform)
+        except Exception as e:                                # noqa: BLE001
+            print(f"[minimize] platform {name} unusable ({str(e).splitlines()[0][:120]}) -- trying the next")
             continue
-    return Platform.getPlatformByName("Reference")
+        print(f"[minimize] platform: {name}")
+        return simulation
+    raise RuntimeError("no OpenMM platform could start, not even Reference")
 
 
 def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
@@ -92,14 +104,7 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     # no-periodic-box minimization of a single complex.
     system = forcefield.createSystem(modeller.topology)
 
-    from openmm import LangevinMiddleIntegrator
-    integrator = LangevinMiddleIntegrator(300 * unit.kelvin, 1 / unit.picosecond,
-                                           0.002 * unit.picoseconds)
-    platform = _get_platform(mz["platform_preference"])
-    print(f"[minimize] platform: {platform.getName()}")
-
-    from openmm.app import Simulation
-    simulation = Simulation(modeller.topology, system, integrator, platform)
+    simulation = _make_simulation(modeller.topology, system, mz["platform_preference"])
     simulation.context.setPositions(modeller.positions)
 
     def energy_kj() -> float:
