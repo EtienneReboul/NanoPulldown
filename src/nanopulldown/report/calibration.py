@@ -32,8 +32,9 @@ Per bait and metric:
     proteins with more fragments) and as a Sidak-adjusted min p (slightly
     conservative) -- see protein_auc(). In fragment mode these are the AUCs to
     read: a partner binding through one domain is not diluted by the others.
-  * positives are PER BAIT: a known partner counts only for the baits it has
-    direct evidence with (`known_direct_of`, nanopulldown.inputs.controls); a
+  * positives are PER BAIT: a known partner counts only for the baits it
+    reaches the positives' `min_tier` with (`known_direct_of`,
+    nanopulldown.inputs.controls); a
     control-only partner of another bait is dropped for this one. Each
     positive carries the fraction of the bait and of the partner folded in
     the run; below 0.9 it is flagged `partial` (positives.csv, index.html).

@@ -1624,17 +1624,32 @@ controls:
     enabled: true
     name: known                    # input-source tag (prey_sources), column prefix known_*
     databases: [uniprot, intact, mint, biogrid, string, complexportal]
-    direct_only: true              # false: every reported partner (>= min_databases), direct or not
+    # Evidence tier of each (bait, partner), best first (nanopulldown.services.interactors):
+    #   curated  listed under `curated:` below
+    #   high     direct evidence in >= high_min_publications papers, or direct + MIscore
+    #            >= high_miscore, or a structure_methods row
+    #   medium   direct evidence in >= min_direct_publications papers
+    #   low      reported, nothing direct (co-IP, AP-MS, FRET/BiFC alone, complexes, STRING)
+    min_tier: high                 # positives = partners at least this tier; low = every reported partner
     direct_types: ["MI:0407"]      # PSI-MI interaction types counted as direct (+ descendants:
-                                   # covalent binding, enzymatic reactions such as ubiquitination)
+                                   # covalent binding, enzymatic reactions such as ubiquitination) ...
+    proximity_methods: ["MI:0055", "MI:0012", "MI:0809"]   # ... unless seen by FRET, BRET, BiFC
     direct_methods: ["MI:0018"]    # detection methods counted as direct (+ descendants): two hybrid.
                                    # Add "MI:0090" (protein complementation: BiFC, split luciferase)
                                    # to also accept proximity assays
-    min_direct_publications: 1     # distinct PubMed ids with direct evidence
+    min_direct_publications: 1     # distinct PubMed ids with direct evidence (medium)
+    high_min_publications: 2       # ... (high)
+    high_miscore: 0.6              # MIscore (IntAct's, recomputed over every database) for high
+    structure_methods: ["MI:0114", "MI:0077"]   # X-ray, NMR (+ descendants): high
+    curated:                       # hand-picked positives, tier `curated`: {bait: [{partner, pmids, note}]}
+      A1L4W5:                      # BPM6
+        - {partner: Q9ZVH4, pmids: [15772280],
+           note: "CUL3A: BTB-CUL3 binding of the CRL3 ligase; databases: one pull-down, physical association"}
     min_databases: 1
     same_organism: true
     max_partners: null             # keep the N best-supported (null = all)
-    # string: {min_score: 700}     # overrides interactors.string (STRING only annotates: no direct evidence)
+    # string: {min_score: 700}     # overrides interactors.string (STRING only annotates: its experiments
+                                   # channel is BioGRID / IntAct again, never a tier)
   decoys:                          # knobs: nanopulldown.inputs.decoys DEFAULTS
     enabled: true
     name: decoy
@@ -1729,6 +1744,8 @@ esmfold2:
                                    # pre-downloaded cache in project storage, so GPU nodes need no internet
   stage_weights: false            # copy the weights to the node-local $TMPDIR before loading (IFB: CephFS
                                    # -> NVMe; see config.ifb.yaml.example)
+  conda_lib_first: false          # fold jobs: the env's lib/ first on LD_LIBRARY_PATH (CAIUS: RHEL 8's
+                                   # libstdc++ is older than the env's numpy needs)
   lm_dropout: 0.0                 # ESM LM-embedding dropout per loop. MLX never applies it (so every Mac fold is
                                    # 0.0); esm's torch fold() defaults to 0.3, so it is passed explicitly to keep
                                    # CUDA folds comparable with the Mac ones

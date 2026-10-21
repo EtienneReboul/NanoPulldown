@@ -7,16 +7,19 @@ nanopulldown.inputs.expand (config.yaml `controls:`; a run overlay can turn
 either off):
 
 * positives (`controls.positives`, source tag `known`): the baits' known
-  DIRECT partners in the PPI databases (nanopulldown.services.interactors: UniProt,
-  IntAct, MINT, BioGRID, STRING, Complex Portal). Direct = at least
-  `min_direct_publications` publications with a PSI-MI "direct interaction"
-  (or descendant) or two-hybrid (or descendant) evidence row; co-IP / affinity
-  capture-MS, complex co-membership and STRING alone are not enough.
-  `direct_only: false` takes every partner the databases report (with
+  partners in the PPI databases (nanopulldown.services.interactors: UniProt,
+  IntAct, MINT, BioGRID, STRING, Complex Portal) whose evidence tier with the
+  bait is at least `min_tier` (default high), plus the hand-picked
+  `curated:` partners. Tiers (module doc of nanopulldown.services.interactors):
+  curated > high (direct evidence in >= 2 publications, or direct + MIscore
+  >= 0.6, or a structure) > medium (direct evidence in 1 publication: two
+  hybrid, or "direct interaction" by anything but FRET / BRET / BiFC) > low
+  (co-IP, AP-MS, proximity assays alone, complex co-membership, STRING).
+  `min_tier: low` takes every partner the databases report (with
   `min_databases`), as the former `interactors:` input source did.
   Positives are cut like any prey in fragment mode. A screen prey that is a
-  known partner (direct or not) gets the `known_*` columns too; only the
-  direct ones get the `known` tag.
+  known partner (any tier) gets the `known_*` columns too; only the positives
+  get the `known` tag.
 * negatives (`controls.decoys`, source tag `decoy`): the matched decoy set of
   nanopulldown.inputs.decoys, drawn after the screen's preys are cut.
 
@@ -30,10 +33,14 @@ are the direct ones and the decoy exclusions are all of them.
 
 Columns carried into configs/inputs_<run>.parquet / the results table
 (prefix = `controls.positives.name`, default `known`):
-  known_databases, known_n_databases, known_string_score,
+  known_tier, known_tier_of (`<bait>:<tier>`), known_miscore (recomputed over
+  every database), known_intact_miscore (IntAct's own), known_databases,
+  known_n_databases, known_string_score, known_string_escore / _dscore /
+  _tscore (experiments / curated databases / text-mining, annotation only),
   known_direct_databases, known_direct_methods, known_n_direct_publications,
-  known_direct_of (the baits a partner has direct evidence with: it is a
-  positive control for those baits only, nanopulldown.report.calibration)
+  known_curated_pmids, known_curated_note, known_direct_of (the baits the
+  partner reaches `min_tier` with: it is a positive control for those baits
+  only, nanopulldown.report.calibration)
 
 Preview the positives of a run (fetches, writes only the snapshot):
     nanopulldown --run-config config_drm2_ppi.yaml inputs positives
@@ -44,28 +51,38 @@ import sys
 from pathlib import Path
 
 from nanopulldown.core.specs import parse_protein_spec
-from nanopulldown.services.interactors import DEFAULT_DATABASES, direct_terms, fetch_interactions, summarize
+from nanopulldown.services.interactors import (DEFAULT_DATABASES, DIRECT_DEFAULTS, TIER_DEFAULTS, TIERS,
+                                               evidence_terms, fetch_interactions, summarize)
 from nanopulldown.services.uniprot import fetch_metadata
 
 POSITIVE_DEFAULTS = {
     "enabled": True,
     "name": "known",                # input-source tag in the inputs / results tables
     "databases": DEFAULT_DATABASES,
-    "direct_only": True,
-    "direct_types": ["MI:0407"],    # direct interaction (+ descendants)
-    "direct_methods": ["MI:0018"],  # two hybrid (+ descendants)
-    "min_direct_publications": 1,
+    "min_tier": "high",             # curated > high > medium > low
+    "curated": {},                  # {bait: [{partner, pmids, note}]}
+    **DIRECT_DEFAULTS,
+    **TIER_DEFAULTS,
     "min_databases": 1,
     "same_organism": True,
     "include_self": True,           # the bait itself, when a homo-oligomer is reported
     "max_partners": None,
 }
-COLUMNS = ("databases", "n_databases", "string_score", "direct_databases", "direct_methods",
-           "n_direct_publications", "direct_of")
+COLUMNS = ("tier", "tier_of", "miscore", "intact_miscore", "databases", "n_databases",
+           "string_score", "string_escore", "string_dscore", "string_tscore",
+           "direct_databases", "direct_methods", "n_direct_publications", "direct_of",
+           "curated_pmids", "curated_note")
 
 
 def positives_config(cfg: dict) -> dict:
-    return {**POSITIVE_DEFAULTS, **((cfg.get("controls") or {}).get("positives") or {})}
+    pcfg = {**POSITIVE_DEFAULTS, **((cfg.get("controls") or {}).get("positives") or {})}
+    if "direct_only" in pcfg:                  # replaced by min_tier
+        pcfg["min_tier"] = "medium" if pcfg.pop("direct_only") else "low"
+        print(f"[controls] positives: `direct_only` is replaced by `min_tier` "
+              f"(taken as min_tier: {pcfg['min_tier']})", file=sys.stderr)
+    if pcfg["min_tier"] not in TIERS:
+        raise ValueError(f"controls.positives.min_tier {pcfg['min_tier']!r}: expected one of {list(TIERS)}")
+    return pcfg
 
 
 def known_partners(cfg: dict, bait_accs: list[str], refresh: bool = False) -> tuple[list[dict], list[dict]]:
@@ -79,9 +96,10 @@ def known_partners(cfg: dict, bait_accs: list[str], refresh: bool = False) -> tu
     rows = fetch_interactions(name, pcfg, bait_accs, cfg, refresh=refresh)
     sdir = Path((cfg.get("interactors") or {}).get("snapshot_dir", "data/interactors"))
     taxa = json.loads((sdir / f"{name}.json").read_text()).get("query_taxa") or {}
-    direct = direct_terms(pcfg, cfg)
-    everyone = summarize(rows, {"same_organism": False}, taxa, direct)
-    positives = summarize(rows, pcfg, taxa, direct)
+    terms = evidence_terms(pcfg, cfg)
+    everyone = summarize(rows, {**pcfg, "same_organism": False, "min_tier": "low", "min_databases": 1,
+                                "max_partners": None}, taxa, terms, queries=bait_accs)
+    positives = summarize(rows, pcfg, taxa, terms, queries=bait_accs)
     return positives, everyone
 
 
@@ -151,10 +169,11 @@ def add_positives(res, cfg: dict, refresh: bool = False, verbose: bool = True) -
     if verbose and by_locus:
         print(f"[controls] matched to the screen by gene locus: {', '.join(by_locus)}", file=sys.stderr)
     if verbose and pcfg["enabled"]:
-        crit = (f"direct evidence in >= {pcfg['min_direct_publications']} publication(s)"
-                if pcfg["direct_only"] else f">= {pcfg['min_databases']} database(s)")
-        print(f"[controls] positives: {len(positives)} known partner(s) of {len(baits)} bait(s) with "
-              f"{crit} (of {len(everyone)} reported), {added} not already in the screen", file=sys.stderr)
+        n = {t: sum(p["tier"] == t for p in everyone) for t in TIERS}
+        print(f"[controls] positives: {len(positives)} known partner(s) of {len(baits)} bait(s) at tier "
+              f">= {pcfg['min_tier']} (of {len(everyone)} reported: "
+              f"{', '.join(f'{v} {t}' for t, v in n.items())}), {added} not already in the screen",
+              file=sys.stderr)
     return everyone
 
 
@@ -182,11 +201,14 @@ def main() -> int:
         print("[controls] the config resolves to no baits")
         return 1
     positives, everyone = known_partners(cfg, baits)
-    print("partner\tn_direct_publications\tdirect_methods\tdirect_databases\tdatabases\tstring_score\tof")
-    for p in positives:
-        print(f"{p['partner']}\t{p['n_direct_publications']}\t{p['direct_methods']}\t"
-              f"{p['direct_databases']}\t{p['databases']}\t{p['string_score'] or ''}\t{p['of']}")
-    print(f"[controls] {len(positives)} positive(s) of {len(everyone)} known partner(s)", file=sys.stderr)
+    print("partner\ttier\tmiscore\tintact_miscore\tn_direct_publications\tdirect_methods\t"
+          "databases\tstring_score\tstring_escore\tcurated_pmids\ttier_of")
+    for p in everyone:
+        print(f"{p['partner']}\t{p['tier']}\t{p['miscore']:.2f}\t{p['intact_miscore'] or ''}\t"
+              f"{p['n_direct_publications']}\t{p['direct_methods']}\t{p['databases']}\t"
+              f"{p['string_score'] or ''}\t{p['string_escore'] or ''}\t{p['curated_pmids']}\t{p['tier_of']}")
+    print(f"[controls] {len(positives)} positive(s) at tier >= {positives_config(cfg)['min_tier']} "
+          f"of {len(everyone)} known partner(s)", file=sys.stderr)
     return 0
 
 

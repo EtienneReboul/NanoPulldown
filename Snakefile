@@ -381,6 +381,12 @@ HPC = CFG.get("hpc") or {}
 # outdated under the README's `--rerun-triggers mtime params input`.
 # Pre-downloaded weights (esmfold2.hf_home): the GPU nodes need no internet.
 FOLD_HF_ENV = f'HF_HOME="{EF["hf_home"]}" HF_HUB_OFFLINE=1 ' if EF.get("hf_home") else ""
+# esmfold2.conda_lib_first: the env's lib/ ahead on LD_LIBRARY_PATH. The torch
+# wheel loads libstdc++ before numpy and, lacking an RPATH to the env, gets the
+# system one -- too old on RHEL 8 (CAIUS: numpy needs GLIBCXX_3.4.29).
+if EF.get("conda_lib_first"):
+    FOLD_HF_ENV += ('LD_LIBRARY_PATH="$(python -c \'import sys; print(sys.prefix)\')/lib'
+                    '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ')
 
 
 # Per-fold time fit at the Mac reference settings (10 loops / 100 steps / 1

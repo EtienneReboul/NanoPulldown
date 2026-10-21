@@ -25,7 +25,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "resolve": ("inputs.resolve:main", "preview what the config's `inputs:` selects"),
         "fragments": ("inputs.fragments:main", "preview the domain fragments of some proteins"),
         "decoys": ("inputs.decoys:main", "draw (or preview) the run's matched decoy prey set"),
-        "positives": ("inputs.controls:main", "preview the known direct partners (positive controls)"),
+        "positives": ("inputs.controls:main", "preview the baits' known partners by evidence tier (positive controls)"),
         "interactors": ("services.interactors:main", "preview the known interactors of protein(s)"),
         "uniprot": ("services.uniprot:main", "fetch UniProt sequences / metadata / queries"),
     },

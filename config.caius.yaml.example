@@ -19,6 +19,7 @@ execution:
 esmfold2:
   backend: "torch"                                # CUDA: envs/esmfold2_cuda.yaml
   hf_home: "<HOME>/hf_cache"                      # pre-downloaded: the GPU nodes are offline
+  conda_lib_first: true        # RHEL 8's libstdc++ is too old for the env's numpy (Snakefile FOLD_HF_ENV)
   num_seeds: 5
   num_diffusion_samples: 1
   lm_dropout: 0.3
@@ -44,7 +45,8 @@ hpc:
   fold_chunk_minutes: 1380     # cut chunks at 23 h estimated
 
 minimize:
-  platform_preference: ["CUDA", "OpenCL", "CPU"]
+  platform_preference: ["OpenCL", "CPU"]   # H200 smoke test 2026-10-21: OpenCL OK; CUDA fails
+                                           # (CUDA_ERROR_UNSUPPORTED_PTX_VERSION, driver 580)
 
 annotate:
   aiupred:

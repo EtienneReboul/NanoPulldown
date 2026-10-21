@@ -31,7 +31,7 @@ inputs:
 
 controls:
   positives:
-    direct_only: false          # every partner of the bait, >= 1 database
+    min_tier: low               # every partner of the bait, >= 1 database
     min_databases: 1
   decoys:
     enabled: false

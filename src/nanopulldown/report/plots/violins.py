@@ -16,8 +16,8 @@ When the run has controls, each panel splits into three violins -- known
 partners, screen preys, decoys -- in three shades of the panel's hue
 (lightest = known partners, base = preys, darkest = decoys; each triple
 validated as an ordinal ramp on the dark surface). Groups follow
-nanopulldown.report.calibration: a known partner counts for the bait(s) it has
-direct evidence with only (`<tag>_direct_of`), and a control-only partner of
+nanopulldown.report.calibration: a known partner counts for the bait(s) it is a
+positive control for only (`<tag>_direct_of`), and a control-only partner of
 another bait is left out of that bait's rows. The group is also the x tick
 label and in the hover, so it never rests on color alone.
 """
