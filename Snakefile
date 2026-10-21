@@ -503,12 +503,29 @@ else:
                 out.append([p])
         return out
 
-    _folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
-    # still-to-fold pairs chunked by size: a fold job's GPU class (fold_resources)
-    # follows its largest pair, so mixing sizes would send small pairs to the
-    # few big GPUs; on the Mac it just evens out chunk durations
-    _todo = sorted((p for p in PAIRS if p not in set(_folded)), key=lambda p: pair_tokens(SPECS[p]))
-    for _k, _chunk in enumerate(_chunks(_folded) + _chunks(_todo)):
+    # The chunk plan is fixed by the controller. On a cluster, each job re-parses
+    # this Snakefile when it starts; by then other chunks may have finished,
+    # which moves their pairs from _todo to _folded and renumbers the chunks --
+    # chunk_K would fold another chunk's pairs (or none) and the controller then
+    # misses chunk_K's outputs. So the controller writes its plan and jobs
+    # (remote mode) read it back. Dry runs never write it: one run while a
+    # controller is active would swap the plan under its queued jobs.
+    _plan_file = FOLD_LOG / "fold_chunks.json"
+    _dry = workflow.dryrun or any(a in ("--dry-run", "--dryrun") or (a.startswith("-") and not a.startswith("--") and "n" in a)
+                                  for a in sys.argv[1:])
+    if workflow.remote_exec and _plan_file.exists():
+        _plan = json.loads(_plan_file.read_text())
+    else:
+        _folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
+        # still-to-fold pairs chunked by size: a fold job's GPU class (fold_resources)
+        # follows its largest pair, so mixing sizes would send small pairs to the
+        # few big GPUs; on the Mac it just evens out chunk durations
+        _todo = sorted((p for p in PAIRS if p not in set(_folded)), key=lambda p: pair_tokens(SPECS[p]))
+        _plan = _chunks(_folded) + _chunks(_todo)
+        if not workflow.remote_exec and not _dry:
+            _plan_file.parent.mkdir(parents=True, exist_ok=True)
+            _plan_file.write_text(json.dumps(_plan))
+    for _k, _chunk in enumerate(_plan):
         rule:
             name: f"run_esmfold2_chunk_{_k:03d}"
             output:

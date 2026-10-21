@@ -15,6 +15,8 @@
 execution:
   container_runtime: "apptainer"                  # `module load apptainer` (1.3.1) before launching
   images_dir: "<HOME>/nanopulldown_images"        # plip.sif + aiupred.sif (scripts/caius/setup.sh)
+  apptainer_args: ""                               # config.yaml's "--bind /shared" is IFB's: no /shared here,
+                                                   # and apptainer refuses to start on a missing bind source
 
 esmfold2:
   backend: "torch"                                # CUDA: envs/esmfold2_cuda.yaml
