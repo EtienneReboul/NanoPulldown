@@ -45,7 +45,7 @@ if want controller; then
   if [ -d "$ENV" ]; then "$MM" update -y -p "$ENV" -f envs/controller.yaml
   else "$MM" create -y -p "$ENV" -f envs/controller.yaml; fi
   # rule envs: conda's own package cache (not micromamba's) under the root prefix
-  "$ENV/bin/conda" config --file "$ENV/.condarc" --set pkgs_dirs "$MAMBA_ROOT_PREFIX/conda_pkgs"
+  "$ENV/bin/conda" config --file "$ENV/.condarc" --add pkgs_dirs "$MAMBA_ROOT_PREFIX/conda_pkgs"
 fi
 export PATH=$ENV/bin:$PATH
 snakemake --version

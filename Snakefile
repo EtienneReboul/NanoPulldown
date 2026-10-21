@@ -450,7 +450,9 @@ if PAIRS_PER_LOAD <= 0:
             docker_heavy=DOCKER_HEAVY_POOL,
             # on SLURM (profiles/ifb): GPU model, partition, memory, walltime
             **{k: (lambda wc, k=k: fold_resources([wc.pair]).get(k, ""))
-               for k in ("gpu_model", "constraint", "slurm_partition", "mem_mb", "cpus_per_task", "runtime", "slurm_extra")},
+               for k in ("gpu_model", "slurm_partition", "mem_mb", "cpus_per_task", "runtime", "slurm_extra")
+               # the plugin passes `-C ''` for an empty constraint: declare it only where used
+               + (("constraint",) if HPC.get("gpu_constraints") else ())},
         params:
             out=lambda wc: str(POST / wc.pair / "raw"),
             spec=lambda wc: SPEC_KEY[wc.pair],
