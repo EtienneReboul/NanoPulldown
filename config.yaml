@@ -1846,6 +1846,7 @@ hpc:
   fold_chunk_minutes: 0           # > 0: also cap a chunk's estimate (pairs_per_load still applies)
   fold_time_fit: {}               # {base_s, coef_s, exponent}: per-fold time at 10 loops / 100 steps /
                                   # 1 sample, t = base_s + coef_s * (n/600)^exponent; {} = the Mac fit
+  gpu_request: "gpus"             # "gres": --gres=gpu:1 instead of --gpus (SLURM without cons_tres, CAIUS)
   gpu_constraints: {}             # untyped GPU gres: {gpu_model: node feature}, e.g. {h200: gpuh200}
 
 # ── Stage 2e: reports ────────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ esmfold2:
 hpc:
   gpu_partition: "publicgpu"   # 24 h max; no preemption on the H200 nodes (hpc-n977-981)
   exclude_nodes: ""
+  gpu_request: "gres"          # sbatch rejects --gpus here (no select/cons_tres): --gres=gpu:1
   gpu_constraints: {h200: gpuh200, l40s: gpul40s}   # untyped gres: model -> --constraint
   gpu_classes:
     - {gpu_model: "h200", max_tokens: 0, mem_mb: 160000, cpus: 8}   # 8 H200 + 64 cores per node

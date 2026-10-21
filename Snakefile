@@ -402,6 +402,14 @@ def fold_minutes(pairs):
     return float(HPC.get("fold_load_minutes", 10)) + secs / 60 * float(HPC.get("fold_runtime_safety", 3.0))
 
 
+# hpc.gpu_request: "gpus" (default) -> the plugin's --gpus (gpu=1 + gpu_model);
+# "gres" -> --gres=gpu:1, for SLURM without select/cons_tres (CAIUS rejects
+# --gpus). The plugin adds --gpus for any gpu > 0, so gres mode claims gpu=0 --
+# the Mac's single-model guard (gpu=1) is unaffected, it never sets this.
+GPU_GRES = HPC.get("gpu_request", "gpus") == "gres"
+FOLD_GPU_CLAIM = 0 if GPU_GRES else 1
+
+
 def fold_resources(pairs):
     """SLURM resources of one fold job holding `pairs` (snakemake-executor-plugin-slurm
     keys; the local executor ignores them). gpu=1 + gpu_model -> --gpus=<model>:1;
@@ -419,6 +427,8 @@ def fold_resources(pairs):
         runtime=int(min(float(HPC.get("fold_runtime_max", 4320)),
                         max(float(HPC.get("fold_runtime_min", 60)), fold_minutes(pairs)))),
     )
+    if GPU_GRES:
+        res["gres"] = "gpu:1"
     feature = (HPC.get("gpu_constraints") or {}).get(res["gpu_model"])
     if feature:
         res["gpu_model"], res["constraint"] = "", feature
@@ -446,13 +456,13 @@ if PAIRS_PER_LOAD <= 0:
             # -- which each only claim 1 -- can't run concurrently with a model
             # load; once this rule finishes, up to docker_heavy_pool of them
             # run at once. Also requires a matching `--resources` flag.
-            gpu=1,
+            gpu=FOLD_GPU_CLAIM,
             docker_heavy=DOCKER_HEAVY_POOL,
             # on SLURM (profiles/ifb): GPU model, partition, memory, walltime
             **{k: (lambda wc, k=k: fold_resources([wc.pair]).get(k, ""))
                for k in ("gpu_model", "slurm_partition", "mem_mb", "cpus_per_task", "runtime", "slurm_extra")
                # the plugin passes `-C ''` for an empty constraint: declare it only where used
-               + (("constraint",) if HPC.get("gpu_constraints") else ())},
+               + (("constraint",) if HPC.get("gpu_constraints") else ()) + (("gres",) if GPU_GRES else ())},
         params:
             out=lambda wc: str(POST / wc.pair / "raw"),
             spec=lambda wc: SPEC_KEY[wc.pair],
@@ -504,7 +514,7 @@ else:
                 f"envs/{ESMFOLD_ENV}.yaml"
             resources:
                 # same single-model-at-a-time guard as the per-pair rule above
-                gpu=1,
+                gpu=FOLD_GPU_CLAIM,
                 docker_heavy=DOCKER_HEAVY_POOL,
                 # on SLURM (profiles/ifb): GPU model, partition, memory, walltime
                 **fold_resources(_chunk),

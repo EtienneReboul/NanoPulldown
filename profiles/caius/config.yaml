@@ -18,9 +18,9 @@ keep-going: true
 rerun-incomplete: true
 printshellcmds: true
 
-# GPU jobs submitted at once (fold chunks + minimize_cif): 5 H200 nodes x 8 GPUs.
-resources:
-  - gpu=40
+# No global `gpu=` cap: GPU jobs here claim gres=gpu:1 with gpu=0 (sbatch
+# rejects --gpus, which the plugin emits for any gpu > 0). `jobs:` and SLURM
+# limit them.
 
 default-resources:
   slurm_account: "ibmp"
@@ -38,7 +38,8 @@ set-resources:
     cpus_per_task: 8
   minimize_cif:              # OpenMM on a GPU: seconds per sample, vs ~22 min on CPU
     slurm_partition: "publicgpu"
-    gpu: 1
+    gpu: 0
+    gres: "gpu:1"
     constraint: "gpua100|gpuh100|gpul40s|gpuh200"
     runtime: 30
     mem_mb: 8000
