@@ -58,13 +58,19 @@ fi
 if want images; then
   { type module >/dev/null 2>&1 || source /usr/local/Modules/5.5.0/init/bash; }
   module load apptainer
+  # Unpacked sandbox directories under the .sif names (apptainer takes either):
+  # some CAIUS nodes (hpc-n623/624, 2026-10-22) lack libfuse3, which apptainer
+  # needs to mount a .sif image (squashfuse_ll). The pulled image is kept as .sif.img.
   for spec in plip=pharmai/plip:latest aiupred=ghcr.io/doszilab/aiupred:cpu; do
     name=${spec%%=*}
-    [ -e "$IMAGES/$name.sif" ] && continue    # temporary name: a killed pull leaves no truncated .sif
-    apptainer pull "$IMAGES/$name.sif.partial" "docker://${spec#*=}"
-    mv "$IMAGES/$name.sif.partial" "$IMAGES/$name.sif"
+    [ -e "$IMAGES/$name.sif" ] && continue
+    [ -e "$IMAGES/$name.sif.img" ] || { apptainer pull "$IMAGES/$name.sif.partial" "docker://${spec#*=}"
+                                        mv "$IMAGES/$name.sif.partial" "$IMAGES/$name.sif.img"; }
+    rm -rf "$IMAGES/$name.sandbox.partial"   # temporary name: a killed build leaves no half sandbox
+    apptainer build --sandbox "$IMAGES/$name.sandbox.partial" "$IMAGES/$name.sif.img"
+    mv "$IMAGES/$name.sandbox.partial" "$IMAGES/$name.sif"
   done
-  ls -lh "$IMAGES"/*.sif
+  ls -ld "$IMAGES"/*.sif
 fi
 
 if want envs; then
