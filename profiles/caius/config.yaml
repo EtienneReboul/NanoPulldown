@@ -1,0 +1,58 @@
+# Snakemake profile for CAIUS, the Université de Strasbourg mésocentre (SLURM
+# 22.05). From the checkout on hpc-login, inside tmux, after
+# scripts/caius/setup.sh (see README "Running on CAIUS"):
+#
+#   NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml scripts/caius/run.sh
+#
+# Fold jobs take partition / H200 constraint / memory / walltime from
+# config.local.yaml's `hpc:` block (config.caius.yaml.example). Everything else
+# is a CPU job on `public`, sized below. Compute nodes are offline: the one
+# web-calling rule, annotate_domains_batch, is run from the login node by
+# run.sh before this profile takes over.
+executor: slurm
+software-deployment-method: conda   # rule envs prebuilt by scripts/caius/setup.sh
+jobs: 150
+latency-wait: 60             # BeeGFS
+retries: 1                   # a timed-out fold chunk resumes: finished pairs are skipped
+keep-going: true
+rerun-incomplete: true
+printshellcmds: true
+
+# GPU jobs submitted at once (fold chunks + minimize_cif): 5 H200 nodes x 8 GPUs.
+resources:
+  - gpu=40
+
+default-resources:
+  slurm_account: "ibmp"
+  slurm_partition: "public"
+  mem_mb: 4000
+  runtime: 60                # minutes
+  cpus_per_task: 1
+
+set-resources:
+  annotate_domains_batch:    # normally already done by run.sh on the login node (cache only here)
+    runtime: 120
+  annotate_disorder_batch:   # AIUPred, CPU
+    runtime: 240
+    mem_mb: 16000
+    cpus_per_task: 8
+  minimize_cif:              # OpenMM on a GPU: seconds per sample, vs ~22 min on CPU
+    slurm_partition: "publicgpu"
+    gpu: 1
+    constraint: "gpua100|gpuh100|gpul40s|gpuh200"
+    runtime: 30
+    mem_mb: 8000
+    cpus_per_task: 2
+  run_plip:
+    runtime: 60
+    mem_mb: 8000
+  collect_results_table:
+    mem_mb: 16000
+  fig_metric_violins_interactive:
+    mem_mb: 16000
+  bait_tables:
+    mem_mb: 8000
+  datavzrd_bait:
+    mem_mb: 8000
+  datavzrd_folding:
+    mem_mb: 8000

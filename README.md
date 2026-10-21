@@ -204,6 +204,38 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --profile profiles/ifb
 - Progress: `squeue -u $USER`, and `grep "^\[fold_batch\]"` on the chunk logs
   as on the Mac.
 
+## Running on CAIUS (Strasbourg)
+
+The same ensemble setup as IFB (5 runs x 1 sample, 20 loops / 200 steps,
+`lm_dropout: 0.3`) also runs on CAIUS, the Université de Strasbourg mésocentre
+(`hpc-login.u-strasbg.fr`, account `ibmp`), on the H200 nodes hpc-n977-981
+(8 GPUs, 64 cores, 2.3 TB each; partition `publicgpu`, 24 h max, no
+preemption there). What differs from IFB:
+
+| Aspect | IFB | CAIUS |
+| --- | --- | --- |
+| package manager | the shared `abcfold-npf-pipeline` env + system conda | micromamba (`~/.local/bin`), controller env `~/micromamba/envs/nanopulldown` from [envs/controller.yaml](envs/controller.yaml) |
+| compute-node internet | yes | **no**: installs run on the login node, and so does `annotate_domains_batch` (web calls) |
+| GPU request | `--gpus=h200:1` | untyped gres: `--gpus=1 --constraint=gpuh200` (`hpc.gpu_constraints`) |
+| walltime | 3 days | 24 h: fold chunks cut at 23 h estimated (`hpc.fold_chunk_minutes`), by an H200 fit of the IFB timings (`hpc.fold_time_fit`, ~n^3) |
+| storage | 500k inodes | 500 GiB home (BeeGFS), no file limit (`diskquota`) |
+
+Setup, once, from a clone on hpc-login (`git clone
+https://github.com/EtienneReboul/NanoPulldown.git`): copy the untracked
+`configs/pairs.parquet`, `configs/proteins.parquet` and
+`configs/inputs_<run>.parquet` from the Mac, then
+
+```bash
+nice -n 19 scripts/caius/setup.sh   # micromamba, controller env, config.local.yaml, images, rule envs, weights
+```
+
+and add the Mac config.local.yaml's `annotate:` block to the generated
+config.local.yaml. Launch inside tmux:
+
+```bash
+NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml scripts/caius/run.sh 2>&1 | tee logs_<run>.caius.log
+```
+
 ## Fragment mode (domain x domain, as in yeast two-hybrid)
 
 Set `fragments.enabled: true` in a run overlay (see `config_drm2_fragments.yaml`)

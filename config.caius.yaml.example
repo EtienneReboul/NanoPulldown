@@ -1,0 +1,50 @@
+# CAIUS (Université de Strasbourg mésocentre, hpc-login.u-strasbg.fr) machine
+# config. On the cluster, scripts/caius/setup.sh writes it to config.local.yaml
+# (gitignored) with <HOME> replaced by $HOME -- deep-merged over config.yaml,
+# under any run overlay (config_<run>.yaml). Also carry over the Mac
+# config.local.yaml's `annotate:` block (InterProScan email, rate limits).
+# See README "Running on CAIUS (Strasbourg)".
+#
+# Same science settings as config.ifb.yaml.example (5 runs x 1 sample, 20
+# loops / 200 steps, lm_dropout 0.3); what differs is the cluster:
+#  - compute nodes have NO internet: envs, images and weights are installed
+#    from the login node, and annotate_domains_batch (web calls) runs there too
+#  - GPU gres is untyped (gpu:8): an H200 is requested by node feature
+#  - publicgpu caps jobs at 24 h, so fold chunks are cut by estimated walltime
+
+execution:
+  container_runtime: "apptainer"                  # `module load apptainer` (1.3.1) before launching
+  images_dir: "<HOME>/nanopulldown_images"        # plip.sif + aiupred.sif (scripts/caius/setup.sh)
+
+esmfold2:
+  backend: "torch"                                # CUDA: envs/esmfold2_cuda.yaml
+  hf_home: "<HOME>/hf_cache"                      # pre-downloaded: the GPU nodes are offline
+  num_seeds: 5
+  num_diffusion_samples: 1
+  lm_dropout: 0.3
+  num_loops: 20
+  num_sampling_steps: 200
+  max_tokens: 2880             # H200 (141 GB) at 1 sample by the Mac's n^2.2 memory fit
+  pairs_per_load: 30           # upper bound; hpc.fold_chunk_minutes usually cuts first
+
+hpc:
+  gpu_partition: "publicgpu"   # 24 h max; no preemption on the H200 nodes (hpc-n977-981)
+  exclude_nodes: ""
+  gpu_constraints: {h200: gpuh200, l40s: gpul40s}   # untyped gres: model -> --constraint
+  gpu_classes:
+    - {gpu_model: "h200", max_tokens: 0, mem_mb: 160000, cpus: 8}   # 8 H200 + 64 cores per node
+  # IFB H200 timings (48 DNE1 folds, 700-1,820 tokens, 20/200 x 5 runs, within
+  # +-15%) refit at the Mac reference settings: ~n^3 on the CUDA kernels.
+  # 2400 tokens ~3.4 h per pair, 2880 ~5.8 h.
+  fold_time_fit: {base_s: 0, coef_s: 20.4, exponent: 2.98}
+  fold_runtime_safety: 1.3     # a measured fit, not the Mac's (IFB keeps 3.0)
+  fold_load_minutes: 30        # IFB cold loads took 15-28 min
+  fold_runtime_max: 1440       # publicgpu limit
+  fold_chunk_minutes: 1380     # cut chunks at 23 h estimated
+
+minimize:
+  platform_preference: ["CUDA", "OpenCL", "CPU"]
+
+annotate:
+  aiupred:
+    docker_platform: ""          # docker-only setting

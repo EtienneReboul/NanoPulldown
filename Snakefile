@@ -383,27 +383,45 @@ HPC = CFG.get("hpc") or {}
 FOLD_HF_ENV = f'HF_HOME="{EF["hf_home"]}" HF_HUB_OFFLINE=1 ' if EF.get("hf_home") else ""
 
 
+# Per-fold time fit at the Mac reference settings (10 loops / 100 steps / 1
+# sample): t(n) = base_s + coef_s * (n/600)^exponent. Default: the Mac fit
+# (5,768 folds). hpc.fold_time_fit overrides it per machine -- the CUDA kernels
+# scale more steeply (H200: ~n^3, config.caius.yaml.example).
+FOLD_FIT = {"base_s": 2.6, "coef_s": 46.8, "exponent": 2.16, **(HPC.get("fold_time_fit") or {})}
+
+
+def fold_minutes(pairs):
+    """Walltime estimate (minutes) of one fold job holding `pairs`: model load
+    (hpc.fold_load_minutes) + the FOLD_FIT per-fold time, scaled ~linearly by
+    loops (trunk, ~90%) and steps (diffusion) and by the number of runs, times
+    hpc.fold_runtime_safety."""
+    scale = (0.9 * (int(EF["num_loops"]) + 1) / 11 + 0.1 * int(EF["num_sampling_steps"]) / 100) \
+        * int(EF.get("num_seeds", 1)) * (1 + 0.1 * (int(EF["num_diffusion_samples"]) - 1))
+    secs = sum(FOLD_FIT["base_s"] + FOLD_FIT["coef_s"] * (pair_tokens(SPECS[p]) / 600) ** FOLD_FIT["exponent"]
+               for p in pairs) * scale
+    return float(HPC.get("fold_load_minutes", 10)) + secs / 60 * float(HPC.get("fold_runtime_safety", 3.0))
+
+
 def fold_resources(pairs):
     """SLURM resources of one fold job holding `pairs` (snakemake-executor-plugin-slurm
-    keys; the local executor ignores them). gpu=1 + gpu_model -> --gpus=<model>:1.
-    Walltime: the Mac per-fold fit t(n) = 2.6 s + 46.8 s * (n/600)^2.16 (5,768 folds
-    at 10 loops / 100 steps / 1 sample), scaled ~linearly by loops (trunk, ~90%)
-    and steps (diffusion) and by the number of runs, times hpc.fold_runtime_safety --
-    the Mac being the slower machine, this errs long."""
+    keys; the local executor ignores them). gpu=1 + gpu_model -> --gpus=<model>:1;
+    on clusters with untyped GPU gres (CAIUS: gpu:8), hpc.gpu_constraints maps the
+    model to a node feature instead (h200 -> --constraint=gpuh200, --gpus=1).
+    Walltime: fold_minutes(), capped at hpc.fold_runtime_max (the partition's limit)."""
     n = [pair_tokens(SPECS[p]) for p in pairs]
     classes = HPC.get("gpu_classes") or [{}]
     cls = next((c for c in classes if not c.get("max_tokens") or max(n) <= c["max_tokens"]), classes[-1])
-    scale = (0.9 * (int(EF["num_loops"]) + 1) / 11 + 0.1 * int(EF["num_sampling_steps"]) / 100) \
-        * int(EF.get("num_seeds", 1)) * (1 + 0.1 * (int(EF["num_diffusion_samples"]) - 1))
-    secs = sum(2.6 + 46.8 * (t / 600) ** 2.16 for t in n) * scale
-    minutes = 10 + secs / 60 * float(HPC.get("fold_runtime_safety", 3.0))
     res = dict(
         gpu_model=cls.get("gpu_model", ""),
         slurm_partition=HPC.get("gpu_partition", "gpu"),
         mem_mb=int(cls.get("mem_mb", 64000)),
         cpus_per_task=int(cls.get("cpus", 8)),
-        runtime=int(min(4320, max(float(HPC.get("fold_runtime_min", 60)), minutes))),
+        runtime=int(min(float(HPC.get("fold_runtime_max", 4320)),
+                        max(float(HPC.get("fold_runtime_min", 60)), fold_minutes(pairs)))),
     )
+    feature = (HPC.get("gpu_constraints") or {}).get(res["gpu_model"])
+    if feature:
+        res["gpu_model"], res["constraint"] = "", feature
     if HPC.get("exclude_nodes"):
         res["slurm_extra"] = f"--exclude={HPC['exclude_nodes']}"
     return res
@@ -432,7 +450,7 @@ if PAIRS_PER_LOAD <= 0:
             docker_heavy=DOCKER_HEAVY_POOL,
             # on SLURM (profiles/ifb): GPU model, partition, memory, walltime
             **{k: (lambda wc, k=k: fold_resources([wc.pair]).get(k, ""))
-               for k in ("gpu_model", "slurm_partition", "mem_mb", "cpus_per_task", "runtime", "slurm_extra")},
+               for k in ("gpu_model", "constraint", "slurm_partition", "mem_mb", "cpus_per_task", "runtime", "slurm_extra")},
         params:
             out=lambda wc: str(POST / wc.pair / "raw"),
             spec=lambda wc: SPEC_KEY[wc.pair],
@@ -454,8 +472,18 @@ else:
     # everything downstream of them (minimize, PLIP, ...). With
     # `--rerun-triggers mtime`, a chunk whose outputs all exist is not rerun even
     # though its membership changed.
+    # hpc.fold_chunk_minutes (> 0) also closes a chunk before its fold_minutes()
+    # estimate passes that budget -- under a short partition walltime (CAIUS
+    # publicgpu: 24 h) the largest pairs then go a few per job.
     def _chunks(pairs):
-        return [pairs[i:i + PAIRS_PER_LOAD] for i in range(0, len(pairs), PAIRS_PER_LOAD)]
+        budget = float(HPC.get("fold_chunk_minutes", 0))
+        out = []
+        for p in pairs:
+            if out and len(out[-1]) < PAIRS_PER_LOAD and not (budget and fold_minutes(out[-1] + [p]) > budget):
+                out[-1].append(p)
+            else:
+                out.append([p])
+        return out
 
     _folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
     # still-to-fold pairs chunked by size: a fold job's GPU class (fold_resources)

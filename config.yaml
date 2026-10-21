@@ -1841,6 +1841,12 @@ hpc:
   # times this safety factor, capped at the gpu partition's 3 days
   fold_runtime_safety: 3.0
   fold_runtime_min: 60            # minutes
+  fold_runtime_max: 4320          # minutes: the gpu partition's walltime limit (CAIUS publicgpu: 1440)
+  fold_load_minutes: 10           # model load allowance per fold job
+  fold_chunk_minutes: 0           # > 0: also cap a chunk's estimate (pairs_per_load still applies)
+  fold_time_fit: {}               # {base_s, coef_s, exponent}: per-fold time at 10 loops / 100 steps /
+                                  # 1 sample, t = base_s + coef_s * (n/600)^exponent; {} = the Mac fit
+  gpu_constraints: {}             # untyped GPU gres: {gpu_model: node feature}, e.g. {h200: gpuh200}
 
 # ── Stage 2e: reports ────────────────────────────────────────────────────────
 report:
