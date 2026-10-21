@@ -68,7 +68,9 @@ if want images; then
 fi
 
 if want envs; then
-  snakemake --use-conda --conda-create-envs-only --cores 2
+  # envs/pydock.yaml builds LightDock's C extension with conda-forge's GCC (14+),
+  # which makes its old PyArray_DATA pointer casts an error
+  CFLAGS="-Wno-error=incompatible-pointer-types" snakemake --use-conda --conda-create-envs-only --cores 2
 fi
 
 if want weights; then
