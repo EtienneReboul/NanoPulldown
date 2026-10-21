@@ -40,6 +40,10 @@ straight into folding.
                          deleted afterwards)
       plip_parse         pliparser -> per-sample ChimeraX .cxc (+ temporary contact CSVs)
       aggregate_plip     -> results/<pair>/plip_contacts.parquet (all samples)
+      pydock_energy      pyDock bait-prey energy (LightDock's cpydock) of each
+                         minimized sample -> results/<pair>/pydock_energy.parquet;
+                         the results table combines it with 0.8 ipTM + 0.2 pTM
+                         into z-scores (Rodriguez-Lumbreras et al 2026, Eq. 1)
       + report figures (domain x domain confidence heatmaps, minimize energy,
         PLIP contact heatmaps) and reports/report.zip (onsuccess hook; unzip
         -> report.html) -- the ONLY report this pipeline produces.
@@ -736,6 +740,30 @@ rule count_clashes:
         """
 
 
+# pyDock binding energy between the bait chains and the prey chains of every
+# minimized sample (the AMBER charges need the hydrogens minimization adds).
+rule pydock_energy:
+    input:
+        minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb.gz"), s=SAMPLE_IDX),
+    output:
+        str(POST / "{pair}" / "pydock_energy.parquet"),
+    log:
+        str(FOLD_LOG / "pydock" / "{pair}.log"),
+    conda:
+        "envs/pydock.yaml"
+    params:
+        n=N_SAMPLES,
+        bait=lambda wc: ",".join(SPECS[wc.pair]["bait_chains"]),
+        prey=lambda wc: ",".join(SPECS[wc.pair]["prey_chains"]),
+    shell:
+        r"""
+        {NP} pydock --pair {wildcards.pair} \
+          --results-root {POST} --num-samples {params.n} \
+          --bait-chains {params.bait} --prey-chains {params.prey} \
+          --out {output[0]} > {log} 2>&1
+        """
+
+
 rule fig_clash_test:
     input:
         [str(POST / p / "clashes.csv") for p in PAIRS],
@@ -759,6 +787,7 @@ rule collect_results_table:
     input:
         metrics=[str(POST / p / "interface_metrics.parquet") for p in PAIRS],
         plip=[str(POST / p / "plip_contacts.parquet") for p in PAIRS],
+        pydock=[str(POST / p / "pydock_energy.parquet") for p in PAIRS],
     output:
         str(FOLD_REP / "results_table.csv"),
     conda:

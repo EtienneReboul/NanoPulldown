@@ -75,7 +75,9 @@ import pandas as pd
 from nanopulldown.core.proteins import load_proteins
 from nanopulldown.core.specs import load_pairs
 
-METRICS = ["pinc", "ipsae", "pair_iptm", "ilis", "pdockq"]
+# higher = better for all (conformal_p counts decoys >= score); the per-pair
+# z_af_pydock_pair is left out -- it isn't comparable between pairs
+METRICS = ["pinc", "ipsae", "pair_iptm", "ilis", "pdockq", "z_af_pydock_run"]
 
 
 def bh(p: np.ndarray) -> np.ndarray:

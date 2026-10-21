@@ -94,6 +94,22 @@ views:
           label: "PLIP halogen"
         plip_metal:
           label: "PLIP metal"
+        pydock_elec:
+          label: "pyDock elec"
+        pydock_desolv:
+          label: "pyDock desolv"
+        pydock_vdw:
+          label: "pyDock vdW"
+        pydock:
+          label: "pyDock"
+        pydock_1vdw:
+          label: "pyDock-1VDW"
+        af_mc:
+          label: "0.8 ipTM + 0.2 pTM"
+        z_af_pydock_run:
+          label: "Z AF/pyDock (run)"
+        z_af_pydock_pair:
+          label: "Z AF/pyDock (pair)"
         note:
           label: "note"
 

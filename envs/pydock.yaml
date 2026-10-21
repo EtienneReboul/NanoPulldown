@@ -1,0 +1,24 @@
+name: nanopulldown-pydock
+# Stage 2d — pyDock bait-prey energy of the minimized samples
+# (nanopulldown.structure.pydock), via LightDock's C port of the pyDock scoring
+# function. Its own env, not analysis.yaml: LightDock is source-only on PyPI
+# (a C extension, hence the compiler), and changing analysis.yaml would rebuild
+# that env and rerun every rule that uses it. ProDy (a LightDock install
+# requirement, unused by cpydock) comes from pip: conda-forge's 2.5.0 declares
+# numpy<1.24 and makes pip downgrade numpy, and it drags in matplotlib.
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - scipy>=1.7
+  - cython>=0.29.13
+  - freesasa-python>=2.0.3
+  - pandas>=2.0
+  - pyarrow>=15.0
+  - pyyaml>=6.0   # nanopulldown.core.config
+  - c-compiler
+  - pip
+  - pip:
+      - lightdock==0.9.4

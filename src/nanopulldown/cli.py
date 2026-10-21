@@ -41,6 +41,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "minimize": ("structure.minimize:main", "OpenMM energy minimization of one sample"),
         "metrics": ("structure.metrics:main", "ipSAE / iLIS / Pinc / pair ipTM of one pair"),
         "clashes": ("structure.clashes:main", "steric clashes, raw vs minimized samples"),
+        "pydock": ("structure.pydock:main", "pyDock bait-prey energy of one pair's minimized samples"),
         "calibrate": ("report.calibration:main", "decoy-calibrated conformal p-values + BH per bait"),
     },
     "plip": {

@@ -16,6 +16,17 @@ sample and chain pair: `plip_contacts` = all bait<->prey contacts, and one
 PLIP table exists but has no contact for a row gets 0, not NaN -- "no
 contacts" is a real value when ranking; NaN means PLIP never ran.
 
+pyDock energies (results/<pair>/pydock_energy.parquet, per sample) join on
+(pair, sample_index), and with them the combined score of Rodriguez-Lumbreras
+et al 2026 (Proteins 94:1827, Eq. 1): af_mc = 0.8 ipTM + 0.2 pTM (ESMFold2's
+global ipTM / pTM), and Z(af_mc) - Z(pydock_1vdw), higher = better --
+  z_af_pydock_run    z-scores over every sample of the run (all pairs): ranks
+                     preys against each other
+  z_af_pydock_pair   z-scores over the samples of one pair, as in the paper:
+                     picks a pair's best model, not comparable between pairs
+Both are taken over samples (not rows: a sample repeats per chain pair) that
+have af_mc and pydock_1vdw; NaN where either is missing or the spread is 0.
+
 Each row also carries the pair's display names (bait / prey short labels,
 prey protein name and locus, both accessions -- core.proteins.identity_columns)
 and, from the run's configs/inputs_<run>.parquet, the input sources that
@@ -49,6 +60,28 @@ PLIP_TYPES = {
     "halogen_bonds": "plip_halogen", "metal_complexes": "plip_metal",
 }
 PLIP_COLS = ["plip_contacts", *PLIP_TYPES.values()]
+PYDOCK_COLS = ["pydock_elec", "pydock_desolv", "pydock_vdw", "pydock", "pydock_1vdw"]
+SCORE_COLS = ["af_mc", "z_af_pydock_run", "z_af_pydock_pair"]
+AF_MC_IPTM_WEIGHT = 0.8          # af_mc = 0.8 ipTM + 0.2 pTM (the paper's AF-MC)
+
+
+def zscore(x: pd.Series) -> pd.Series:
+    sd = x.std(ddof=0)
+    return (x - x.mean()) / sd if sd > 0 else x * float("nan")
+
+
+def combined_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """SCORE_COLS for each (pair, sample_index) of `df` -- see the module docstring."""
+    s = df.drop_duplicates(["pair", "sample_index"])[["pair", "sample_index", "ptm", "iptm", "pydock_1vdw"]]
+    s = s.assign(af_mc=AF_MC_IPTM_WEIGHT * s["iptm"] + (1 - AF_MC_IPTM_WEIGHT) * s["ptm"])
+    z = s.dropna(subset=["af_mc", "pydock_1vdw"]).copy()
+    z["z_af_pydock_run"] = zscore(z["af_mc"]) - zscore(z["pydock_1vdw"])
+    g = z.groupby("pair")
+    z["z_af_pydock_pair"] = g["af_mc"].transform(zscore) - g["pydock_1vdw"].transform(zscore)
+    s = s.merge(z[["pair", "sample_index", "z_af_pydock_run", "z_af_pydock_pair"]],
+                on=["pair", "sample_index"], how="left")
+    return df.drop(columns=SCORE_COLS, errors="ignore").merge(
+        s[["pair", "sample_index", *SCORE_COLS]], on=["pair", "sample_index"], how="left")
 
 
 def plip_counts(path: Path, rows: pd.DataFrame) -> pd.DataFrame:
@@ -99,16 +132,23 @@ def results_main() -> int:
         pc = plip_counts(Path(a.results_root) / pair / "plip_contacts.parquet", joined)
         joined = joined.reset_index(drop=True)
         joined[PLIP_COLS] = pc[PLIP_COLS].to_numpy()
+        pd_path = Path(a.results_root) / pair / "pydock_energy.parquet"
+        if pd_path.exists():
+            joined = joined.merge(pd.read_parquet(pd_path, columns=["pair", "sample_index", *PYDOCK_COLS]),
+                                  on=["pair", "sample_index"], how="left")
+        else:
+            joined = joined.assign(**{c: float("nan") for c in PYDOCK_COLS})
         rows.append(joined)
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     if rows:
-        df = pd.concat(rows, ignore_index=True)
+        df = combined_scores(pd.concat(rows, ignore_index=True))
     else:
         df = pd.DataFrame(columns=["pair", "sample_index", "chain_i", "chain_j", "ptm", "iptm",
                                     "mean_plddt", "lis", "clis", "ilis", "pinc", "ipsae",
-                                    "pdockq", "pdockq2", "pair_iptm", "note", *PLIP_COLS])
+                                    "pdockq", "pdockq2", "pair_iptm", "note", *PLIP_COLS,
+                                    *PYDOCK_COLS, *SCORE_COLS])
 
     specs, proteins = load_pairs(), load_proteins()
     ident = pd.DataFrame([{"pair": p, **identity_columns(specs[p], proteins)}

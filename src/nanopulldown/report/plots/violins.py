@@ -40,7 +40,7 @@ SHADES = [("#8cbefe", "#3987e5", "#205ba2"), ("#fda080", "#d95926", "#98380f"),
 GROUPS = ["known partners", "preys", "decoys"]
 
 METRICS = ["ptm", "iptm", "pair_iptm", "mean_plddt", "ipsae", "lis", "clis",
-           "ilis", "pinc", "pdockq", "pdockq2", "plip_contacts"]
+           "ilis", "pinc", "pdockq", "pdockq2", "plip_contacts", "pydock_1vdw", "z_af_pydock_run"]
 
 
 def best_fragment(df: pd.DataFrame, m: str) -> pd.DataFrame:

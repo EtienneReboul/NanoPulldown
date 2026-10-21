@@ -38,6 +38,7 @@ OOM-crash.
 │  ─► raw/sample_<i>.cif.gz + raw/fold.parquet (scores, PAE, pLDDT)         │
 │  ─► OpenMM minimization                     │
 │  ─► rescoring: ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM             │
+│  ─► pyDock energy of minimized samples; Z(AF conf) − Z(pyDock-1VDW)       │
 │  ─► reports/report.zip  (unzip → report.html) — the ONE report            │
 └──────────────────────────────────────────────────────────────────────────┘
 
@@ -362,7 +363,7 @@ downward, and each layer adds as few dependencies as it can:
 | `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), per-pair merge   | requests                      |
 | `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
 | `fold`         | ESMFold2-Fast (MLX), single pair or one model load per chunk                | esm, mlx, numpy               |
-| `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc)    | openmm / gemmi, scipy, numpy  |
+| `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc), pyDock energy | openmm / gemmi, scipy, numpy / lightdock |
 | `plip`         | pliparser's cxc config, per-pair contact table (the PLIP image run and the pliparser calls stay shell in the Snakefile) | none / pandas |
 | `report`       | figures (`report.plots`), tables, decoy calibration, datavzrd + report zip  | matplotlib, plotly, pandas    |
 
