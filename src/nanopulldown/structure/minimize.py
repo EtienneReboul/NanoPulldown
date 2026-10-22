@@ -45,6 +45,25 @@ def energy_path(pdb_path: Path) -> Path:
     return pdb_path.with_name(f"{stem}_energy.parquet")
 
 
+def _opencl_gpu_platform(platform) -> int | None:
+    """Index of the first OpenCL platform whose default device is a GPU
+    vendor's (NVIDIA / AMD / Apple), probed on a 1-particle system."""
+    from openmm import Context, System, VerletIntegrator
+
+    probe = System()
+    probe.addParticle(1.0)
+    for i in range(8):
+        try:
+            ctx = Context(probe, VerletIntegrator(0.001), platform, {"OpenCLPlatformIndex": str(i)})
+        except Exception:                                     # noqa: BLE001
+            break                                             # past the last platform
+        vendor = platform.getPropertyValue(ctx, "OpenCLPlatformName")
+        del ctx
+        if any(v in vendor for v in ("NVIDIA", "AMD Accelerated", "Apple")):
+            return i
+    return None
+
+
 def _make_simulation(topology, system, preference: list[str]):
     """Simulation on the first platform of `preference` that both exists AND
     starts: a platform can be listed yet fail on its first Context -- e.g.
@@ -62,14 +81,27 @@ def _make_simulation(topology, system, preference: list[str]):
     for name in [*preference, "Reference"]:
         try:
             platform = Platform.getPlatformByName(name)
+            # OpenCL: a GPU vendor's OpenCL platform, never a CPU one. CAIUS nodes
+            # also register Intel's CPU OpenCL, which OpenMM may silently pick --
+            # minimization then crawls on 2 cores past the job's walltime.
+            props = {}
+            if name == "OpenCL":
+                idx = _opencl_gpu_platform(platform)
+                if idx is None:
+                    raise RuntimeError("no GPU OpenCL platform")
+                props = {"OpenCLPlatformIndex": str(idx)}
             # an integrator belongs to one Context: a fresh one per attempt
             integrator = LangevinMiddleIntegrator(300 * unit.kelvin, 1 / unit.picosecond,
                                                   0.002 * unit.picoseconds)
-            simulation = Simulation(topology, system, integrator, platform)
+            simulation = Simulation(topology, system, integrator, platform, props)
         except Exception as e:                                # noqa: BLE001
-            print(f"[minimize] platform {name} unusable ({str(e).splitlines()[0][:120]}) -- trying the next")
+            print(f"[minimize] platform {name} unusable ({str(e).splitlines()[0][:120]}) -- trying the next",
+                  flush=True)
             continue
-        print(f"[minimize] platform: {name}")
+        device = ""
+        if name in ("OpenCL", "CUDA"):
+            device = " (" + platform.getPropertyValue(simulation.context, "DeviceName").strip() + ")"
+        print(f"[minimize] platform: {name}{device}", flush=True)
         return simulation
     raise RuntimeError("no OpenMM platform could start, not even Reference")
 
