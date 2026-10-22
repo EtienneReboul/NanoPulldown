@@ -17,6 +17,10 @@ retries: 1                   # a timed-out fold chunk resumes: finished pairs ar
 keep-going: true
 rerun-incomplete: true
 printshellcmds: true
+# greedy, not the default ILP scheduler: the ILP one writes its MPS file to
+# /tmp, and hpc-login1's root fs (with /tmp) fills up -- the controller died
+# on ENOSPC there (2026-10-22 09:46) and cancelled its 40 jobs
+scheduler: greedy
 
 # No global `gpu=` cap: GPU jobs here claim gres=gpu:1 with gpu=0 (sbatch
 # rejects --gpus, which the plugin emits for any gpu > 0). `jobs:` and SLURM
