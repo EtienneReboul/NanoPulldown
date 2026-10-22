@@ -32,6 +32,7 @@ default-resources:
   mem_mb: 4000
   runtime: 60                # minutes
   cpus_per_task: 1
+  tmpdir: "'/tmp'"           # jobs' TMPDIR: node-local, not the controller's ($HOME/tmp, run.sh)
 
 set-resources:
   annotate_domains_batch:    # normally already done by run.sh on the login node (cache only here)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Launch (or resume) a run on CAIUS from the login node, inside tmux:
 #
+#   export TMUX_TMPDIR=~/.tmux-sock   # hpc-login1's /tmp can be full (tmux needs a socket)
 #   tmux new -s <run>
 #   NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml scripts/caius/run.sh [extra snakemake args]
 #
@@ -13,6 +14,11 @@ cd "$(dirname "$0")/../.."
 export NANOPULLDOWN_RUN_CONFIG
 export PATH=${MAMBA_ROOT_PREFIX:-$HOME/micromamba}/envs/nanopulldown/bin:$PATH
 export CONDA_CHANNEL_PRIORITY=strict
+# hpc-login1's root fs (/tmp) fills up (other users): here-documents and the
+# controller's temp files go under $HOME. Jobs get /tmp back from the
+# profile's tmpdir resource (exported as their TMPDIR).
+export TMPDIR=$HOME/tmp/controller
+mkdir -p "$TMPDIR"
 { type module >/dev/null 2>&1 || source /usr/local/Modules/5.5.0/init/bash; }
 module load apptainer        # PLIP / AIUPred jobs inherit the controller's environment
 
