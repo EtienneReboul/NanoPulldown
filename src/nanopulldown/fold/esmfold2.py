@@ -140,8 +140,24 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
     n_requested = int(ef_cfg["num_diffusion_samples"])
     clear = _memory_fns(ef_cfg.get("backend", "mlx"))[0]
     seeds = [int(ef_cfg["seed"]) + k for k in range(int(ef_cfg.get("num_seeds", 1)))]
-    results = []
-    for seed in seeds:
+    run_params = {k: ef_cfg[k] for k in ("checkpoint", "num_loops", "num_sampling_steps",
+                                         "num_diffusion_samples", "seed")}
+    run_params.update(backend=ef_cfg.get("backend", "mlx"), num_seeds=len(seeds),
+                      lm_dropout=float(ef_cfg.get("lm_dropout", 0.0)))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pair = spec["name"]
+    written, rows = [], []
+    for k, seed in enumerate(seeds):
+        # Per-seed checkpoint: a large pair is ~5 x 70 min on an H200 and CAIUS
+        # preempts publicgpu jobs, so each seed's samples + rows are kept as
+        # soon as they exist and a rerun only folds the missing seeds.
+        ckpt = out_dir / f".seed_{seed}.pkl"
+        done = _load_seed(ckpt, run_params, n_requested)
+        if done is not None:
+            print(f"[run_esmfold2] seed {seed}: reusing checkpoint", flush=True)
+            rows += done
+            written += [out_dir / f"sample_{k * n_requested + j}.cif.gz" for j in range(n_requested)]
+            continue
         t0 = time.time()
         res = builder.fold(
             model, spi,
@@ -166,38 +182,64 @@ def fold_pair(spec: dict, cfg: dict, out_dir: Path, loaded=None) -> list[Path]:
                 "(silently dropped samples rather than raising). Try again, or "
                 "lower esmfold2.num_diffusion_samples in config.yaml."
             )
-        results += [(seed, r) for r in (res if isinstance(res, list) else [res])]
+        seed_rows = []
+        for j, result in enumerate(res if isinstance(res, list) else [res]):
+            i = k * n_requested + j
+            cif_path = out_dir / f"sample_{i}.cif.gz"
+            # mtime=0: identical structures give byte-identical files
+            with gzip.GzipFile(cif_path, "wb", mtime=0) as fh:
+                fh.write(result.complex.to_mmcif().encode())
+            seed_rows.append(fold_row(
+                # always the results/<pair>/raw/ location, even when written to
+                # run_esmfold2_batch.py's cache dir (hard-linked there afterwards)
+                pair, seed, i, f"{pair}/raw/{cif_path.name}",
+                ptm=result.ptm, iptm=result.iptm, plddt=result.plddt, pae=result.pae,
+                chain_id=result.complex.chain_id,
+                chain_lookup=dict(result.complex.metadata.chain_lookup),
+                residue_index=result.residue_index,
+                pair_chains_iptm=result.pair_chains_iptm,
+            ))
+            written.append(cif_path)
+            print(f"[run_esmfold2] sample {i}: ptm={result.ptm:.3f} iptm={result.iptm}"
+                  if result.ptm is not None else f"[run_esmfold2] sample {i} written", flush=True)
+        _save_seed(ckpt, run_params, seed_rows)
+        rows += seed_rows
         clear()
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    pair = spec["name"]
-    written, rows = [], []
-    for i, (seed, result) in enumerate(results):
-        cif_path = out_dir / f"sample_{i}.cif.gz"
-        # mtime=0: identical structures give byte-identical files
-        with gzip.GzipFile(cif_path, "wb", mtime=0) as fh:
-            fh.write(result.complex.to_mmcif().encode())
-
-        rows.append(fold_row(
-            # always the results/<pair>/raw/ location, even when written to
-            # run_esmfold2_batch.py's cache dir (hard-linked there afterwards)
-            pair, seed, i, f"{pair}/raw/{cif_path.name}",
-            ptm=result.ptm, iptm=result.iptm, plddt=result.plddt, pae=result.pae,
-            chain_id=result.complex.chain_id,
-            chain_lookup=dict(result.complex.metadata.chain_lookup),
-            residue_index=result.residue_index,
-            pair_chains_iptm=result.pair_chains_iptm,
-        ))
-        written.append(cif_path)
-        print(f"[run_esmfold2] sample {i}: ptm={result.ptm:.3f} iptm={result.iptm}"
-              if result.ptm is not None else f"[run_esmfold2] sample {i} written")
-
-    run_params = {k: ef_cfg[k] for k in ("checkpoint", "num_loops", "num_sampling_steps",
-                                         "num_diffusion_samples", "seed")}
-    run_params.update(backend=ef_cfg.get("backend", "mlx"), num_seeds=len(seeds),
-                      lm_dropout=float(ef_cfg.get("lm_dropout", 0.0)))
     write_fold(out_dir / FOLD_FILE, rows, run_params=run_params)
+    for seed in seeds:                                   # fold.parquet is the record now
+        (out_dir / f".seed_{seed}.pkl").unlink(missing_ok=True)
     return written
+
+
+def _save_seed(path: Path, run_params: dict, rows: list[dict]) -> None:
+    """One seed's fold rows, written atomically (after its sample_*.cif.gz)."""
+    import pickle
+
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "wb") as fh:
+        pickle.dump({"run_params": run_params, "rows": rows}, fh)
+    os.replace(tmp, path)
+
+
+def _load_seed(path: Path, run_params: dict, n_samples: int) -> list[dict] | None:
+    """A seed checkpoint's rows if it was made with these run parameters and its
+    structures are all there; else None (the seed is folded again)."""
+    import pickle
+
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as fh:
+            ck = pickle.load(fh)
+    except Exception:                                      # noqa: BLE001 -- truncated / stale
+        return None
+    rows = ck.get("rows") or []
+    if ck.get("run_params") != run_params or len(rows) != n_samples:
+        return None
+    if not all((path.parent / Path(r["structure_path"]).name).exists() for r in rows):
+        return None
+    return rows
 
 
 def _link_tree(src: Path, dst: Path) -> None:
@@ -245,8 +287,7 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
               f"{active() / 2**30:.1f} GiB resident", flush=True)
 
     for i, p in enumerate(todo, 1):
-        cache = cache_root / p
-        shutil.rmtree(cache, ignore_errors=True)
+        cache = cache_root / p        # kept: fold_pair resumes from its per-seed checkpoints
         t0 = time.time()
         reset()
         try:
