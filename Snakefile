@@ -384,6 +384,11 @@ FOLD_HF_ENV = f'HF_HOME="{EF["hf_home"]}" HF_HUB_OFFLINE=1 ' if EF.get("hf_home"
 # esmfold2.conda_lib_first: the env's lib/ ahead on LD_LIBRARY_PATH. The torch
 # wheel loads libstdc++ before numpy and, lacking an RPATH to the env, gets the
 # system one -- too old on RHEL 8 (CAIUS: numpy needs GLIBCXX_3.4.29).
+# CUDA: expandable segments against allocator fragmentation -- at the H200
+# limit a chunk's 3rd pair (2,798 tokens) hit OOM with 27 GiB reserved but
+# unallocated, left over from its first two pairs (CAIUS 2026-10-22).
+if FOLD_BACKEND == "torch":
+    FOLD_HF_ENV += "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "
 if EF.get("conda_lib_first"):
     FOLD_HF_ENV += ('LD_LIBRARY_PATH="$(python -c \'import sys; print(sys.prefix)\')/lib'
                     '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ')
