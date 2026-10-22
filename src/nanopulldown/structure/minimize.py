@@ -114,11 +114,11 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     mz = cfg["minimize"]
 
     if pdb_path.exists():
-        print(f"[minimize] output already exists — skipping: {pdb_path.name}")
+        print(f"[minimize] output already exists — skipping: {pdb_path.name}", flush=True)
         return
     pdb_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[minimize] loading {cif_path.name}")
+    print(f"[minimize] loading {cif_path.name}", flush=True)
     # pdbxfile= wants a seekable file OBJECT; filename= can't read gzip.
     if cif_path.suffix == ".gz":
         with gzip.open(cif_path, "rt") as fh:
@@ -146,7 +146,7 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     trace = []
     e0 = energy_kj()
     trace.append((0, e0))
-    print(f"[minimize] initial energy: {e0:.1f} kJ/mol")
+    print(f"[minimize] initial energy: {e0:.1f} kJ/mol", flush=True)
 
     # Minimize in chunks of `trace_interval` iterations, recording the energy
     # after each one (L-BFGS restarts per call, which is harmless here). The
@@ -169,7 +169,7 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
             probed = True
             bad = bad or (e0 < 0 and e > 0 and abs(e) > float(mz["divergence_factor"]) * abs(e0))
             if not bad:
-                print(f"[minimize] probe energy looks sane ({e:.1f} kJ/mol) — continuing to convergence")
+                print(f"[minimize] probe energy looks sane ({e:.1f} kJ/mol) — continuing to convergence", flush=True)
         if bad:
             raise RuntimeError(
                 f"Minimization diverged at step {done} (initial={e0:.1f}, "
@@ -177,7 +177,7 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
             )
         # A chunk that moves nothing means L-BFGS converged before its cap.
         if done < max_steps and abs(e - prev) < float(mz.get("convergence_delta", 1e-3)):
-            print(f"[minimize] converged at step {done}")
+            print(f"[minimize] converged at step {done}", flush=True)
             break
         prev = e
     e_final = trace[-1][1]
@@ -185,7 +185,7 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     state = simulation.context.getState(getPositions=True)
     with gzip.open(pdb_path, "wt") as fh:
         PDBFile.writeFile(modeller.topology, state.getPositions(), fh)
-    print(f"[minimize] saved: {pdb_path.name} (final energy {e_final:.1f} kJ/mol)")
+    print(f"[minimize] saved: {pdb_path.name} (final energy {e_final:.1f} kJ/mol)", flush=True)
 
     import pandas as pd
 
@@ -198,7 +198,7 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
         table_description=ENERGY_TABLE_DESCRIPTION,
         column_descriptions=ENERGY_COLUMN_DESCRIPTIONS,
     )
-    print(f"[minimize] energy trace ({len(df)} points) -> {energy_pq.name}")
+    print(f"[minimize] energy trace ({len(df)} points) -> {energy_pq.name}", flush=True)
 
 
 def main() -> int:

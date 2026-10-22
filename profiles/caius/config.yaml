@@ -46,9 +46,9 @@ set-resources:
     gpu: 0
     gres: "gpu:1"
     constraint: "gpua100|gpuh100|gpul40s|gpuh200"
-    runtime: 30
-    mem_mb: 8000
-    cpus_per_task: 2
+    runtime: 120             # structures with ~1e11 kJ/mol clashes minimize on the CPU (GPU idle,
+    mem_mb: 8000             # 2 threads busy): 5 min on a quiet node, >30 on a loaded one (2026-10-22)
+    cpus_per_task: 4
   run_plip:
     runtime: 60
     mem_mb: 8000
