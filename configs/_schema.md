@@ -105,16 +105,24 @@ the protein. Each `keep_columns` entry of an `ipms:` source adds a
 `<source>_<column>` column (e.g. `pxd013906_logfc`). The controls
 (`nanopulldown.inputs.controls`) add their tags to `sources`: `known` for the baits'
 known direct partners, `decoy` for the decoy set. Every known partner of the
-baits in the table, direct or not, carries `known_databases` (e.g.
-`biogrid;intact;string`), `known_n_databases`, `known_string_score` (0-1000),
-`known_direct_databases`, `known_direct_methods` (e.g. `two hybrid`) and
-`known_n_direct_publications`. The results table joins these values in for the
-prey.
+baits in the table, whatever its tier, carries `known_tier` (best of
+`curated`, `high`, `medium`, `low`), `known_tier_of` (`<bait>:<tier>;...`),
+`known_miscore` (MIscore over every database, 0-1), `known_intact_miscore`
+(IntAct's own, empty for BioGRID-only partners or a format-2 snapshot),
+`known_databases` (e.g. `biogrid;intact;string`, `curated` for the hand list),
+`known_n_databases`, `known_string_score` (0-1000), `known_string_escore` /
+`_dscore` / `_tscore` (STRING experiments / curated databases / text-mining,
+0-1000), `known_direct_databases`, `known_direct_methods` (e.g. `two
+hybrid`), `known_n_direct_publications`, `known_curated_pmids`,
+`known_curated_note` and `known_direct_of` (the baits the partner is a
+positive control for: tier >= `controls.positives.min_tier`). The results
+table joins these values in for the prey.
 
 The interactor lookup snapshots every evidence group to
 `data/interactors/interactors_<run>.tsv`: one row per (query, partner,
-database, detection method, interaction type), with the evidence count and
-PubMed ids. A `.json` beside it holds the settings, per-database counts,
+database, detection method, interaction type), with the evidence count,
+PubMed ids and `confidence` (IntAct's `intact-miscore:`, or STRING's
+`escore:|dscore:|tscore:`; empty in format-2 snapshots). A `.json` beside it holds the settings, per-database counts,
 failed calls and date. Partners are current primary UniProt accessions, so
 the same protein counts once however each database names it. The decoys
 are listed in `configs/decoys_<run>.txt`. Their provenance is in

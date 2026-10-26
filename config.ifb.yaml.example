@@ -32,3 +32,17 @@ minimize:
 annotate:
   aiupred:
     docker_platform: ""          # docker-only setting (apptainer runs the amd64 image natively)
+
+# fold.engine: colabfold (set it in the run overlay, with the run's own dirs:).
+# Paths from scripts/colabfold/setup.sh (an sbatch job: weights + GPU databases).
+colabfold:
+  data_dir: "/shared/projects/npf_abinitio/colabfold_data"   # AF2-multimer v3 weights (params/)
+  msa:
+    mode: "local"                # IFB compute nodes have internet, but a screen this size belongs on
+                                 # MMseqs2-GPU, not the shared public server ("server" for a few pairs)
+    db_dir: "/shared/projects/npf_abinitio/colabfold_db"   # ~1 TB, GPU-padded (setup.sh databases)
+    gpu: 1
+    slurm: {gpu_model: "h200", mem_mb: 200000, cpus: 16, runtime: 720}   # databases held in GPU memory
+  gpu_classes:                   # AF2-multimer memory (unified memory spills to host RAM past the GPU)
+    - {gpu_model: "l40s", max_tokens: 2000, mem_mb: 128000, cpus: 8}
+    - {gpu_model: "h200", max_tokens: 0, mem_mb: 200000, cpus: 8}

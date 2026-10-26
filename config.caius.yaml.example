@@ -53,3 +53,20 @@ minimize:
 annotate:
   aiupred:
     docker_platform: ""          # docker-only setting
+
+# fold.engine: colabfold (set it in the run overlay, with the run's own dirs:).
+# Compute nodes are offline: weights and database downloads run where there is
+# internet (scripts/colabfold/setup.sh weights; DOWNLOADS_ONLY=1 ... databases),
+# the database indexing as a job. Server-mode MSAs run on the login node
+# (scripts/caius/run.sh); local mode is a GPU job like the folds.
+colabfold:
+  data_dir: "<HOME>/colabfold_data"
+  conda_lib_first: true          # RHEL 8's libstdc++, as for esmfold2
+  msa:
+    mode: "local"
+    db_dir: ""                   # ~1 TB: does NOT fit the 500 GiB home -- needs project/scratch space
+                                 # (or use mode: server for small runs, from the login node)
+    gpu: 1
+    slurm: {gpu_model: "h200", mem_mb: 200000, cpus: 16, runtime: 720}
+  gpu_classes:
+    - {gpu_model: "h200", max_tokens: 0, mem_mb: 200000, cpus: 8}

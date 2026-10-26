@@ -70,7 +70,7 @@ pip install -e .        # or, without installing: PYTHONPATH=src python -m nanop
 #    known direct partners as positives and a matched decoy set as negatives.
 #    Preview the counts with --dry-run, then:
 nanopulldown --run-config config_<run>.yaml inputs expand
-#    -> configs/pairs.parquet rows (skips pairs over esmfold2.max_tokens),
+#    -> configs/pairs.parquet rows (skips pairs over <fold.engine>.max_tokens),
 #       configs/proteins.parquet (UniProt names), configs/inputs_<run>.parquet,
 #       and the run's pair list (point the config's `pairs_file:` at it)
 #    (no `inputs:` block: configs/baits.txt x configs/preys.txt, as before)
@@ -236,6 +236,61 @@ config.local.yaml. Launch inside tmux:
 NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml scripts/caius/run.sh 2>&1 | tee logs_<run>.caius.log
 ```
 
+## Fold engine: ESMFold2-Fast or ColabFold
+
+`fold.engine: esmfold2` (the default) folds without MSAs, on the Mac or on CUDA.
+`fold.engine: colabfold` folds with ColabFold (AlphaFold2-multimer v3 + MMseqs2
+MSAs), CUDA only. Both write the same `results/<pair>/raw/` (`sample_<i>.cif.gz`
++ `fold.parquet`), so minimization, PLIP, pyDock, the metrics and the report
+are shared ([nanopulldown/fold/colabfold.py](src/nanopulldown/fold/colabfold.py)).
+Set the engine in a run overlay **together with the run's own `dirs:`**: a pair
+folded by one engine looks finished to the other.
+
+```yaml
+# config_<run>_colabfold.yaml
+fold: {engine: colabfold}
+colabfold:
+  num_models: 5          # samples per pair = num_models x num_seeds
+  num_seeds: 1
+  msa: {mode: server}    # or local (see below)
+dirs: {postproc: results_<run>_colabfold, reports: reports_<run>_colabfold, logs: logs_<run>_colabfold}
+```
+
+Two rules replace `run_esmfold2`:
+
+- `colabfold_msa` runs ONE batch, a paired + unpaired MSA per complex, cached by content in
+  `data/msa/<key>.a3m`. Only complexes missing from the cache are searched, so
+  adding preys or rerunning costs nothing for the rest.
+  - `msa.mode: server`: `colabfold_batch --msa-only` against ColabFold's public
+    MMseqs2 API. Needs internet; meant for small runs, and refuses more than
+    `msa.server_max_queries` (500) new complexes. On CAIUS, `scripts/caius/run.sh`
+    runs it on the login node.
+  - `msa.mode: local`: `colabfold_search` on local ColabFold databases with
+    MMseqs2-GPU (`msa.gpu: 1`, databases held in GPU memory with `gpu_server`).
+    This is one GPU job sized by `colabfold.msa.slurm` (IFB, CAIUS, any SLURM GPU cluster).
+- `run_colabfold_chunk_NNN` runs one `colabfold_batch` over `colabfold.pairs_per_load`
+  pairs' MSAs per GPU job, then converts the results. ColabFold's own `.done.txt`
+  markers make a timed-out chunk resume at its next pair. The conversion renames
+  chains to the spec's ids, rescales pLDDT to 0-1, and reads per-chain-pair ipTM
+  from `--calc-extra-ptm`.
+
+One-time cluster setup for ColabFold, after the rule envs exist (`envs/colabfold.yaml`
+is the CUDA env, `envs/colabfold_msa.yaml` the portable server-MSA client). Run it as a job:
+
+```bash
+sbatch --cpus-per-task=16 --mem=128G --time=24:00:00 --output=logs/colabfold_setup.log \
+  scripts/colabfold/setup.sh weights databases check
+```
+
+`weights` puts AF2-multimer v3 into `$CF_DATA` (set `colabfold.data_dir`).
+`databases` runs ColabFold's `setup_databases.sh` with `GPU=1` into `$CF_DB`
+(set `colabfold.msa.db_dir`). That is about 1 TB but few files: PDB templates are
+skipped, since their ~200k mmCIFs alone would exceed IFB's inode cap. CAIUS home
+(500 GiB) is too small for it. `check` verifies that the env's `mmseqs` has GPU support.
+`config.ifb.yaml.example` and `config.caius.yaml.example` carry the cluster
+settings. `colabfold.time_fit` (walltime per model) is an unmeasured
+AF2-multimer guess with a 3x safety factor; refit it after a first run.
+
 ## Fragment mode (domain x domain, as in yeast two-hybrid)
 
 Set `fragments.enabled: true` in a run overlay (see `config_drm2_fragments.yaml`)
@@ -283,24 +338,59 @@ either off, e.g. `controls: {decoys: {enabled: false}}`). They are tagged in
 `prey_sources` of the results table, and the Snakefile's `decoy_calibration`
 rule (in the report, "Controls") reads them.
 
-**Positives (`known`): the baits' known direct partners.** They come from
-UniProt, IntAct, MINT, BioGRID, STRING and Complex Portal
+**Positives (`known`): the baits' best-supported known partners.** They
+come from UniProt, IntAct, MINT, BioGRID, STRING and Complex Portal
 (`nanopulldown.services.interactors`, snapshot
-`data/interactors/interactors_<run>.tsv`). Only partners with direct
-evidence are kept. That means at least one publication with a PSI-MI
-*direct interaction* type, such as BioGRID's two-hybrid and reconstituted
-complexes, or one of its descendants (covalent binding, enzymatic reactions
-such as ubiquitination). A two-hybrid detection method, or a descendant of
-it, also counts. Co-IP and affinity capture-MS (*association*, *physical
-association*) do not count, and neither does Complex Portal co-membership.
-STRING alone does not count either: its API gives no per-evidence detail,
-so its score is only carried as `known_string_score`. Of DRM2's 12 reported
-partners, 2 pass. `direct_methods: ["MI:0018", "MI:0090"]` also accepts
-protein-complementation assays (BiFC, split luciferase).
-`direct_only: false` takes every reported partner, as the former
-`interactors:` input source did (`config_drm2_ppi.yaml`). Positives are cut
-like any prey in fragment mode. A screen prey that is a known partner gets
-the `known_*` columns either way.
+`data/interactors/interactors_<run>.tsv`), plus a hand-curated list. Each
+(bait, partner) gets an evidence tier, and the positives are the partners
+at `min_tier` or better (default `high`):
+
+| Tier | Rule (config.yaml `controls.positives`) |
+|---|---|
+| `curated` | listed under `curated:` (`{bait: [{partner, pmids, note}]}`) |
+| `high` | direct evidence in ≥ 2 publications (`high_min_publications`), or direct evidence with an MIscore ≥ 0.6 (`high_miscore`), or an X-ray / NMR structure (`structure_methods`) |
+| `medium` | direct evidence in 1 publication (`min_direct_publications`) |
+| `low` | reported, nothing direct |
+
+Evidence is *direct* when its detection method is two-hybrid (or a
+descendant; `direct_methods`), or its PSI-MI type is *direct interaction*
+(or a descendant: covalent binding, ubiquitination ...) and it was not seen
+by FRET, BRET or BiFC only (`proximity_methods`: BioGRID labels them
+"direct interaction", but they only show the proteins are within ~10 nm).
+Co-IP and affinity capture-MS (*association*, *physical association*),
+Complex Portal co-membership and STRING are never direct.
+
+The MIscore is IntAct's confidence score (Villaveces et al. 2015,
+*Database*; [EBI-IntAct/miscore](https://github.com/EBI-IntAct/miscore)):
+the mean of a method, an interaction-type and a publication score, 0-1. It
+is recomputed over IntAct, MINT and BioGRID together, so BioGRID-only
+interactions get one, with each (paper, method) counted once however many
+databases curated it. On IntAct records alone the port reproduces IntAct's
+own score (`known_intact_miscore`, kept for comparison) to 0.005 for 21 of
+24 partners checked; the others differ by IntAct counting two records of
+one paper, or an unknown type in IntAct's older ontology. One paper scores
+about 0.4; several papers or orthogonal methods push it past 0.6.
+
+STRING is annotation only: its *experiments* channel is BioGRID and IntAct
+again (BPM6-ATHB-6: combined 0.508 = experiments 0.508, from the one FRET
+paper). Its combined score and channels (`known_string_escore`, `_dscore`,
+`_tscore`: experiments, curated databases, text-mining) are carried as
+columns. UniProt's interaction comments give no method, type or PubMed id,
+so they only count towards `known_n_databases`.
+
+BPM6 at the default `high`: CUL3A (curated) only. RAP2-4 (one pull-down),
+BPM1 and BPM3 (one two-hybrid paper) are `medium`; ATHB-6 (one FRET paper)
+is `low`. `min_tier: medium` restores roughly the former direct-only rule,
+and `min_tier: low` takes every reported partner, as the former
+`interactors:` input source did (`config_drm2_ppi.yaml`; the old
+`direct_only: true/false` still reads as medium/low). Positives are cut like
+any prey in fragment mode. A screen prey that is a known partner gets the
+`known_*` columns either way.
+
+```bash
+nanopulldown --run-config config_<run>.yaml inputs positives   # every partner with tier, MIscore, STRING channels
+nanopulldown inputs interactors A1L4W5 --min-tier medium --refresh   # --refresh: re-fetch (adds IntAct MIscore + STRING channels to an older snapshot)
+```
 
 **Negatives (`decoy`): a matched decoy set** (`nanopulldown.inputs.decoys`).
 It is built the way DUD-E builds one for docking: real, folded proteins
@@ -394,7 +484,7 @@ downward, and each layer adds as few dependencies as it can:
 | `services`     | UniProt, interactor databases, polite rate-limited HTTP                     | requests                      |
 | `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), per-pair merge   | requests                      |
 | `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
-| `fold`         | ESMFold2-Fast (MLX), single pair or one model load per chunk                | esm, mlx, numpy               |
+| `fold`         | ESMFold2-Fast (MLX / CUDA), or ColabFold MSAs + folds converted to the same table | esm, mlx / colabfold, gemmi |
 | `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc), pyDock energy | openmm / gemmi, scipy, numpy / lightdock |
 | `plip`         | pliparser's cxc config, per-pair contact table (the PLIP image run and the pliparser calls stay shell in the Snakefile) | none / pandas |
 | `report`       | figures (`report.plots`), tables, decoy calibration, datavzrd + report zip  | matplotlib, plotly, pandas    |

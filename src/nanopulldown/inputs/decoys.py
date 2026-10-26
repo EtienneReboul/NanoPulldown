@@ -70,6 +70,7 @@ import numpy as np
 import pandas as pd
 
 from nanopulldown.core.config import REPO_ROOT
+from nanopulldown.core.fold_table import fold_max_tokens
 from nanopulldown.core.io import atomic_write
 from nanopulldown.core.specs import parse_protein_spec
 from nanopulldown.inputs.fragments import (
@@ -133,7 +134,7 @@ def decoy_settings(cfg: dict, dcfg: dict) -> dict:
     return {"format": FORMAT, "decoys": {k: v for k, v in dcfg.items() if k not in ("enabled", "name")},
             "fragments": {k: fcfg[k] for k in ("enabled", "sides", "merge_gap", "repeat_gap", "min_length",
                                                "padding", "without_domains")},
-            "max_tokens": int(cfg["esmfold2"].get("max_tokens", 0))}
+            "max_tokens": fold_max_tokens(cfg)}
 
 
 def pool_query(dcfg: dict) -> str:
@@ -201,7 +202,7 @@ def select_decoys(cfg: dict, dcfg: dict, ref: pd.DataFrame, bait_len: int,
     stratum], pool query). Prints the match report."""
     run = cfg.get("run_name") or "main"
     rng = np.random.default_rng(int(dcfg["seed"]))
-    max_tokens = int(cfg["esmfold2"].get("max_tokens", 0))
+    max_tokens = fold_max_tokens(cfg)
     ref = ref.copy()
 
     query = pool_query(dcfg)
@@ -355,7 +356,7 @@ def decoy_fragments(cfg: dict, ref_frags: list[Fragment], bait_frags: list[Fragm
     _, out_prov, out_meta = decoy_paths(cfg)
     settings = decoy_settings(cfg, dcfg)
     ref = reference_table(ref_frags, cfg)
-    max_tokens = int(cfg["esmfold2"].get("max_tokens", 0))
+    max_tokens = fold_max_tokens(cfg)
     if max_tokens:                  # only preys some bait is folded with
         shortest = min(len(fetch_sequence(f.spec, cfg)) * parse_protein_spec(f.spec).copies
                        for f in bait_frags)

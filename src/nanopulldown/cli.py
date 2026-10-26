@@ -36,6 +36,11 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "domains-tsv": ("annotate.domains:main", "one pair's raw domain hits as TSV (debugging)"),
         "disorder-tsv": ("annotate.disorder:main", "one pair's AIUPred tracks as TSV (debugging)"),
     },
+    "colabfold": {
+        "msa": ("fold.colabfold:msa_main", "ColabFold MSAs of pairs (MMseqs2 server, or local MMseqs2-GPU)"),
+        "fold": ("fold.colabfold:fold_main", "fold pairs with ColabFold (AlphaFold2-multimer)"),
+        "convert": ("fold.colabfold:convert_main", "one pair's ColabFold outputs -> sample_<i>.cif.gz + fold.parquet"),
+    },
     None: {
         "fold": ("fold.esmfold2:main", "fold pairs with ESMFold2-Fast (MLX); ONE model at a time"),
         "minimize": ("structure.minimize:main", "OpenMM energy minimization of one sample"),
@@ -73,6 +78,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
 GROUP_HELP = {
     "inputs": "build the run's pairs (before Snakemake; needs internet)",
     "annotate": "sequence annotation (domains, disorder)",
+    "colabfold": "fold.engine: colabfold (MSAs, then AlphaFold2-multimer folds)",
     "plip": "PLIP contacts",
     "plot": "report figures",
     "table": "report tables",

@@ -23,13 +23,23 @@ straight into folding.
       below).
 
   2. folding (Apple Silicon GPU via MLX/Metal, or CUDA on the IFB cluster)
-    ESMFold2-Fast folding (one seed, esmfold2.num_diffusion_samples
-    diffusion samples, no MSA/templates) -> OpenMM minimization -> PAE-based
-    rescoring (ipSAE/iLIS/Pinc) -> ONE report. Structures are stored gzipped
+    fold.engine: esmfold2 (default) -- ESMFold2-Fast folding (esmfold2.num_seeds
+    runs of esmfold2.num_diffusion_samples diffusion samples, no MSA/templates);
+    or fold.engine: colabfold -- ColabFold / AlphaFold2-multimer with MSAs
+    (CUDA only) -> OpenMM minimization -> PAE-based rescoring
+    (ipSAE/iLIS/Pinc) -> ONE report. Structures are stored gzipped
     (.cif.gz / .pdb.gz -- ChimeraX and gemmi open them as-is).
       run_esmfold2       one seed, N diffusion samples -> raw/sample_<i>.cif.gz +
                          raw/fold.parquet (scores, pae/plddt float16, topology;
                          schema in nanopulldown/core/fold_table.py)
+      -- or, fold.engine: colabfold --
+      colabfold_msa      one batch: a paired+unpaired MSA per complex, cached by
+                         content in colabfold.msa.cache_dir -- ColabFold's MMseqs2
+                         web server (small runs) or local MMseqs2-GPU search
+                         (colabfold_search --gpu 1, a GPU job on IFB / CAIUS)
+      run_colabfold_chunk_NNN  colabfold_batch over a chunk's MSAs, converted to
+                         the same raw/sample_<i>.cif.gz + raw/fold.parquet
+                         (num_models x num_seeds samples per pair)
       compute_metrics    ipSAE / iLIS / Pinc + ESMFold2's own pair ipTM ->
                          results/<pair>/interface_metrics.parquet
       minimize_cif       OpenMM energy minimization -> minimized/sample_<i>.pdb.gz
@@ -67,7 +77,7 @@ REPO = Path(workflow.basedir)
 sys.path.insert(0, str(REPO / "src"))
 from nanopulldown.core.config import load_config  # noqa: E402
 from nanopulldown.core.containers import run_command  # noqa: E402
-from nanopulldown.core.fold_table import samples_per_pair  # noqa: E402
+from nanopulldown.core.fold_table import engine_samples, fold_engine, fold_max_tokens  # noqa: E402
 from nanopulldown.core.proteins import label_digest, load_proteins, pair_labels, protein_name  # noqa: E402
 from nanopulldown.core.specs import (inputs_table_path, load_pairs, pair_tokens,  # noqa: E402
                                      protein_chains, spec_digest)
@@ -86,7 +96,12 @@ report: "report/folding.rst"
 CFG = load_config(REPO)
 DIRS = CFG["dirs"]
 EF = CFG["esmfold2"]
-MAX_TOKENS = int(EF.get("max_tokens", 0))
+# fold.engine: esmfold2 | colabfold -- which of the two fold rule sets below
+# exists. Give a run per engine its own `dirs:` (run overlay): both write
+# results/<pair>/raw/, and a finished fold of one engine looks finished to the other.
+ENGINE = fold_engine(CFG)
+CF = CFG.get("colabfold") or {}
+MAX_TOKENS = fold_max_tokens(CFG)
 
 # Software: every rule env is a conda env (envs/*.yaml, --use-conda) on the
 # Mac AND on the IFB cluster; only the fold env differs by machine (MLX vs CUDA).
@@ -123,7 +138,7 @@ if _no_spec:
     print(f"[Snakefile] WARNING: {len(_no_spec)} pair(s) in config.yaml are not in configs/pairs.parquet "
           f"(not expanded, or skipped as too long) and are ignored, e.g. {_no_spec[:3]}", file=sys.stderr)
 if _too_long:
-    print(f"[Snakefile] {len(_too_long)} pair(s) exceed esmfold2.max_tokens={MAX_TOKENS} and are ignored",
+    print(f"[Snakefile] {len(_too_long)} pair(s) exceed {ENGINE}.max_tokens={MAX_TOKENS} and are ignored",
           file=sys.stderr)
 
 # Rules don't take a spec FILE as input any more (one shared table would make
@@ -206,7 +221,7 @@ BY_BAIT = FOLD_REP / "by_bait"
 BAIT_PAGES = (["metric_violins", "plip_type_violins", "clash_test"]
               + (["decoy_calibration"] if HAS_DECOYS else []) + (["tables"] if DATAVZRD else []))
 FMTS = ",".join(RPT["figure_formats"])
-N_SAMPLES = samples_per_pair(EF)   # num_seeds x num_diffusion_samples
+N_SAMPLES = engine_samples(CFG)   # esmfold2: num_seeds x num_diffusion_samples; colabfold: num_seeds x num_models
 SAMPLE_IDX = list(range(N_SAMPLES))
 
 
@@ -374,22 +389,23 @@ rule fig_domain_bar:
 # and each chunk is ONE job that loads the model once and folds its pairs in a
 # loop (`nanopulldown fold --pairs ...`). A chunk's downstream steps (minimize,
 # PLIP, ...) only start once the whole chunk is done, so keep chunks to ~1-2 h.
-PAIRS_PER_LOAD = int(EF.get("pairs_per_load", 0))
+PAIRS_PER_LOAD = int((CF if ENGINE == "colabfold" else EF).get("pairs_per_load", 0))
 
 HPC = CFG.get("hpc") or {}
 # Shell-level globals, not params: a new param would mark every finished fold
 # outdated under the README's `--rerun-triggers mtime params input`.
 # Pre-downloaded weights (esmfold2.hf_home): the GPU nodes need no internet.
-FOLD_HF_ENV = f'HF_HOME="{EF["hf_home"]}" HF_HUB_OFFLINE=1 ' if EF.get("hf_home") else ""
-# esmfold2.conda_lib_first: the env's lib/ ahead on LD_LIBRARY_PATH. The torch
+# (ColabFold: none of these -- its weights come from colabfold.data_dir.)
+FOLD_HF_ENV = f'HF_HOME="{EF["hf_home"]}" HF_HUB_OFFLINE=1 ' if EF.get("hf_home") and ENGINE == "esmfold2" else ""
+# esmfold2.conda_lib_first (colabfold.conda_lib_first): the env's lib/ ahead on LD_LIBRARY_PATH. The torch
 # wheel loads libstdc++ before numpy and, lacking an RPATH to the env, gets the
 # system one -- too old on RHEL 8 (CAIUS: numpy needs GLIBCXX_3.4.29).
 # CUDA: expandable segments against allocator fragmentation -- at the H200
 # limit a chunk's 3rd pair (2,798 tokens) hit OOM with 27 GiB reserved but
 # unallocated, left over from its first two pairs (CAIUS 2026-10-22).
-if FOLD_BACKEND == "torch":
+if FOLD_BACKEND == "torch" and ENGINE == "esmfold2":
     FOLD_HF_ENV += "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "
-if EF.get("conda_lib_first"):
+if (CF if ENGINE == "colabfold" else EF).get("conda_lib_first"):
     FOLD_HF_ENV += ('LD_LIBRARY_PATH="$(python -c \'import sys; print(sys.prefix)\')/lib'
                     '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ')
 
@@ -398,19 +414,30 @@ if EF.get("conda_lib_first"):
 # sample): t(n) = base_s + coef_s * (n/600)^exponent. Default: the Mac fit
 # (5,768 folds). hpc.fold_time_fit overrides it per machine -- the CUDA kernels
 # scale more steeply (H200: ~n^3, config.caius.yaml.example).
-FOLD_FIT = {"base_s": 2.6, "coef_s": 46.8, "exponent": 2.16, **(HPC.get("fold_time_fit") or {})}
+# ColabFold: colabfold.time_fit is the time of ONE model at the configured
+# recycles, same form; its default is a rough AF2-multimer guess (unmeasured
+# here) -- refit it per machine after a first run.
+if ENGINE == "colabfold":
+    FOLD_FIT = {"base_s": 10.0, "coef_s": 40.0, "exponent": 2.0, **(CF.get("time_fit") or {})}
+else:
+    FOLD_FIT = {"base_s": 2.6, "coef_s": 46.8, "exponent": 2.16, **(HPC.get("fold_time_fit") or {})}
 
 
 def fold_minutes(pairs):
     """Walltime estimate (minutes) of one fold job holding `pairs`: model load
     (hpc.fold_load_minutes) + the FOLD_FIT per-fold time, scaled ~linearly by
-    loops (trunk, ~90%) and steps (diffusion) and by the number of runs, times
-    hpc.fold_runtime_safety."""
-    scale = (0.9 * (int(EF["num_loops"]) + 1) / 11 + 0.1 * int(EF["num_sampling_steps"]) / 100) \
-        * int(EF.get("num_seeds", 1)) * (1 + 0.1 * (int(EF["num_diffusion_samples"]) - 1))
+    loops (trunk, ~90%) and steps (diffusion) and by the number of runs (ColabFold:
+    by models x seeds), times hpc.fold_runtime_safety (ColabFold: colabfold.runtime_safety)."""
+    if ENGINE == "colabfold":
+        scale = N_SAMPLES
+    else:
+        scale = (0.9 * (int(EF["num_loops"]) + 1) / 11 + 0.1 * int(EF["num_sampling_steps"]) / 100) \
+            * int(EF.get("num_seeds", 1)) * (1 + 0.1 * (int(EF["num_diffusion_samples"]) - 1))
     secs = sum(FOLD_FIT["base_s"] + FOLD_FIT["coef_s"] * (pair_tokens(SPECS[p]) / 600) ** FOLD_FIT["exponent"]
                for p in pairs) * scale
-    return float(HPC.get("fold_load_minutes", 10)) + secs / 60 * float(HPC.get("fold_runtime_safety", 3.0))
+    # ColabFold's time fit is a guess, not a cluster's measured fit: its own safety factor
+    safety = CF.get("runtime_safety", 3.0) if ENGINE == "colabfold" else HPC.get("fold_runtime_safety", 3.0)
+    return float(HPC.get("fold_load_minutes", 10)) + secs / 60 * float(safety)
 
 
 # hpc.gpu_request: "gpus" (default) -> the plugin's --gpus (gpu=1 + gpu_model);
@@ -426,17 +453,25 @@ def fold_resources(pairs):
     keys; the local executor ignores them). gpu=1 + gpu_model -> --gpus=<model>:1;
     on clusters with untyped GPU gres (CAIUS: gpu:8), hpc.gpu_constraints maps the
     model to a node feature instead (h200 -> --constraint=gpuh200, --gpus=1).
-    Walltime: fold_minutes(), capped at hpc.fold_runtime_max (the partition's limit)."""
+    Walltime: fold_minutes(), capped at hpc.fold_runtime_max (the partition's limit).
+    ColabFold: colabfold.gpu_classes, when set, replaces hpc.gpu_classes (AF2's
+    memory per token is not ESMFold2's)."""
     n = [pair_tokens(SPECS[p]) for p in pairs]
-    classes = HPC.get("gpu_classes") or [{}]
+    classes = (ENGINE == "colabfold" and CF.get("gpu_classes")) or HPC.get("gpu_classes") or [{}]
     cls = next((c for c in classes if not c.get("max_tokens") or max(n) <= c["max_tokens"]), classes[-1])
+    return gpu_job_resources(cls, min(float(HPC.get("fold_runtime_max", 4320)),
+                                      max(float(HPC.get("fold_runtime_min", 60)), fold_minutes(pairs))))
+
+
+def gpu_job_resources(cls, minutes):
+    """One GPU job's SLURM resources from a gpu class ({gpu_model, mem_mb, cpus,
+    partition}) and a walltime -- shared by the fold jobs and colabfold_msa."""
     res = dict(
         gpu_model=cls.get("gpu_model", ""),
-        slurm_partition=HPC.get("gpu_partition", "gpu"),
+        slurm_partition=cls.get("partition") or HPC.get("gpu_partition", "gpu"),
         mem_mb=int(cls.get("mem_mb", 64000)),
         cpus_per_task=int(cls.get("cpus", 8)),
-        runtime=int(min(float(HPC.get("fold_runtime_max", 4320)),
-                        max(float(HPC.get("fold_runtime_min", 60)), fold_minutes(pairs)))),
+        runtime=int(minutes),
     )
     if GPU_GRES:
         res["gres"] = "gpu:1"
@@ -447,7 +482,130 @@ def fold_resources(pairs):
         res["slurm_extra"] = f"--exclude={HPC['exclude_nodes']}"
     return res
 
-if PAIRS_PER_LOAD <= 0:
+
+# Fold chunks (pairs_per_load > 0, and always for ColabFold).
+# Already-folded and still-to-fold pairs are chunked separately (list order
+# otherwise), so pairs added to a run -- a raised max_tokens, new preys --
+# never share a chunk with finished ones: a chunk reruns as a whole, and
+# rerunning one that holds finished pairs relinks them and so reruns
+# everything downstream of them (minimize, PLIP, ...). With
+# `--rerun-triggers mtime`, a chunk whose outputs all exist is not rerun even
+# though its membership changed.
+# hpc.fold_chunk_minutes (> 0) also closes a chunk before its fold_minutes()
+# estimate passes that budget -- under a short partition walltime (CAIUS
+# publicgpu: 24 h) the largest pairs then go a few per job.
+def _chunks(pairs, size):
+    budget = float(HPC.get("fold_chunk_minutes", 0))
+    out = []
+    for p in pairs:
+        if out and len(out[-1]) < size and not (budget and fold_minutes(out[-1] + [p]) > budget):
+            out[-1].append(p)
+        else:
+            out.append([p])
+    return out
+
+
+# The chunk plan is fixed by the controller. On a cluster, each job re-parses
+# this Snakefile when it starts; by then other chunks may have finished,
+# which moves their pairs from _todo to _folded and renumbers the chunks --
+# chunk_K would fold another chunk's pairs (or none) and the controller then
+# misses chunk_K's outputs. So the controller writes its plan and jobs
+# (remote mode) read it back. Dry runs never write it: one run while a
+# controller is active would swap the plan under its queued jobs.
+def fold_plan(size, plan_name):
+    plan_file = FOLD_LOG / plan_name
+    dry = workflow.dryrun or any(a in ("--dry-run", "--dryrun") or (a.startswith("-") and not a.startswith("--") and "n" in a)
+                                 for a in sys.argv[1:])
+    if workflow.remote_exec and plan_file.exists():
+        return json.loads(plan_file.read_text())
+    folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
+    # still-to-fold pairs chunked by size: a fold job's GPU class (fold_resources)
+    # follows its largest pair, so mixing sizes would send small pairs to the
+    # few big GPUs; on the Mac it just evens out chunk durations
+    todo = sorted((p for p in PAIRS if p not in set(folded)), key=lambda p: pair_tokens(SPECS[p]))
+    plan = _chunks(folded, size) + _chunks(todo, size)
+    if not workflow.remote_exec and not dry:
+        plan_file.parent.mkdir(parents=True, exist_ok=True)
+        plan_file.write_text(json.dumps(plan))
+    return plan
+
+
+if ENGINE == "colabfold":
+    # ── ColabFold: MSAs (one batch), then folds (chunks) ────────────────────
+    # colabfold_msa searches only the complexes missing from the content-keyed
+    # MSA cache, so adding pairs reruns it cheaply; the fold chunks take its
+    # .done file as ancient() input, so that rerun does not refold finished
+    # pairs. A pair's MSA identity is in the chunk's params instead (msas=).
+    from nanopulldown.fold.colabfold import msa_key, msa_settings, run_params as cf_run_params  # noqa: E402
+
+    CF_MSA = CF.get("msa") or {}
+    CF_MSA_MODE = msa_settings(CF)["mode"]
+    MSA_DONE = POST / "_colabfold" / "msa.done"
+    MSA_KEY = {p: msa_key(SPECS[p], CF) for p in PAIRS}
+    CF_KEY = hashlib.sha1(json.dumps(cf_run_params(CF), sort_keys=True).encode()).hexdigest()[:12]
+    # local search on a GPU (colabfold.msa.gpu: 1): a GPU job sized by
+    # colabfold.msa.slurm; server mode: a plain CPU job that needs internet
+    # (CAIUS: run from the login node by scripts/caius/run.sh)
+    MSA_GPU = CF_MSA_MODE == "local" and int(CF_MSA.get("gpu", 0)) == 1
+    MSA_RES = {}
+    if MSA_GPU:
+        _ms = CF_MSA.get("slurm") or {}
+        MSA_RES = dict(gpu=FOLD_GPU_CLAIM, docker_heavy=DOCKER_HEAVY_POOL,
+                       **gpu_job_resources(_ms, float(_ms.get("runtime", 720))))
+    elif CF_MSA_MODE == "local":
+        _ms = CF_MSA.get("slurm") or {}
+        MSA_RES = dict(mem_mb=int(_ms.get("mem_mb", 128000)), cpus_per_task=int(_ms.get("cpus", 32)),
+                       runtime=int(_ms.get("runtime", 720)))
+
+    rule colabfold_msa:
+        output:
+            done=str(MSA_DONE),
+        log:
+            str(FOLD_LOG / "colabfold_msa.log"),
+        conda:
+            # server mode only needs the client (CPU jax, any platform); local
+            # search runs mmseqs from the CUDA fold env
+            "envs/colabfold.yaml" if CF_MSA_MODE == "local" else "envs/colabfold_msa.yaml"
+        priority: 50
+        params:
+            pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
+            settings=json.dumps(msa_settings(CF), sort_keys=True),
+        resources:
+            **MSA_RES,
+        shell:
+            r"""
+            {NP} colabfold msa --pairs {params.pairs} --done {output.done} > {log} 2>&1
+            """
+
+    for _k, _chunk in enumerate(fold_plan(max(PAIRS_PER_LOAD, 1), "fold_chunks_colabfold.json")):
+        rule:
+            name: f"run_colabfold_chunk_{_k:03d}"
+            input:
+                msa=ancient(str(MSA_DONE)),
+            output:
+                [str(POST / _p / "raw" / f"sample_{_s}.cif.gz") for _p in _chunk for _s in SAMPLE_IDX],
+                [str(POST / _p / "raw" / "fold.parquet") for _p in _chunk],
+            log:
+                str(FOLD_LOG / "run_colabfold" / f"chunk_{_k:03d}.log"),
+            conda:
+                "envs/colabfold.yaml"
+            resources:
+                # same one-GPU-job guard as ESMFold2's chunks
+                gpu=FOLD_GPU_CLAIM,
+                docker_heavy=DOCKER_HEAVY_POOL,
+                **fold_resources(_chunk),
+            params:
+                pairs=" ".join(_chunk),
+                specs=" ".join(SPEC_KEY[_p] for _p in _chunk),
+                msas=" ".join(MSA_KEY[_p] for _p in _chunk),
+                settings=CF_KEY,
+                root=str(POST),
+            shell:
+                r"""
+                {FOLD_HF_ENV}{NP} colabfold fold --pairs {params.pairs} --out-root {params.root} > {log} 2>&1
+                """
+
+elif PAIRS_PER_LOAD <= 0:
     rule run_esmfold2:
         output:
             cifs=expand(str(POST / "{{pair}}" / "raw" / "sample_{s}.cif.gz"), s=SAMPLE_IDX),
@@ -488,49 +646,7 @@ if PAIRS_PER_LOAD <= 0:
             """
 
 else:
-    # Already-folded and still-to-fold pairs are chunked separately (list order
-    # otherwise), so pairs added to a run -- a raised max_tokens, new preys --
-    # never share a chunk with finished ones: a chunk reruns as a whole, and
-    # rerunning one that holds finished pairs relinks them and so reruns
-    # everything downstream of them (minimize, PLIP, ...). With
-    # `--rerun-triggers mtime`, a chunk whose outputs all exist is not rerun even
-    # though its membership changed.
-    # hpc.fold_chunk_minutes (> 0) also closes a chunk before its fold_minutes()
-    # estimate passes that budget -- under a short partition walltime (CAIUS
-    # publicgpu: 24 h) the largest pairs then go a few per job.
-    def _chunks(pairs):
-        budget = float(HPC.get("fold_chunk_minutes", 0))
-        out = []
-        for p in pairs:
-            if out and len(out[-1]) < PAIRS_PER_LOAD and not (budget and fold_minutes(out[-1] + [p]) > budget):
-                out[-1].append(p)
-            else:
-                out.append([p])
-        return out
-
-    # The chunk plan is fixed by the controller. On a cluster, each job re-parses
-    # this Snakefile when it starts; by then other chunks may have finished,
-    # which moves their pairs from _todo to _folded and renumbers the chunks --
-    # chunk_K would fold another chunk's pairs (or none) and the controller then
-    # misses chunk_K's outputs. So the controller writes its plan and jobs
-    # (remote mode) read it back. Dry runs never write it: one run while a
-    # controller is active would swap the plan under its queued jobs.
-    _plan_file = FOLD_LOG / "fold_chunks.json"
-    _dry = workflow.dryrun or any(a in ("--dry-run", "--dryrun") or (a.startswith("-") and not a.startswith("--") and "n" in a)
-                                  for a in sys.argv[1:])
-    if workflow.remote_exec and _plan_file.exists():
-        _plan = json.loads(_plan_file.read_text())
-    else:
-        _folded = [p for p in PAIRS if (POST / p / "raw" / "fold.parquet").exists()]
-        # still-to-fold pairs chunked by size: a fold job's GPU class (fold_resources)
-        # follows its largest pair, so mixing sizes would send small pairs to the
-        # few big GPUs; on the Mac it just evens out chunk durations
-        _todo = sorted((p for p in PAIRS if p not in set(_folded)), key=lambda p: pair_tokens(SPECS[p]))
-        _plan = _chunks(_folded) + _chunks(_todo)
-        if not workflow.remote_exec and not _dry:
-            _plan_file.parent.mkdir(parents=True, exist_ok=True)
-            _plan_file.write_text(json.dumps(_plan))
-    for _k, _chunk in enumerate(_plan):
+    for _k, _chunk in enumerate(fold_plan(PAIRS_PER_LOAD, "fold_chunks.json")):
         rule:
             name: f"run_esmfold2_chunk_{_k:03d}"
             output:

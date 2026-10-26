@@ -2,10 +2,11 @@
 """
 nanopulldown.core.fold_table
 ===================
-The ONE on-disk format for a pair's ESMFold2-Fast output besides its
-structures: results/<pair>/raw/fold.parquet, one row per diffusion sample.
-Written straight from ESMFold2's result objects by nanopulldown.fold.esmfold2
-(no per-sample confidences JSON, no separate compression step, no HDF5), and
+The ONE on-disk format for a pair's fold output besides its structures:
+results/<pair>/raw/fold.parquet, one row per sample. Written straight from
+ESMFold2's result objects by nanopulldown.fold.esmfold2, or parsed from
+ColabFold's per-model scores JSON by nanopulldown.fold.colabfold (no
+per-sample confidences JSON kept, no separate compression step, no HDF5), and
 read by every downstream script through read_fold()/read_fold_scalars() so
 nothing else needs to know the column layout.
 
@@ -17,7 +18,7 @@ read_fold() reshapes it), pae/plddt are float16 (pae is a continuous [0,
 ~31.75) A expectation, plddt a [0,1] confidence; float16 keeps ~0.01-0.03
 resolution, far below anything ipSAE/LIS/Pinc resolve). Every column carries
 its own description in the Arrow schema (nanopulldown.core.io), plus a
-`schema` version and the ESMFold2 run parameters at the table level --
+`schema` version and the engine's run parameters (key: esmfold2 | colabfold) at the table level --
 inspect with core.io.read_schema_metadata() or Data Wrangler.
 
 pyarrow + numpy only (no pandas needed to write), so the folding env stays lean.
@@ -36,31 +37,59 @@ SCHEMA_VERSION = "fold/1"
 FOLD_FILE = "fold.parquet"
 
 FOLD_TABLE_DESCRIPTION = (
-    "ESMFold2-Fast output for one nanopulldown bait/prey pair: one row per "
-    "diffusion sample (one seed). Scalars, per-token topology and the full "
+    "Fold output (ESMFold2-Fast or ColabFold; see the esmfold2/colabfold metadata key) "
+    "for one nanopulldown bait/prey pair: one row per sample (ESMFold2 diffusion sample, "
+    "or ColabFold model x seed). Scalars, per-token topology and the full "
     "pae/plddt arrays; the structure itself is the gzipped mmCIF at "
-    "structure_path. Written by nanopulldown.fold.esmfold2, read via nanopulldown.core.fold_table."
+    "structure_path. Written by nanopulldown.fold.esmfold2 / nanopulldown.fold.colabfold, "
+    "read via nanopulldown.core.fold_table."
 )
 _F16 = pa.list_(pa.float16())
+
+
+ENGINES = ("esmfold2", "colabfold")
+
+
+def fold_engine(cfg: dict) -> str:
+    """`fold.engine`: esmfold2 (default) | colabfold. Both write this same table
+    and raw/sample_<i>.cif.gz, so nothing downstream depends on the choice."""
+    eng = ((cfg.get("fold") or {}).get("engine") or "esmfold2").lower()
+    if eng not in ENGINES:
+        raise ValueError(f"fold.engine must be one of {ENGINES}, not {eng!r}")
+    return eng
+
+
+def fold_max_tokens(cfg: dict) -> int:
+    """The engine's max_tokens (0 = no limit): pairs above it are not expanded/folded."""
+    return int(cfg[fold_engine(cfg)].get("max_tokens", 0))
 
 
 def samples_per_pair(ef_cfg: dict) -> int:
     """Samples (sample_<i>.cif.gz) per pair: esmfold2.num_seeds separate runs
     x esmfold2.num_diffusion_samples each."""
     return int(ef_cfg.get("num_seeds", 1)) * int(ef_cfg["num_diffusion_samples"])
+
+
+def engine_samples(cfg: dict) -> int:
+    """Samples per pair under the configured engine: ESMFold2 as above;
+    ColabFold colabfold.num_seeds x colabfold.num_models."""
+    if fold_engine(cfg) == "colabfold":
+        cf = cfg["colabfold"]
+        return int(cf.get("num_seeds", 1)) * int(cf.get("num_models", 5))
+    return samples_per_pair(cfg["esmfold2"])
 FOLD_COLUMNS: dict[str, tuple[pa.DataType, str]] = {
     "pair": (pa.string(), "Bait__prey pair identifier"),
-    "seed": (pa.int32(), "Random seed of the ESMFold2-Fast run (fold() call) this sample comes from"),
+    "seed": (pa.int32(), "Random seed of the run this sample comes from (ESMFold2 fold() call / ColabFold seed)"),
     "sample_index": (pa.int32(), "Sample index within the pair, over all its seeds (0-based, seed-major)"),
     "structure_path": (pa.string(), "This sample's gzipped mmCIF, relative to the results root"),
     "ptm": (pa.float32(), "Predicted TM-score (pTM)"),
     "iptm": (pa.float32(), "Predicted interface TM-score (ipTM)"),
-    "mean_plddt": (pa.float32(), "Mean per-token pLDDT (0-1 scale, as ESMFold2 reports it)"),
+    "mean_plddt": (pa.float32(), "Mean per-token pLDDT (0-1 scale; ColabFold's 0-100 is rescaled)"),
     "n_tokens": (pa.int32(), "Number of tokens (= residues, protein-only); pae is n_tokens x n_tokens"),
-    "token_chain": (pa.list_(pa.string()), "Chain letter of each token (ESMFold2 chain_id resolved through chain_lookup)"),
-    "residue_index": (pa.list_(pa.int32()), "ESMFold2 residue_index of each token (empty if not reported)"),
-    "chain_order": (pa.list_(pa.string()), "Chain letters in ESMFold2's integer chain order; row/column order of pair_chains_iptm"),
-    "pair_chains_iptm": (pa.list_(pa.list_(pa.float32())), "ESMFold2's chain x chain ipTM matrix (chain_order x chain_order; empty if not reported)"),
+    "token_chain": (pa.list_(pa.string()), "Chain letter of each token (the pair spec's chain ids)"),
+    "residue_index": (pa.list_(pa.int32()), "Residue index of each token (empty if not reported)"),
+    "chain_order": (pa.list_(pa.string()), "Chain letters in the engine's chain order; row/column order of pair_chains_iptm"),
+    "pair_chains_iptm": (pa.list_(pa.list_(pa.float32())), "Chain x chain ipTM matrix (chain_order x chain_order; ColabFold: --calc-extra-ptm pairwise ipTM; empty if not reported)"),
     "plddt": (_F16, "Per-token pLDDT, 0-1, float16"),
     "pae": (_F16, "Predicted aligned error (A), float16, flattened row-major n_tokens x n_tokens"),
 }
@@ -98,9 +127,11 @@ def _f16_list(arrays: list[np.ndarray]) -> pa.Array:
     return pa.ListArray.from_arrays(pa.array(offsets), pa.array(flat, pa.float16()))
 
 
-def write_fold(path: Path, rows: list[dict], run_params: dict | None = None) -> None:
+def write_fold(path: Path, rows: list[dict], run_params: dict | None = None,
+               engine: str = "esmfold2") -> None:
     """Write rows (from fold_row) atomically: the file appearing is the
-    'this pair is folded' signal, so a crash never leaves a partial one."""
+    'this pair is folded' signal, so a crash never leaves a partial one.
+    run_params go in the table metadata under the engine's name."""
     fields, cols = [], []
     for name, (typ, desc) in FOLD_COLUMNS.items():
         fields.append(pa.field(name, typ, metadata={b"description": desc.encode()}))
@@ -108,7 +139,7 @@ def write_fold(path: Path, rows: list[dict], run_params: dict | None = None) -> 
         cols.append(_f16_list(vals) if typ == _F16 else pa.array(vals, typ))
     meta = {b"description": FOLD_TABLE_DESCRIPTION.encode(), b"schema": SCHEMA_VERSION.encode()}
     if run_params:
-        meta[b"esmfold2"] = json.dumps(run_params, sort_keys=True).encode()
+        meta[engine.encode()] = json.dumps(run_params, sort_keys=True).encode()
     table = pa.Table.from_arrays(cols, schema=pa.schema(fields, metadata=meta))
 
     path = Path(path)

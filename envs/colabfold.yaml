@@ -1,0 +1,23 @@
+name: nanopulldown-colabfold
+# Stage 2a with fold.engine: colabfold, on CUDA (IFB / CAIUS GPU nodes):
+# colabfold_batch (AlphaFold2-multimer on JAX) for the fold chunks, and
+# colabfold_search + MMseqs2 for colabfold.msa.mode: local (MMseqs2-GPU with
+# colabfold.msa.gpu: 1). jax[cuda12] bundles the CUDA runtime, so only the
+# node's driver is needed. Linux x86_64 only -- the Mac uses
+# envs/colabfold_msa.yaml (server MSAs) and folds with ESMFold2.
+# Same recipe as ColabFold's README ("Installation"), pinned.
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.12
+  - mmseqs2=18.8cc5c    # the version ColabFold's README pins (same MSAs as the server)
+  - pyyaml>=6.0
+  - numpy>=2.0
+  - pyarrow>=15.0       # raw/fold.parquet (nanopulldown.core.fold_table)
+  - gemmi>=0.6          # ColabFold PDB -> sample_<i>.cif.gz
+  - pip
+  - pip:
+      - colabfold[alphafold]==1.6.3
+      - jax[cuda12]>=0.6.2,<0.12

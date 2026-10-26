@@ -36,7 +36,7 @@ and the pairs are bait fragment x prey fragment, each an ordinary region pair
 The fragments are listed in configs/fragments_<run>.parquet.
 
 Pairs whose total token count (sum of all chain lengths) exceeds
-`--max-tokens` (default: config's `esmfold2.max_tokens`, 0 = no limit) are NOT
+`--max-tokens` (default: the fold engine's `<engine>.max_tokens`, 0 = no limit) are NOT
 added: ESMFold2 memory grows ~quadratically with tokens, and past the Metal
 buffer cap the fold aborts the whole process. They are listed, with their
 token counts, in `configs/skipped_too_long.tsv` instead. Measure your
@@ -59,6 +59,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nanopulldown.core.config import REPO_ROOT, load_config
+from nanopulldown.core.fold_table import fold_max_tokens
 from nanopulldown.core.proteins import update_proteins
 from nanopulldown.core.specs import (
     PAIRS_TABLE,
@@ -231,7 +232,7 @@ def main() -> int:
     ap.add_argument("--configs-dir", default="configs")
     ap.add_argument("--max-tokens", type=int, default=None,
                     help="skip pairs with more total tokens than this "
-                         "(default: config esmfold2.max_tokens; 0 = no limit)")
+                         "(default: config <fold.engine>.max_tokens; 0 = no limit)")
     ap.add_argument("--refresh-queries", action="store_true",
                     help="re-run uniprot_query sources and the interactor lookup instead of "
                          "reusing their snapshots")
@@ -249,7 +250,7 @@ def main() -> int:
     a = ap.parse_args()
 
     cfg = load_config(REPO_ROOT)
-    max_tokens = a.max_tokens if a.max_tokens is not None else int(cfg["esmfold2"].get("max_tokens", 0))
+    max_tokens = a.max_tokens if a.max_tokens is not None else fold_max_tokens(cfg)
     prep = prepare(cfg, a.baits, a.preys, refresh=a.refresh_queries, fragments=a.fragments,
                    rebuild_decoys=a.rebuild_decoys, dry_run=a.dry_run)
     if prep is None:

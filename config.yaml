@@ -1736,6 +1736,16 @@ fragments:
   include_full_length: false     # also pair each fragmented protein whole (full-length control)
   overrides: configs/fragment_domains.yaml   # {accession: [{name, start, end}]}, hand-curated
 
+# ── Stage 2a: fold engine ───────────────────────────────────────────────────
+# esmfold2 (default): ESMFold2-Fast, no MSA -- Mac (MLX) or CUDA (`esmfold2:`).
+# colabfold: ColabFold / AlphaFold2-multimer with MMseqs2 MSAs -- CUDA only
+# (IFB / CAIUS; `colabfold:` below). Both write the same results/<pair>/raw/
+# (sample_<i>.cif.gz + fold.parquet), so everything downstream is shared. Switch
+# it in a run overlay WITH that run's own `dirs:`: a pair folded by one engine
+# looks finished to the other.
+fold:
+  engine: "esmfold2"              # esmfold2 | colabfold
+
 # ── Stage 2a: ESMFold2-Fast folding ─────────────────────────────────────────
 esmfold2:
   backend: "mlx"                  # mlx (Apple Silicon, mlx-lm) | torch (CUDA -- the IFB cluster; envs/esmfold2_cuda.yaml)
@@ -1772,6 +1782,56 @@ esmfold2:
                                    # num_diffusion_samples samples; samples per pair = the product. Runs, not
                                    # samples, are what lm_dropout diversifies (one run's samples share a trunk),
                                    # and memory stays that of one run. IFB: 5 runs x 1 sample, lm_dropout 0.3.
+
+# ── Stage 2a: ColabFold folding (fold.engine: colabfold) ─────────────────────
+# Two rules: colabfold_msa (ONE batch: a paired + unpaired MSA per complex,
+# cached by content in msa.cache_dir, so only new complexes are searched), then
+# run_colabfold_chunk_NNN (colabfold_batch over pairs_per_load pairs' MSAs per
+# GPU job; nanopulldown.fold.colabfold). Samples per pair = num_models x num_seeds.
+colabfold:
+  model_type: "alphafold2_multimer_v3"
+  num_models: 5                   # AF2-multimer models 1..num_models per seed
+  num_seeds: 1                    # seeds random_seed .. random_seed+num_seeds-1
+  random_seed: 0
+  num_recycle: null               # null = ColabFold's default (multimer_v3: up to 20, early stop)
+  recycle_early_stop_tolerance: null
+  use_dropout: false
+  calc_extra_ptm: true            # per-chain-pair ipTM (pair_iptm in interface_metrics) + actifpTM
+  max_tokens: 2500                # pairs above it are not expanded/folded (like esmfold2.max_tokens);
+                                  # AF2-multimer fits ~2,500 tokens in 48 GB, ~3,500 in 80 GB (unmeasured here)
+  pairs_per_load: 20              # pairs per colabfold_batch call (= per GPU job); 0 = one per job
+  data_dir: ""                    # AF2 weights dir (`--data`; holds params/): pre-downloaded on offline
+                                  # GPU nodes (scripts/colabfold/setup.sh weights); "" = ColabFold's cache
+  conda_lib_first: false          # as esmfold2.conda_lib_first (CAIUS: RHEL 8's libstdc++)
+  keep_raw_outputs: false         # keep ColabFold's PDB/JSON in results/_colabfold/ after conversion
+  extra_args: []                  # appended to colabfold_batch, e.g. ["--max-msa", "512:1024"]
+  time_fit: {}                    # {base_s, coef_s, exponent}: ONE model's time, t = base_s + coef_s *
+                                  # (n/600)^exponent; {} = a rough AF2-multimer guess -- refit after a run
+  runtime_safety: 3.0             # walltime = estimate x this (hpc.fold_runtime_safety is ESMFold2's)
+  gpu_classes: []                 # [] = hpc.gpu_classes; else the same form, for AF2's own memory needs
+  msa:
+    mode: "server"                # server: ColabFold's MMseqs2 web API (internet; small runs only) |
+                                  # local: colabfold_search on local databases (MMseqs2-GPU with gpu: 1)
+    cache_dir: "data/msa"         # <key>.a3m per complex (key = sequences + the settings below)
+    msa_mode: "mmseqs2_uniref_env"   # server: colabfold_batch --msa-mode
+    pair_mode: "unpaired_paired"
+    server_max_queries: 500       # server mode refuses more new complexes than this: the public
+                                  # server is shared -- use local mode for a large screen
+    host_url: ""                  # "" = the public api.colabfold.com; or a private MSA server
+    # local mode (colabfold_search; databases from ColabFold's setup_databases.sh,
+    # GPU=1 for the padded GPU databases -- ~1 TB, scripts/colabfold/setup.sh databases)
+    db_dir: ""
+    db1: "uniref30_2302_db"
+    db3: "colabfold_envdb_202108_db"
+    use_env: 1
+    mmseqs: "mmseqs"              # MMseqs2 >= 16 built with GPU support for gpu: 1
+    gpu: 1                        # 1: MMseqs2-GPU (one GPU job); 0: CPU search (a big-memory CPU job)
+    gpu_server: 1                 # keep the databases resident in GPU memory across queries
+    db_load_mode: 2               # 2 = mmap (with gpu_server, per ColabFold's README)
+    threads: 0                    # 0 = the job's CPUs
+    extra_args: []                # appended to colabfold_search / colabfold_batch --msa-only
+    slurm: {partition: "", gpu_model: "", mem_mb: 128000, cpus: 16, runtime: 720}
+                                  # the local search job (partition "" = hpc.gpu_partition)
 
 # ── Stage 2b: interface metrics (PAE-based, over all 5 diffusion samples) ──
 metrics:
