@@ -12,6 +12,11 @@ offline.
 results table (the Snakefile's PLIP interaction-type section uses it with the
 plip_* count columns).
 
+One point per pair by default (--aggregate mean): the pair's mean over its
+samples and chain pairs, so a pair with 5 samples weighs as much as one with
+1. --aggregate none plots every sample x chain-pair row. Fragment mode keeps
+its best-fragment-pair points.
+
 When the run has controls, each panel splits into three violins -- known
 partners, screen preys, decoys -- in three shades of the panel's hue
 (lightest = known partners, base = preys, darkest = decoys; each triple
@@ -59,6 +64,15 @@ def best_fragment(df: pd.DataFrame, m: str) -> pd.DataFrame:
     return best.reset_index(drop=True)
 
 
+def pair_mean(df: pd.DataFrame, m: str, name: pd.Series) -> pd.DataFrame:
+    """One row per pair: the mean of `m` over its samples and chain pairs, with
+    `name`, `group` and `n_rows` (how many values went into the mean)."""
+    per_pair = (df.assign(name=name)[df[m].notna()].groupby("pair", as_index=False)
+                .agg(**{m: (m, "mean")}, group=("group", "first"), name=("name", "first"),
+                     n_rows=(m, "size")))
+    return per_pair.reset_index(drop=True)
+
+
 def control_groups(df: pd.DataFrame, decoy_tag: str, positive_tag: str) -> pd.Series:
     """'known partners' / 'preys' / 'decoys' per row (None: a control-only
     known partner of another bait, which is neither for this bait)."""
@@ -96,6 +110,9 @@ def main() -> int:
     ap.add_argument("--fragments", choices=["auto", "best", "all"], default="auto",
                     help="best: one point per bait x prey protein (its best fragment pair); "
                          "auto: best when the table has fragment columns")
+    ap.add_argument("--aggregate", choices=["mean", "none"], default="mean",
+                    help="mean: one point per pair, its mean over samples and chain pairs; "
+                         "none: one point per sample x chain pair (outside fragment mode)")
     a = ap.parse_args()
 
     df = pd.read_csv(a.table)
@@ -125,33 +142,46 @@ def main() -> int:
     # 'BPM6 × MYC2' when the results table carries display names
     name = (df["bait"].astype(str) + " × " + df["prey"].astype(str)
             if {"bait", "prey"} <= set(df.columns) else df["pair"].astype(str))
+    mean = not best and a.aggregate == "mean"
     for k, m in enumerate(present):
         shades = dict(zip(GROUPS, SHADES[k % len(SHADES)]))
-        per = best_fragment(df, m) if best else df
+        per = best_fragment(df, m) if best else pair_mean(df, m, name) if mean else df
         for grp in groups:
             sub = per[per[m].notna() & (per.group == grp)]
             if sub.empty:
                 continue
+            if best:
+                customdata = list(zip(sub["name"], sub["pair"], sub["n_fragment_pairs"]))
+                hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (best of "
+                         "%{customdata[2]} fragment pair(s))<br>best pair=%{customdata[1]}<extra></extra>")
+            elif mean:
+                customdata = list(zip(sub["name"], sub["pair"], sub["n_rows"]))
+                hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (mean of "
+                         "%{customdata[2]} sample × chain-pair value(s))<br>pair=%{customdata[1]}<extra></extra>")
+            else:
+                customdata = list(zip(name[sub.index], sub["pair"], sub["sample_index"], chain[sub.index]))
+                hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}}"
+                         "<br>pair=%{customdata[1]}<br>sample=%{customdata[2]}"
+                         "<br>chains=%{customdata[3]}<extra></extra>")
             fig.add_trace(go.Violin(
                 x=[grp] * len(sub), y=sub[m], name=grp, box_visible=True, meanline_visible=True,
                 points="all", jitter=0.4, pointpos=0, marker_size=3, showlegend=False,
                 line_color=shades[grp], fillcolor=shades[grp], opacity=0.85, spanmode="hard",
-                customdata=(list(zip(sub["name"], sub["pair"], sub["n_fragment_pairs"])) if best else
-                            list(zip(name[sub.index], sub["pair"], sub["sample_index"], chain[sub.index]))),
-                hovertemplate=((f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (best of "
-                                "%{customdata[2]} fragment pair(s))<br>best pair=%{customdata[1]}<extra></extra>")
-                               if best else
-                               (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}}"
-                                "<br>pair=%{customdata[1]}<br>sample=%{customdata[2]}"
-                                "<br>chains=%{customdata[3]}<extra></extra>")),
+                customdata=customdata, hovertemplate=hover,
             ), row=k // ncols + 1, col=k % ncols + 1)
     fig.update_xaxes(showticklabels=len(groups) > 1, categoryorder="array", categoryarray=groups,
                      tickfont_size=10)
-    title = (a.title.replace("(all pairs, samples, chain pairs)", "(best fragment pair per bait × prey protein)")
-             if best else a.title) + ("<br><sup>fragment mode: one point per bait × prey protein, its best fragment pair "
-                       "per metric (biased upward for proteins with more fragments)</sup>" if best else "")
+    if best:
+        title = (a.title.replace("(all pairs, samples, chain pairs)", "(best fragment pair per bait × prey protein)")
+                 + "<br><sup>fragment mode: one point per bait × prey protein, its best fragment pair "
+                   "per metric (biased upward for proteins with more fragments)</sup>")
+    elif mean:
+        title = a.title.replace("(all pairs, samples, chain pairs)", "(one point per pair)") + \
+            "<br><sup>each point: the pair's mean over its samples and chain pairs</sup>"
+    else:
+        title = a.title
     fig.update_layout(height=340 * nrows, template="plotly_dark", title=title,
-                      margin=dict(t=110 if best else 80))
+                      margin=dict(t=110 if best or mean else 80))
     fig.write_html(outdir / "index.html", include_plotlyjs=True, full_html=True)
     print(f"[plot_metric_violins_interactive] {len(present)} metric(s) -> {outdir}/index.html")
     return 0

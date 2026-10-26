@@ -608,6 +608,13 @@ rule minimize_cif:
         """
 
 
+# Violin pages: best-fragment points in fragment runs, else one point per pair
+# (its mean over samples). From the run config, not guessed from the table:
+# configs/pairs.parquet is shared across runs, so a full-length run can reuse a
+# fragment run's spec for the same pair name, fragment label included (4 DNE1
+# pairs whose "fragment" was the whole prey).
+VIOLIN_MODE = "--fragments best" if (CFG.get("fragments") or {}).get("enabled") else "--fragments all --aggregate mean"
+
 # `docker run ... <image>` on the Mac, `apptainer run ... plip.sif` on IFB. A
 # global, not a param (see FOLD_HF_ENV); the image/memory/platform params stay
 # so a change to them still reruns PLIP.
@@ -881,7 +888,7 @@ rule fig_metric_violins_interactive:
         "envs/analysis.yaml"
     shell:
         r"""
-        {NP} plot violins --table {input[0]} --outdir {output[0]}
+        {NP} plot violins {VIOLIN_MODE} --table {input[0]} --outdir {output[0]}
         """
 
 
@@ -906,7 +913,7 @@ rule fig_plip_type_violins:
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
     shell:
         r"""
-        {NP} plot violins --table {input[0]} \
+        {NP} plot violins {VIOLIN_MODE} --table {input[0]} \
           --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
           --skip-all-zero --ncols 3 \
           --title "PLIP bait-prey contacts per interaction type (all pairs, samples, chain pairs)"
@@ -986,7 +993,7 @@ rule fig_metric_violins_bait:
         title=lambda wc: f"Metric distributions — {BAIT_LABEL[wc.bait]} (all pairs, samples, chain pairs)",
     shell:
         r"""
-        {NP} plot violins --table {input[0]} --outdir {output[0]} --title "{params.title}"
+        {NP} plot violins {VIOLIN_MODE} --table {input[0]} --outdir {output[0]} --title "{params.title}"
         """
 
 
@@ -1006,7 +1013,7 @@ rule fig_plip_type_violins_bait:
                          "(all pairs, samples, chain pairs)",
     shell:
         r"""
-        {NP} plot violins --table {input[0]} \
+        {NP} plot violins {VIOLIN_MODE} --table {input[0]} \
           --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
           --skip-all-zero --ncols 3 --title "{params.title}"
         """
