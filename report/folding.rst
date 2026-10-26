@@ -34,6 +34,16 @@ list, folded locally with ESMFold2-Fast (one seed,
   salt bridges, π-stacking, π-cation, ...), one violin per type; the total
   count is the ``plip_contacts`` panel of the metric distributions, so it can
   be compared with the confidence scores as a ranking signal.
+* **PLIP contacts on CDD sites** — per pair, one panel per chain: the
+  per-residue PLIP contact frequency over the samples, under the chain's CDD
+  domains and the conserved-feature sites CDD curates in them ("dimer
+  interface", "substrate binding site", ...), each site residue marked
+  contacted or not. Per bait, one map of every prey's contacts on the bait
+  (full-length numbering, so fragments line up), grouped as known partners /
+  preys / decoys and ordered by how many of the bait's site residues they
+  touch. The results table carries the same per sample and side: site
+  residues contacted, their enrichment over the chain's contact rate, and
+  the share of contacts inside CDD domains.
 * **Minimization energy** — OpenMM energy trace per diffusion sample, plus a
   failure-rate table for any sample whose minimization diverged.
 

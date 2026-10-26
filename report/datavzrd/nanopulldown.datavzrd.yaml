@@ -28,6 +28,12 @@ views:
       `bait`/`prey` are display names (gene > source name > locus >
       accession); `prey sources` are the config `inputs:` that selected the
       prey, and `<source>_<column>` columns carry IP-MS values from them.
+      `<side> CDD sites contacted` counts the bait's / prey's CDD
+      conserved-feature site residues PLIP contacts in the sample; `CDD site
+      enrichment` is the fraction of site residues contacted over the
+      fraction of all the side's residues contacted (> 1: the interface
+      favours the sites); `contacts in CDD` is the share of contacted
+      residues inside CDD domains (nanopulldown.report.cdd).
     render-table:
       columns:
         pair:
@@ -94,6 +100,22 @@ views:
           label: "PLIP halogen"
         plip_metal:
           label: "PLIP metal"
+        bait_cdd_sites:
+          label: "bait CDD site residues"
+        bait_cdd_sites_hit:
+          label: "bait CDD sites contacted"
+        bait_cdd_sites_enrich:
+          label: "bait CDD site enrichment"
+        bait_contacts_in_cdd:
+          label: "bait contacts in CDD"
+        prey_cdd_sites:
+          label: "prey CDD site residues"
+        prey_cdd_sites_hit:
+          label: "prey CDD sites contacted"
+        prey_cdd_sites_enrich:
+          label: "prey CDD site enrichment"
+        prey_contacts_in_cdd:
+          label: "prey contacts in CDD"
         pydock_elec:
           label: "pyDock elec"
         pydock_desolv:

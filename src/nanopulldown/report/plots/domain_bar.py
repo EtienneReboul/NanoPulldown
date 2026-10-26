@@ -142,6 +142,16 @@ def build_rows(segs: list[dict], ipr: dict, source_label: str) -> list[dict]:
     return rows
 
 
+def chain_segments(spec: dict, ann: dict, chain: str) -> tuple[list[dict], str]:
+    """(domain-map segments, their source label) of one chain: the curated
+    `domains:` once the pair is reviewed, else annotation.yaml's proposal."""
+    reviewed = spec.get("annotation_reviewed", False)
+    src = spec.get("domains") if reviewed else None
+    segs = (src or ann.get("domains", {})).get(chain, [])
+    return segs, ("curated (configs/curated_domains.yaml)" if (reviewed and src)
+                  else "auto-proposed from InterPro — review needed")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
@@ -158,11 +168,7 @@ def main() -> int:
 
     spec = load_pair(args.pair)
     ann = yaml.safe_load(Path(args.annotation).read_text()) or {}
-    reviewed = spec.get("annotation_reviewed", False)
-    src = spec.get("domains") if reviewed else None
-    segs = (src or ann.get("domains", {})).get(args.chain, [])
-    source_label = ("curated (configs/curated_domains.yaml)" if (reviewed and src)
-                    else "auto-proposed from InterPro — review needed")
+    segs, source_label = chain_segments(spec, ann, args.chain)
     ipr = (ann.get("interpro") or {}).get(args.chain) or {}
     chain_seq = (chain_by_id(spec, args.chain) or {}).get("sequence", "")
     seqlen = max([len(chain_seq)] + [int(d["end"]) for d in segs])

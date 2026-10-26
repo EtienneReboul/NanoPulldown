@@ -18,6 +18,10 @@ straight into folding.
                           proposed `domains:` block; hand-curate it into
                           configs/curated_domains.yaml whenever convenient
                           (see configs/_schema.md), it isn't required to proceed
+      annotate_cdd       CDD domains + their conserved-feature sites (InterPro API
+                         `?residues`, cached per sequence) of every chain ->
+                         data/annotation/cdd_sites.parquet, read against PLIP
+                         contacts by the results table and the CDD figures
       report figures (domain map + AIUPred) -- one per distinct protein,
       filed under Baits / Preys in the one report.zip (built after folding,
       below).
@@ -55,8 +59,9 @@ straight into folding.
                          the results table combines it with 0.8 ipTM + 0.2 pTM
                          into z-scores (Rodriguez-Lumbreras et al 2026, Eq. 1)
       + report figures (domain x domain confidence heatmaps, minimize energy,
-        PLIP contact heatmaps) and reports/report.zip (onsuccess hook; unzip
-        -> report.html) -- the ONLY report this pipeline produces.
+        PLIP contact heatmaps, PLIP contacts on CDD sites per pair and per
+        bait) and reports/report.zip (onsuccess hook; unzip -> report.html)
+        -- the ONLY report this pipeline produces.
 
 Every step is a `nanopulldown` CLI command (src/nanopulldown/, run as
 `python -m nanopulldown` with src/ on PYTHONPATH, so no per-env install);
@@ -218,7 +223,7 @@ FIG_THEME = f"{RPT.get('figure_theme', 'dark')}/{bool(RPT.get('figure_transparen
 DOCKER_HEAVY_POOL = int(CFG["scheduling"]["docker_heavy_pool"])
 DATAVZRD = bool(RPT.get("datavzrd", False))
 BY_BAIT = FOLD_REP / "by_bait"
-BAIT_PAGES = (["metric_violins", "plip_type_violins", "clash_test"]
+BAIT_PAGES = (["metric_violins", "plip_type_violins", "clash_test", "cdd_contact_map.svg"]
               + (["decoy_calibration"] if HAS_DECOYS else []) + (["tables"] if DATAVZRD else []))
 FMTS = ",".join(RPT["figure_formats"])
 N_SAMPLES = engine_samples(CFG)   # esmfold2: num_seeds x num_diffusion_samples; colabfold: num_seeds x num_models
@@ -266,6 +271,7 @@ rule all:
         str(FOLD_REP / "clash_test_stats.csv"),
         str(FOLD_REP / "clash_counts.csv"),
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
+        [str(FOLD_REP / p / "plip_cdd.svg") for p in PAIRS],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         # per-bait report sections (the run-wide pages above are on-demand targets)
@@ -341,6 +347,26 @@ rule merge_annotation:
     shell:
         r"""
         {NP} annotate merge --pair {wildcards.pair} --out {output.yaml} > {log} 2>&1
+        """
+
+
+# CDD sites are fetched here, not in annotate_domains_batch: that would rewrite
+# domains.done and so rerun every merge_annotation and the figures under it.
+rule annotate_cdd:
+    input:
+        domains=str(ANN_CACHE / "domains.done"),
+    output:
+        str(ANN / "cdd_sites.parquet"),
+    log:
+        str(PRE_LOG / "annotate_cdd.log"),
+    conda:
+        "envs/analysis.yaml"
+    priority: 50
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
+    shell:
+        r"""
+        {NP} annotate cdd --pairs {params.pairs} --out {output[0]} > {log} 2>&1
         """
 
 
@@ -866,6 +892,32 @@ rule fig_plip_contacts:
         """
 
 
+# PLIP contact frequency per residue of each chain against its CDD domains and
+# conserved-feature sites (nanopulldown.report.cdd).
+rule fig_plip_cdd:
+    input:
+        contacts=str(POST / "{pair}" / "plip_contacts.parquet"),
+        cdd=str(ANN / "cdd_sites.parquet"),
+        annotation=str(ANN / "{pair}" / "annotation.yaml"),
+    output:
+        report(str(FOLD_REP / "{pair}" / "plip_cdd.svg"),
+               category="PLIP contacts on CDD sites", subcategory=bait_subcategory, labels=pair_report_labels),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        theme=FIG_THEME,
+        fmts=FMTS, n=N_SAMPLES,
+        spec=lambda wc: SPEC_KEY[wc.pair],
+        curation=lambda wc: CUR_KEY[wc.pair],
+        labels=lambda wc: LABEL_KEY[wc.pair],
+    shell:
+        r"""
+        {NP} plot plip-cdd --pair {wildcards.pair} \
+          --contacts {input.contacts} --cdd {input.cdd} --annotation {input.annotation} \
+          --num-samples {params.n} --out {output[0]} --formats {params.fmts}
+        """
+
+
 rule fig_domain_heatmap:
     input:
         fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
@@ -981,6 +1033,7 @@ rule collect_results_table:
         metrics=[str(POST / p / "interface_metrics.parquet") for p in PAIRS],
         plip=[str(POST / p / "plip_contacts.parquet") for p in PAIRS],
         pydock=[str(POST / p / "pydock_energy.parquet") for p in PAIRS],
+        cdd=str(ANN / "cdd_sites.parquet"),
     output:
         str(FOLD_REP / "results_table.csv"),
     conda:
@@ -993,7 +1046,7 @@ rule collect_results_table:
     shell:
         r"""
         {NP} table results --pairs {params.pairs} \
-          --results-root {POST} --inputs {params.inputs} --out {output[0]}
+          --results-root {POST} --inputs {params.inputs} --cdd {input.cdd} --out {output[0]}
         """
 
 
@@ -1134,6 +1187,34 @@ rule fig_plip_type_violins_bait:
         {NP} plot violins {VIOLIN_MODE} --table {input[0]} \
           --outdir {output[0]} --metrics {params.cols} --labels {params.labels} \
           --skip-all-zero --ncols 3 --title "{params.title}"
+        """
+
+
+# Every prey's PLIP contacts on the bait, in full-length bait numbering, against
+# the bait's CDD sites. Paths come from the table (--results-root), not the
+# command line: a fragment run's bait has thousands of pairs.
+rule fig_bait_cdd_map:
+    input:
+        table=str(BY_BAIT / "{bait}" / "results_table.csv"),
+        contacts=lambda wc: [str(POST / p / "plip_contacts.parquet") for p in PAIRS_OF[wc.bait]],
+        cdd=str(ANN / "cdd_sites.parquet"),
+    output:
+        report(str(BY_BAIT / "{bait}" / "cdd_contact_map.svg"),
+               category="PLIP contacts on CDD sites", subcategory=lambda wc: BAIT_LABEL[wc.bait],
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait], "prey": "all preys"}),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        theme=FIG_THEME,
+        fmts=FMTS, n=N_SAMPLES,
+        decoy=DECOY_TAG,
+        positive=POSITIVE_TAG,
+    shell:
+        r"""
+        {NP} plot bait-cdd-map --bait {wildcards.bait} --table {input.table} \
+          --results-root {POST} --cdd {input.cdd} --num-samples {params.n} \
+          --decoy-tag {params.decoy} --positive-tag {params.positive} \
+          --out {output[0]} --formats {params.fmts}
         """
 
 

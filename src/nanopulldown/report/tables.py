@@ -16,6 +16,11 @@ sample and chain pair: `plip_contacts` = all bait<->prey contacts, and one
 PLIP table exists but has no contact for a row gets 0, not NaN -- "no
 contacts" is a real value when ranking; NaN means PLIP never ran.
 
+CDD columns (nanopulldown.report.cdd.CDD_COLS, per sample and side): how many
+of the bait's / prey's CDD conserved-feature sites PLIP contacts, the
+enrichment of contacts on them, and the share of contacted residues inside
+CDD domains -- from the run's cdd_sites.parquet (--cdd; NaN without it).
+
 pyDock energies (results/<pair>/pydock_energy.parquet, per sample) join on
 (pair, sample_index), and with them the combined score of Rodriguez-Lumbreras
 et al 2026 (Proteins 94:1827, Eq. 1): af_mc = 0.8 ipTM + 0.2 pTM (ESMFold2's
@@ -50,6 +55,7 @@ import pandas as pd
 from nanopulldown.core.fold_table import FOLD_FILE, read_fold_scalars
 from nanopulldown.core.proteins import identity_columns, load_proteins
 from nanopulldown.core.specs import load_pairs
+from nanopulldown.report.cdd import CDD_COLS, cdd_columns, read_cdd
 
 # PLIP interaction_type -> results-table column (all eight PLIP types, so a
 # type absent from a run still reads 0)
@@ -112,9 +118,13 @@ def results_main() -> int:
     ap.add_argument("--pairs", nargs="+", required=True)
     ap.add_argument("--results-root", default="results")
     ap.add_argument("--inputs", default=None, help="configs/inputs_<run>.parquet (optional)")
+    ap.add_argument("--cdd", default=None, help="<annotation dir>/cdd_sites.parquet (optional)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
+    specs, proteins = load_pairs(), load_proteins()
+    cdd = read_cdd(a.cdd)
+    cdd_of = dict(tuple(cdd.groupby("pair"))) if cdd is not None else {}
     rows = []
     for pair in a.pairs:
         mm_path = Path(a.results_root) / pair / "raw" / FOLD_FILE
@@ -132,6 +142,10 @@ def results_main() -> int:
         pc = plip_counts(Path(a.results_root) / pair / "plip_contacts.parquet", joined)
         joined = joined.reset_index(drop=True)
         joined[PLIP_COLS] = pc[PLIP_COLS].to_numpy()
+        cc = cdd_columns(Path(a.results_root) / pair / "plip_contacts.parquet",
+                         cdd_of.get(pair, cdd.iloc[:0]) if cdd is not None else None,
+                         specs.get(pair, {}), joined["sample_index"].dropna().unique())
+        joined = joined.merge(cc, on="sample_index", how="left")
         pd_path = Path(a.results_root) / pair / "pydock_energy.parquet"
         if pd_path.exists():
             joined = joined.merge(pd.read_parquet(pd_path, columns=["pair", "sample_index", *PYDOCK_COLS]),
@@ -147,10 +161,9 @@ def results_main() -> int:
     else:
         df = pd.DataFrame(columns=["pair", "sample_index", "chain_i", "chain_j", "ptm", "iptm",
                                     "mean_plddt", "lis", "clis", "ilis", "pinc", "ipsae",
-                                    "pdockq", "pdockq2", "pair_iptm", "note", *PLIP_COLS,
+                                    "pdockq", "pdockq2", "pair_iptm", "note", *PLIP_COLS, *CDD_COLS,
                                     *PYDOCK_COLS, *SCORE_COLS])
 
-    specs, proteins = load_pairs(), load_proteins()
     ident = pd.DataFrame([{"pair": p, **identity_columns(specs[p], proteins)}
                           for p in a.pairs if p in specs])
     if not ident.empty:

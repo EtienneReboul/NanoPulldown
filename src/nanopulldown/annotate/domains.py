@@ -222,7 +222,7 @@ _IPR_DB = {"interpro": "InterPro", "pfam": "Pfam", "smart": "SMART", "profile": 
            "panther": "PANTHER", "prints": "PRINTS", "pirsf": "PIRSF",
            "hamap": "HAMAP", "ncbifam": "NCBIfam", "sfld": "SFLD",
            "mobidblt": "MobiDB-lite", "mobidb-lite": "MobiDB-lite",
-           "antifam": "AntiFam", "funfam": "CATH-FunFam"}
+           "antifam": "AntiFam", "funfam": "CATH-FunFam", "pirsr": "PIRSR"}
 
 
 _SITE_TYPES = {"conserved_site", "active_site", "binding_site", "ptm", "site"}
