@@ -1,0 +1,55 @@
+# Run overlay: the FULL-LENGTH DNE1/DCP1/DCP2 IP screen of
+# config_dne1_dcp_ip_full.yaml (same 543 pairs: positives at tier >= high, no
+# decoys), folded with ColabFold (AlphaFold2-multimer v3) instead of
+# ESMFold2-Fast, on CAIUS, with fast kernels. 5 models x 1 seed = 5 samples per pair, as the
+# ESMFold2 run's 5 seeds x 1 sample. MSAs: local MMseqs2-GPU search (one H200
+# job) on the ColabFold databases; paths in CAIUS's config.local.yaml.
+#   NANOPULLDOWN_RUN_CONFIG=config_dne1_dcp_ip_full_colabfold.yaml scripts/caius/run.sh
+
+run_name: "dne1_dcp_ip_full"            # same inputs table / pair list as the ESMFold2 run
+pairs_file: configs/pairs_dne1_dcp_ip_full.txt
+
+fold:
+  engine: colabfold
+
+colabfold:
+  num_models: 5
+  num_seeds: 1
+  max_tokens: 2880                      # the ESMFold2 run's limit: the same 543 pairs (largest 2,880
+                                        # tokens; AF2-multimer, unified memory, on a 141 GB H200)
+  pairs_per_load: 30                    # hpc.fold_chunk_minutes (23 h) usually cuts first
+  fast_kernels: true                    # fused Pallas kernels (every GPU below is sm_80+: one backend)
+  gpu_classes:                          # small pairs to any Ampere+ GPU (40-48 GB; nodes have 128 GB+ RAM
+                                        # for 2-4 GPUs), the rest to H200 -- frees the H200s
+    - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
+    - {gpu_model: "h200", max_tokens: 0, mem_mb: 200000, cpus: 8}
+  msa:
+    mode: local
+    gpu: 1
+    gpu_server: 0                       # NOT 1: mmseqs waits only 600 s (--gpu-server-wait-timeout) for
+                                        # the gpuserver to load the padded UniRef30 (~134 GB) from BeeGFS,
+                                        # and it took longer -- the job failed at 10:53 (2026-10-26)
+    db_load_mode: 0                     # the databases have no .idx index: colabfold_search reads
+                                        # _seq/_aln and forces 0 anyway
+    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 720}   # ~270 GB of padded
+                                        # sequences (UniRef30 + envdb) stream through one H200
+
+fragments:
+  enabled: false
+
+controls:
+  decoys:
+    enabled: false
+
+dirs:
+  annotation:  "data/annotation_dne1_dcp_ip_full"   # shared with the ESMFold2 run: same pairs, no re-query
+  postproc:    "results_dne1_dcp_ip_full_colabfold"
+  reports:     "reports_dne1_dcp_ip_full_colabfold"
+  logs:        "logs_dne1_dcp_ip_full_colabfold"
+
+inputs:
+  baits:
+    - list: configs/baits_dne1_dcp_ip.txt
+  preys:
+    - list: configs/preys_dne1_dcp_ip.txt
+    - exclude: [Q9SCK9]

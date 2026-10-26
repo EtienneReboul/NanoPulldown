@@ -465,7 +465,9 @@ def fold_resources(pairs):
 
 def gpu_job_resources(cls, minutes):
     """One GPU job's SLURM resources from a gpu class ({gpu_model, mem_mb, cpus,
-    partition}) and a walltime -- shared by the fold jobs and colabfold_msa."""
+    partition, constraint}) and a walltime -- shared by the fold jobs and
+    colabfold_msa. A class's own `constraint` (a SLURM feature expression, e.g.
+    "gpuv100|gpua100") replaces gpu_model: any of several GPU types."""
     res = dict(
         gpu_model=cls.get("gpu_model", ""),
         slurm_partition=cls.get("partition") or HPC.get("gpu_partition", "gpu"),
@@ -475,7 +477,7 @@ def gpu_job_resources(cls, minutes):
     )
     if GPU_GRES:
         res["gres"] = "gpu:1"
-    feature = (HPC.get("gpu_constraints") or {}).get(res["gpu_model"])
+    feature = cls.get("constraint") or (HPC.get("gpu_constraints") or {}).get(res["gpu_model"])
     if feature:
         res["gpu_model"], res["constraint"] = "", feature
     if HPC.get("exclude_nodes"):

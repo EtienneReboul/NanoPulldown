@@ -42,8 +42,9 @@ args=("$@")
 for i in "${!args[@]}"; do
   [ "${args[$i]}" = --rerun-triggers ] && triggers=(--rerun-triggers "${args[$((i + 1))]}")
 done
+# targets FIRST: --rerun-triggers takes several values and would swallow them
 # shellcheck disable=SC2086  # one path per word
-snakemake --use-conda --cores 1 "${triggers[@]}" $targets
+snakemake $targets --use-conda --cores 1 "${triggers[@]}"
 echo "== $(date): pipeline on SLURM (profiles/caius)"
 rc=0
 snakemake --profile profiles/caius "$@" || rc=$?

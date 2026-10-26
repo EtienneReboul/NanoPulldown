@@ -1797,6 +1797,11 @@ colabfold:
   recycle_early_stop_tolerance: null
   use_dropout: false
   calc_extra_ptm: true            # per-chain-pair ipTM (pair_iptm in interface_metrics) + actifpTM
+  fast_kernels: false             # --use-fast-kernels: fused kernels, half precision -- Pallas on sm_80+
+                                  # (A100/H100/H200), fp16 cuda_legacy below (V100/P100/RTX), which makes the
+                                  # older GPUs competitive (pair them with a cheap gpu_classes tier)
+  kernel_backend: "auto"          # auto | pallas | cuda_legacy
+  compile_mode: "tuned"           # fast | tuned | full (autotune effort vs compile time)
   max_tokens: 2500                # pairs above it are not expanded/folded (like esmfold2.max_tokens);
                                   # AF2-multimer fits ~2,500 tokens in 48 GB, ~3,500 in 80 GB (unmeasured here)
   pairs_per_load: 20              # pairs per colabfold_batch call (= per GPU job); 0 = one per job
@@ -1808,7 +1813,9 @@ colabfold:
   time_fit: {}                    # {base_s, coef_s, exponent}: ONE model's time, t = base_s + coef_s *
                                   # (n/600)^exponent; {} = a rough AF2-multimer guess -- refit after a run
   runtime_safety: 3.0             # walltime = estimate x this (hpc.fold_runtime_safety is ESMFold2's)
-  gpu_classes: []                 # [] = hpc.gpu_classes; else the same form, for AF2's own memory needs
+  gpu_classes: []                 # [] = hpc.gpu_classes; else the same form, for AF2's own memory needs.
+                                  # A class may give `constraint:` (SLURM features, "gpuv100|gpua100")
+                                  # instead of one gpu_model: small pairs to any older GPU
   msa:
     mode: "server"                # server: ColabFold's MMseqs2 web API (internet; small runs only) |
                                   # local: colabfold_search on local databases (MMseqs2-GPU with gpu: 1)
@@ -1826,7 +1833,8 @@ colabfold:
     use_env: 1
     mmseqs: "mmseqs"              # MMseqs2 >= 16 built with GPU support for gpu: 1
     gpu: 1                        # 1: MMseqs2-GPU (one GPU job); 0: CPU search (a big-memory CPU job)
-    gpu_server: 1                 # keep the databases resident in GPU memory across queries
+    gpu_server: 0                 # 1: databases resident in GPU memory across queries -- but mmseqs waits
+                                  # only 600 s for the server to load them (too short from BeeGFS on CAIUS)
     db_load_mode: 2               # 2 = mmap (with gpu_server, per ColabFold's README)
     threads: 0                    # 0 = the job's CPUs
     extra_args: []                # appended to colabfold_search / colabfold_batch --msa-only

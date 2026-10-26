@@ -214,6 +214,9 @@ def run_params(cf: dict) -> dict:
             "recycle_early_stop_tolerance": cf.get("recycle_early_stop_tolerance"),
             "use_dropout": bool(cf.get("use_dropout", False)),
             "calc_extra_ptm": bool(cf.get("calc_extra_ptm", True)),
+            "fast_kernels": bool(cf.get("fast_kernels", False)),
+            "kernel_backend": cf.get("kernel_backend", "auto"),
+            "compile_mode": cf.get("compile_mode", "tuned"),
             "extra_args": [str(x) for x in cf.get("extra_args") or []],
             "msa": msa_settings(cf)}
 
@@ -232,6 +235,9 @@ def _batch_cmd(cf: dict, in_dir: Path, out_dir: Path) -> list[str]:
         cmd.append("--use-dropout")
     if rp["calc_extra_ptm"]:
         cmd.append("--calc-extra-ptm")
+    if rp["fast_kernels"]:       # fused kernels: Pallas on sm_80+, fp16 cuda_legacy below (V100/P100/RTX)
+        cmd += ["--use-fast-kernels", "--kernel-backend", rp["kernel_backend"],
+                "--compile-mode", rp["compile_mode"]]
     if cf.get("data_dir"):
         cmd += ["--data", str(cf["data_dir"])]
     return cmd + rp["extra_args"]
