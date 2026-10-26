@@ -32,7 +32,15 @@ print(f'{cfg["dirs"]["annotation"]}/_cache/domains.done')
 PY
 )
 echo "== $(date): annotate_domains_batch locally ($target)"
-snakemake --use-conda --cores 1 "$target"
+# same --rerun-triggers as the SLURM run: with the default ones, a changed pair
+# list reruns this step (from its cache, same content) and its newer .done file
+# then reruns every per-pair figure downstream (1,750 jobs on 2026-10-26)
+triggers=()
+args=("$@")
+for i in "${!args[@]}"; do
+  [ "${args[$i]}" = --rerun-triggers ] && triggers=(--rerun-triggers "${args[$((i + 1))]}")
+done
+snakemake --use-conda --cores 1 "${triggers[@]}" "$target"
 echo "== $(date): pipeline on SLURM (profiles/caius)"
 rc=0
 snakemake --profile profiles/caius "$@" || rc=$?
