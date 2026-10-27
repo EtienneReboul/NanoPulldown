@@ -166,6 +166,7 @@ def main() -> int:
     a = ap.parse_args()
 
     from nanopulldown.core.io import write_parquet_with_metadata
+    from nanopulldown.core.metric_refs import column_references
 
     bait, prey = set(a.bait_chains.split(",")), set(a.prey_chains.split(","))
     rows = []
@@ -185,7 +186,8 @@ def main() -> int:
         rows.append(row)
 
     write_parquet_with_metadata(pd.DataFrame(rows), Path(a.out), table_description=TABLE_DESCRIPTION,
-                                column_descriptions=COLUMN_DESCRIPTIONS)
+                                column_descriptions=COLUMN_DESCRIPTIONS,
+                                column_references=column_references(COLUMN_DESCRIPTIONS))
     return 0
 
 

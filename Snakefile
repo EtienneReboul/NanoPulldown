@@ -83,6 +83,7 @@ sys.path.insert(0, str(REPO / "src"))
 from nanopulldown.core.config import load_config  # noqa: E402
 from nanopulldown.core.containers import run_command  # noqa: E402
 from nanopulldown.core.fold_table import engine_samples, fold_engine, fold_max_tokens  # noqa: E402
+from nanopulldown.core.metric_refs import REPORT_METRICS, caption_rst  # noqa: E402
 from nanopulldown.core.proteins import label_digest, load_proteins, pair_labels, protein_name  # noqa: E402
 from nanopulldown.core.specs import (inputs_table_path, load_pairs, pair_tokens,  # noqa: E402
                                      protein_chains, spec_digest)
@@ -1151,17 +1152,32 @@ rule bait_tables:
         """
 
 
+# Report captions of the violin pages: each score's definition and DOI, split
+# into global fold confidence and bait-prey interface, from
+# nanopulldown.core.metric_refs (the same registry the pages and the Parquet
+# metadata cite from). report/captions/metric_refs.rst only renders this param.
+METRIC_CAPTION = caption_rst(
+    REPORT_METRICS,
+    intro="One violin per score, per group of preys (known partners / screen preys / decoys). "
+          "Scores of the whole predicted complex and scores of the bait-prey interface are "
+          "plotted separately.")
+PLIP_TYPE_CAPTION = caption_rst(
+    PLIP_TYPE_COLS, intro="Bait-prey PLIP contacts of each minimized model, one violin per interaction type.")
+
+
 rule fig_metric_violins_bait:
     input:
         str(BY_BAIT / "{bait}" / "results_table.csv"),
     output:
         report(directory(str(BY_BAIT / "{bait}" / "metric_violins")),
                category="Metric distributions", subcategory=lambda wc: BAIT_LABEL[wc.bait],
-               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html",
+               caption="report/captions/metric_refs.rst"),
     conda:
         "envs/analysis.yaml"
     params:
         title=lambda wc: f"Metric distributions — {BAIT_LABEL[wc.bait]} (all pairs, samples, chain pairs)",
+        caption=METRIC_CAPTION,
     shell:
         r"""
         {NP} plot violins {VIOLIN_MODE} --table {input[0]} --outdir {output[0]} --title "{params.title}"
@@ -1174,10 +1190,12 @@ rule fig_plip_type_violins_bait:
     output:
         report(directory(str(BY_BAIT / "{bait}" / "plip_type_violins")),
                category="PLIP contacts by interaction type", subcategory=lambda wc: BAIT_LABEL[wc.bait],
-               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html"),
+               labels=lambda wc: {"bait": BAIT_LABEL[wc.bait]}, htmlindex="index.html",
+               caption="report/captions/metric_refs.rst"),
     conda:
         "envs/analysis.yaml"
     params:
+        caption=PLIP_TYPE_CAPTION,
         cols=" ".join(PLIP_TYPE_COLS),
         labels=" ".join(f"'{l}'" for l in PLIP_TYPE_LABELS),
         title=lambda wc: f"PLIP bait-prey contacts per interaction type — {BAIT_LABEL[wc.bait]} "

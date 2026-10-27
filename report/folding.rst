@@ -26,9 +26,14 @@ list, folded locally with ESMFold2-Fast (one seed,
   chain pair: pTM / ipTM / ESMFold2's own pair ipTM, plus ipSAE / iLIS /
   Pinc / pDockQ / pDockQ2 from ab_initio_pipeline's PAE-based rescoring
   stack.
-* **Metric distributions** — one violin per confidence / interface metric
-  (pTM, ipTM, pLDDT, ipSAE, iLIS, Pinc, pDockQ, PLIP contacts, ...) across all pairs,
-  samples and chain pairs in the results table.
+* **Metric distributions** — one violin per score across all pairs, samples
+  and chain pairs in the results table, in two groups: **global fold
+  confidence** (pTM, pLDDT: the predicted complex as a whole) and the
+  **bait-prey interface** (ipTM, pair ipTM, ipSAE, LIS / cLIS / iLIS, Pinc,
+  pDockQ / pDockQ2, PLIP contacts, pyDock-1VDW, AF / pyDock z-score). Each
+  score's definition and publication (with DOI) is in the page caption and
+  under each group; the same references are stored in the ``references``
+  field metadata of the Parquet column that holds the score.
 * **PLIP contacts by interaction type** — the bait-prey PLIP contact count
   of every sample split by interaction type (hydrogen bonds, hydrophobic,
   salt bridges, π-stacking, π-cation, ...), one violin per type; the total

@@ -17,6 +17,12 @@ samples and chain pairs, so a pair with 5 samples weighs as much as one with
 1. --aggregate none plots every sample x chain-pair row. Fragment mode keeps
 its best-fragment-pair points.
 
+Panels are split into one figure per scope of nanopulldown.core.metric_refs
+-- global fold confidence (pTM, pLDDT), then the bait-prey interface (ipTM,
+ipSAE, LIS family, Pinc, pDockQ, PLIP, pyDock, ...) -- each followed by its
+scores' definitions and DOI links; columns the registry doesn't know go in a
+last "Other" figure. Panel titles default to the registry's labels.
+
 When the run has controls, each panel splits into three violins -- known
 partners, screen preys, decoys -- in three shades of the panel's hue
 (lightest = known partners, base = preys, darkest = decoys; each triple
@@ -29,12 +35,16 @@ label and in the hover, so it never rests on color alone.
 from __future__ import annotations
 
 import argparse
+import html
 import math
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+from nanopulldown.core.metric_refs import METRICS as METRIC_REFS
+from nanopulldown.core.metric_refs import REPORT_METRICS, SCOPES, by_scope, references_html, scope_title
 
 # dark-mode categorical slots (dataviz reference palette), each as
 # (known partners, preys, decoys): lighter / base / darker OKLCH steps
@@ -44,8 +54,24 @@ SHADES = [("#8cbefe", "#3987e5", "#205ba2"), ("#fda080", "#d95926", "#98380f"),
           ("#c6c3fe", "#9085e9", "#655da8"), ("#fdb5b1", "#e66767", "#a54646")]
 GROUPS = ["known partners", "preys", "decoys"]
 
-METRICS = ["ptm", "iptm", "pair_iptm", "mean_plddt", "ipsae", "lis", "clis",
-           "ilis", "pinc", "pdockq", "pdockq2", "plip_contacts", "pydock_1vdw", "z_af_pydock_run"]
+# plotly_dark's paper colour, so the page and the figures read as one surface
+PAGE = """<!doctype html>
+<html><head><meta charset="utf-8"><title>{title}</title>
+<style>
+  body {{ background: #111111; color: #e5e5e5; font-family: "Open Sans", Arial, sans-serif;
+         margin: 0 16px 24px; }}
+  h2 {{ font-weight: 500; margin: 16px 0 2px; }}
+  h3 {{ font-weight: 500; margin: 22px 0 2px; }}
+  .sub, .blurb {{ color: #a3a3a3; margin: 2px 0 6px; font-size: 14px; }}
+  .refs {{ font-size: 13px; line-height: 1.5; color: #c4c4c4; margin: 0 0 28px; }}
+  .refs a {{ color: #8cbefe; }}
+</style></head>
+<body><h2>{title}</h2><p class="sub">{sub}</p>
+{body}
+</body></html>
+"""
+
+METRICS = REPORT_METRICS
 
 
 def best_fragment(df: pd.DataFrame, m: str) -> pd.DataFrame:
@@ -123,7 +149,8 @@ def main() -> int:
     best = a.fragments == "best" or (a.fragments == "auto" and bool(frag_cols)
                                      and df[frag_cols].notna().any().any()
                                      and {"bait_uniprot", "prey_uniprot"} <= set(df.columns))
-    label = dict(zip(a.metrics, a.labels or a.metrics))
+    label = dict(zip(a.metrics, a.labels or [METRIC_REFS[m].label if m in METRIC_REFS else m
+                                              for m in a.metrics]))
     present = [m for m in a.metrics if m in df.columns and df[m].notna().any()
                and not (a.skip_all_zero and not df[m].fillna(0).astype(bool).any())]
     outdir = Path(a.outdir)
@@ -133,56 +160,72 @@ def main() -> int:
         Path(outdir / "index.html").write_text("<p>no metric values</p>")
         return 0
 
-    ncols = min(a.ncols, len(present))
-    nrows = math.ceil(len(present) / ncols)
-    fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[label[m] for m in present],
-                        horizontal_spacing=0.06, vertical_spacing=0.12)
     chain = (df["chain_i"].astype(str) + "-" + df["chain_j"].astype(str)
              if "chain_i" in df else pd.Series("", index=df.index))
     # 'BPM6 × MYC2' when the results table carries display names
     name = (df["bait"].astype(str) + " × " + df["prey"].astype(str)
             if {"bait", "prey"} <= set(df.columns) else df["pair"].astype(str))
     mean = not best and a.aggregate == "mean"
-    for k, m in enumerate(present):
-        shades = dict(zip(GROUPS, SHADES[k % len(SHADES)]))
-        per = best_fragment(df, m) if best else pair_mean(df, m, name) if mean else df
-        for grp in groups:
-            sub = per[per[m].notna() & (per.group == grp)]
-            if sub.empty:
-                continue
-            if best:
-                customdata = list(zip(sub["name"], sub["pair"], sub["n_fragment_pairs"]))
-                hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (best of "
-                         "%{customdata[2]} fragment pair(s))<br>best pair=%{customdata[1]}<extra></extra>")
-            elif mean:
-                customdata = list(zip(sub["name"], sub["pair"], sub["n_rows"]))
-                hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (mean of "
-                         "%{customdata[2]} sample × chain-pair value(s))<br>pair=%{customdata[1]}<extra></extra>")
-            else:
-                customdata = list(zip(name[sub.index], sub["pair"], sub["sample_index"], chain[sub.index]))
-                hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}}"
-                         "<br>pair=%{customdata[1]}<br>sample=%{customdata[2]}"
-                         "<br>chains=%{customdata[3]}<extra></extra>")
-            fig.add_trace(go.Violin(
-                x=[grp] * len(sub), y=sub[m], name=grp, box_visible=True, meanline_visible=True,
-                points="all", jitter=0.4, pointpos=0, marker_size=3, showlegend=False,
-                line_color=shades[grp], fillcolor=shades[grp], opacity=0.85, spanmode="hard",
-                customdata=customdata, hovertemplate=hover,
-            ), row=k // ncols + 1, col=k % ncols + 1)
-    fig.update_xaxes(showticklabels=len(groups) > 1, categoryorder="array", categoryarray=groups,
-                     tickfont_size=10)
+
+    sections = by_scope(present)
+    # one column count for every section, so panels are the same size throughout
+    ncols = min(a.ncols, max(len(ms) for _, ms in sections))
+
+    def section_figure(metrics: list[str], hue0: int) -> go.Figure:
+        nrows = math.ceil(len(metrics) / ncols)
+        fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[label[m] for m in metrics],
+                            horizontal_spacing=0.06, vertical_spacing=0.12 if nrows > 1 else 0.0)
+        for k, m in enumerate(metrics):
+            shades = dict(zip(GROUPS, SHADES[(hue0 + k) % len(SHADES)]))
+            per = best_fragment(df, m) if best else pair_mean(df, m, name) if mean else df
+            for grp in groups:
+                sub = per[per[m].notna() & (per.group == grp)]
+                if sub.empty:
+                    continue
+                if best:
+                    customdata = list(zip(sub["name"], sub["pair"], sub["n_fragment_pairs"]))
+                    hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (best of "
+                             "%{customdata[2]} fragment pair(s))<br>best pair=%{customdata[1]}<extra></extra>")
+                elif mean:
+                    customdata = list(zip(sub["name"], sub["pair"], sub["n_rows"]))
+                    hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}} (mean of "
+                             "%{customdata[2]} sample × chain-pair value(s))<br>pair=%{customdata[1]}<extra></extra>")
+                else:
+                    customdata = list(zip(name[sub.index], sub["pair"], sub["sample_index"], chain[sub.index]))
+                    hover = (f"<b>%{{customdata[0]}}</b> ({grp})<br>{label[m]}=%{{y:.4g}}"
+                             "<br>pair=%{customdata[1]}<br>sample=%{customdata[2]}"
+                             "<br>chains=%{customdata[3]}<extra></extra>")
+                fig.add_trace(go.Violin(
+                    x=[grp] * len(sub), y=sub[m], name=grp, box_visible=True, meanline_visible=True,
+                    points="all", jitter=0.4, pointpos=0, marker_size=3, showlegend=False,
+                    line_color=shades[grp], fillcolor=shades[grp], opacity=0.85, spanmode="hard",
+                    customdata=customdata, hovertemplate=hover,
+                ), row=k // ncols + 1, col=k % ncols + 1)
+        fig.update_xaxes(showticklabels=len(groups) > 1, categoryorder="array", categoryarray=groups,
+                         tickfont_size=10)
+        fig.update_layout(height=320 * nrows, template="plotly_dark", margin=dict(t=40, b=30))
+        return fig
+
     if best:
-        title = (a.title.replace("(all pairs, samples, chain pairs)", "(best fragment pair per bait × prey protein)")
-                 + "<br><sup>fragment mode: one point per bait × prey protein, its best fragment pair "
-                   "per metric (biased upward for proteins with more fragments)</sup>")
+        title = a.title.replace("(all pairs, samples, chain pairs)", "(best fragment pair per bait × prey protein)")
+        sub = ("fragment mode: one point per bait × prey protein, its best fragment pair per metric "
+               "(biased upward for proteins with more fragments)")
     elif mean:
-        title = a.title.replace("(all pairs, samples, chain pairs)", "(one point per pair)") + \
-            "<br><sup>each point: the pair's mean over its samples and chain pairs</sup>"
+        title = a.title.replace("(all pairs, samples, chain pairs)", "(one point per pair)")
+        sub = "each point: the pair's mean over its samples and chain pairs"
     else:
-        title = a.title
-    fig.update_layout(height=340 * nrows, template="plotly_dark", title=title,
-                      margin=dict(t=110 if best or mean else 80))
-    fig.write_html(outdir / "index.html", include_plotlyjs=True, full_html=True)
+        title, sub = a.title, ""
+    # one figure per scope (global fold confidence, then the bait-prey
+    # interface), each followed by its scores' definitions and DOIs
+    parts, hue = [], 0
+    for scope, metrics in sections:
+        fig = section_figure(metrics, hue)
+        hue += len(metrics)
+        blurb = f"<p class=\"blurb\">{html.escape(SCOPES[scope][1])}</p>" if scope in SCOPES else ""
+        parts.append(f"<h3>{html.escape(scope_title(scope))}</h3>" + blurb
+                     + fig.to_html(full_html=False, include_plotlyjs=not parts) + references_html(metrics))
+    (outdir / "index.html").write_text(PAGE.format(title=html.escape(title), sub=html.escape(sub),
+                                                   body="\n".join(parts)))
     print(f"[plot_metric_violins_interactive] {len(present)} metric(s) -> {outdir}/index.html")
     return 0
 

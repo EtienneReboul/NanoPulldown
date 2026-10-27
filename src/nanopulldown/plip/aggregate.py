@@ -22,6 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 from nanopulldown.core.io import write_parquet_with_metadata
+from nanopulldown.core.metric_refs import references_text
 
 SAMPLE_RE = re.compile(r"sample_(\d+)(?:_report/csv/summary|_summary)\.csv$")
 
@@ -76,7 +77,8 @@ def read_summary(path: Path, pair: str) -> pd.DataFrame:
 def write_contacts(df: pd.DataFrame, out: Path) -> None:
     write_parquet_with_metadata(
         df, out, table_description=PLIP_TABLE_DESCRIPTION,
-        column_descriptions={c: d for c, (_, d) in PLIP_COLUMNS.items()})
+        column_descriptions={c: d for c, (_, d) in PLIP_COLUMNS.items()},
+        table_references=references_text("plip_contacts"))
 
 
 def main() -> int:

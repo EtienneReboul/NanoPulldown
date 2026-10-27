@@ -43,9 +43,35 @@ import numpy as np
 import pandas as pd
 
 from nanopulldown.core.fold_table import read_fold
+from nanopulldown.core.io import write_parquet_with_metadata
+from nanopulldown.core.metric_refs import column_references
 from nanopulldown.structure.vendor.pinc import _DEFAULT_MASS, _ELEMENT_MASS, pinc_from_arrays
 
 IPSAE = Path(__file__).resolve().parent / "vendor" / "ipsae.py"
+
+TABLE_DESCRIPTION = (
+    "PAE-based interface metrics of one nanopulldown pair: one row per sample x "
+    "bait-prey chain pair. Each score column's `references` field metadata cites "
+    "its publication (nanopulldown.core.metric_refs). Written by "
+    "nanopulldown.structure.metrics, joined with fold.parquet's pTM / ipTM / pLDDT "
+    "by `table results`.")
+COLUMN_DESCRIPTIONS = {
+    "pair": "Pair id (<bait>__<prey>).",
+    "seed": "Random seed of the run the sample comes from.",
+    "sample_index": "Sample index within the pair (sample_<i>.cif.gz in raw/).",
+    "cif_path": "The sample's gzipped mmCIF, relative to the results root.",
+    "chain_i": "First chain of the chain pair (sorted).",
+    "chain_j": "Second chain of the chain pair (sorted).",
+    "lis": "Local Interaction Score: mean (cutoff - PAE)/cutoff over inter-chain pairs with PAE <= cutoff, 0-1.",
+    "clis": "Contact LIS: LIS over the pairs also within the Cb-Cb contact cutoff, 0-1.",
+    "ilis": "Integrated LIS, sqrt(lis * clis), 0-1.",
+    "pinc": "Pinc: mean PAE-derived contact probability over inter-chain residue pairs within 12 A, 0-1.",
+    "ipsae": "ipSAE (ipsae.py v4): the highest of the chain pair's ipsae.py rows, 0-1.",
+    "pdockq": "pDockQ, from the same ipsae.py row as ipsae, 0-1.",
+    "pdockq2": "pDockQ2, from the same ipsae.py row as ipsae, 0-1.",
+    "pair_iptm": "The fold engine's ipTM of this chain pair (fold.parquet pair_chains_iptm), 0-1.",
+    "note": "Why ipSAE / pDockQ / pDockQ2 are missing, empty otherwise.",
+}
 
 
 # ── structure helpers (unchanged from ab_initio_pipeline) ─────────────────
@@ -279,8 +305,10 @@ def main() -> int:
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame(rows)
-    df.to_parquet(out, index=False)
+    df = pd.DataFrame(rows, columns=list(COLUMN_DESCRIPTIONS))
+    write_parquet_with_metadata(df, out, table_description=TABLE_DESCRIPTION,
+                                column_descriptions=COLUMN_DESCRIPTIONS,
+                                column_references=column_references(df.columns))
     print(f"[interface_metrics] {a.pair}: {len(df)} (sample,pair) rows -> {out}")
     if not df.empty:
         print(df.groupby(["chain_i", "chain_j"])[["ilis", "pinc", "ipsae", "pair_iptm"]]

@@ -33,6 +33,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from nanopulldown.core.metric_refs import REFS, column_references, references_text
+
 SCHEMA_VERSION = "fold/1"
 FOLD_FILE = "fold.parquet"
 
@@ -93,6 +95,11 @@ FOLD_COLUMNS: dict[str, tuple[pa.DataType, str]] = {
     "plddt": (_F16, "Per-token pLDDT, 0-1, float16"),
     "pae": (_F16, "Predicted aligned error (A), float16, flattened row-major n_tokens x n_tokens"),
 }
+# the publications behind the confidence columns (core.metric_refs); the
+# per-token plddt array is cited like its mean, the ipTM matrix like pair_iptm
+FOLD_REFERENCES = {**column_references(["ptm", "iptm"]),
+                   "mean_plddt": references_text("mean_plddt"), "plddt": references_text("mean_plddt"),
+                   "pair_chains_iptm": references_text("pair_iptm"), "pae": str(REFS["jumper2021"])}
 SCALARS = ["pair", "seed", "sample_index", "structure_path", "ptm", "iptm", "mean_plddt", "n_tokens"]
 
 
@@ -134,7 +141,10 @@ def write_fold(path: Path, rows: list[dict], run_params: dict | None = None,
     run_params go in the table metadata under the engine's name."""
     fields, cols = [], []
     for name, (typ, desc) in FOLD_COLUMNS.items():
-        fields.append(pa.field(name, typ, metadata={b"description": desc.encode()}))
+        meta = {b"description": desc.encode()}
+        if name in FOLD_REFERENCES:
+            meta[b"references"] = FOLD_REFERENCES[name].encode()
+        fields.append(pa.field(name, typ, metadata=meta))
         vals = [r[name] for r in rows]
         cols.append(_f16_list(vals) if typ == _F16 else pa.array(vals, typ))
     meta = {b"description": FOLD_TABLE_DESCRIPTION.encode(), b"schema": SCHEMA_VERSION.encode()}

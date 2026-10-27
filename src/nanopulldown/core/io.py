@@ -40,13 +40,17 @@ def write_parquet_with_metadata(
     *,
     table_description: str,
     column_descriptions: dict[str, str],
+    column_references: dict[str, str] | None = None,
+    table_references: str | None = None,
     compression: str = "zstd",
 ) -> None:
     """Write `df` to `path` as Parquet, embedding `table_description` as
     schema-level metadata and each entry of `column_descriptions` as that
     column's own field-level metadata. Every column in `df` must have an
     entry in `column_descriptions` (raises otherwise) — deliberately
-    strict, so a column added later can't silently ship undocumented."""
+    strict, so a column added later can't silently ship undocumented.
+    `column_references` / `table_references` (the publications behind a score,
+    core.metric_refs) go under a `references` key next to `description`."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -57,11 +61,16 @@ def write_parquet_with_metadata(
         )
 
     table = pa.Table.from_pandas(df, preserve_index=False)
+    refs = column_references or {}
     documented_fields = [
-        field.with_metadata({b"description": column_descriptions[field.name].encode()})
+        field.with_metadata({b"description": column_descriptions[field.name].encode(),
+                             **({b"references": refs[field.name].encode()} if field.name in refs else {})})
         for field in table.schema
     ]
-    documented_schema = pa.schema(documented_fields, metadata={b"description": table_description.encode()})
+    meta = {b"description": table_description.encode()}
+    if table_references:
+        meta[b"references"] = table_references.encode()
+    documented_schema = pa.schema(documented_fields, metadata=meta)
     table = pa.Table.from_arrays(table.columns, schema=documented_schema)
 
     path = Path(path)
