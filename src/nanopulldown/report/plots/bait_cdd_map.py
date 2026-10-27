@@ -71,9 +71,10 @@ def bait_cdd(cdd: pd.DataFrame, specs: dict, pairs: list[str]) -> tuple[list, di
 
 
 def prey_matrix(t: pd.DataFrame, specs: dict, results_root: Path, n_samples: int):
-    """(preys [{key, label, group}], {key: {full residue: frequency}}, max residue)."""
+    """(preys [{key, label, group}], {key: {full residue: frequency}}, max residue,
+    (first, last) full-length residue any pair's bait chain covers)."""
     freq: dict[str, dict[int, float]] = defaultdict(dict)
-    preys, L = {}, 0
+    preys, L, lo = {}, 0, None
     for pair, g in t.groupby("pair", sort=False):
         spec = specs.get(pair)
         path = results_root / pair / "plip_contacts.parquet"
@@ -82,6 +83,7 @@ def prey_matrix(t: pd.DataFrame, specs: dict, results_root: Path, n_samples: int
         reg = spec["bait"].get("regions")
         chains = set(spec.get("bait_chains", []))
         L = max([L] + [to_full(len(c["sequence"]), reg) for c in spec["sequences"] if c["id"] in chains])
+        lo = min(lo or L, to_full(1, reg))
         key = str(g["prey_uniprot"].iloc[0])
         preys.setdefault(key, {"key": key, "label": str(g["prey"].iloc[0]).split(" ")[0],
                                "group": g["group"].iloc[0]})
@@ -93,7 +95,7 @@ def prey_matrix(t: pd.DataFrame, specs: dict, results_root: Path, n_samples: int
         row = freq[key]
         for p, n in counts.items():
             row[p] = max(row.get(p, 0.0), n / max(n_samples, 1))
-    return list(preys.values()), freq, L
+    return list(preys.values()), freq, L, (lo or 1, L)
 
 
 def main() -> int:
@@ -117,7 +119,7 @@ def main() -> int:
     cdd = read_cdd(a.cdd)
     pairs = list(t["pair"].unique())
     locs, sites = bait_cdd(cdd, specs, pairs) if cdd is not None else ([], {})
-    preys, freq, L = prey_matrix(t, specs, Path(a.results_root), a.num_samples)
+    preys, freq, L, (x_lo, x_hi) = prey_matrix(t, specs, Path(a.results_root), a.num_samples)
     L = max([L, 1] + [e for *_, e in locs] + [max(r) for r in sites.values() if r])
 
     site_res = sorted({r for rs in sites.values() for r in rs})
@@ -146,12 +148,14 @@ def main() -> int:
 
     gcolor = {g: TH.slot(s) for g, s in GROUP_SLOT.items()}
     name = protein_name(a.bait, load_proteins())
-    axp.set_title(f"{name} ({a.bait}): where PLIP puts each prey, against the bait's CDD sites",
+    label = name if a.bait in name else f"{name} ({a.bait})"
+    axp.set_title(f"{label}: where PLIP puts each prey, against the bait's CDD sites",
                   fontsize=9, loc="left", color=INK, pad=16)
     n_by = {g: sum(p["group"] == g for p in preys) for g in GROUPS}
     groups = ", ".join(f"{v} {g}" for g, v in n_by.items() if v)
     axp.text(0, 1.04, f"{n} prey proteins{f' ({groups})' if sum(map(bool, n_by.values())) > 1 else ''} · "
              f"{len(site_res)} CDD site residues · residue numbering: full-length UniProt"
+             + (f" · folded bait residues {x_lo}–{x_hi}" if (x_lo, x_hi) != (1, L) else "")
              + (" · row label %: the site residues that prey contacts" if site_res and n <= MAX_LABELLED_ROWS else ""),
              transform=axp.transAxes, fontsize=7, color=INK2, va="bottom")
 
@@ -225,7 +229,7 @@ def main() -> int:
     axg.set_xticks([])
     for sp in axg.spines.values():
         sp.set_visible(False)
-    axh.set_xlim(0.5, L + 0.5)
+    axh.set_xlim(x_lo - 0.5, x_hi + 0.5)       # shared: only what any pair folded
     axh.set_yticks([])
     axh.tick_params(axis="x", labelsize=7, colors=INK2)
     axh.set_xlabel(f"bait residue ({name}, full-length numbering)", fontsize=8, color=INK2)

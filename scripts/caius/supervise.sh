@@ -40,7 +40,7 @@ LOG=$LOGS/snakemake.log
 status() {
   {
     echo "updated $(date '+%a %d %b %H:%M')  (supervisor: $1)"
-    echo "folded pairs:  $(ls "$POST"/_fold_cache/*/fold.parquet 2>/dev/null | wc -l)"
+    echo "folded pairs:  $(ls "$POST"/_fold_cache/*/fold.parquet "$POST"/_colabfold_cache/*/fold.parquet 2>/dev/null | wc -l)"
     echo "plip reports:  $(ls -d "$POST"/*/plip/sample_*_report/*_report.txt 2>/dev/null | wc -l)"
     echo "relaunches:    $relaunches / $MAX_RELAUNCH"
     [ -f "$LOG" ] && echo "progress:      $(grep -E 'steps \(' "$LOG" | tail -1)"

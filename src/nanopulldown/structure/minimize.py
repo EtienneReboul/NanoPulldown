@@ -27,6 +27,7 @@ import argparse
 import gzip
 import io
 import sys
+import time
 from pathlib import Path
 
 ENERGY_TABLE_DESCRIPTION = (
@@ -34,7 +35,8 @@ ENERGY_TABLE_DESCRIPTION = (
     "sample): one row per recorded point, from the unminimized start "
     "to the final step. Read by nanopulldown.report.plots.minimize_energy.")
 ENERGY_COLUMN_DESCRIPTIONS = {
-    "step": "Cumulative L-BFGS iterations performed so far (0 = initial structure).",
+    "step": "Cumulative L-BFGS iterations performed so far, pre-relaxation included "
+            "(0 = initial structure; energies are always the full implicit-solvent system's).",
     "energy_kJ_mol": "Potential energy of the system at that step, kJ/mol.",
 }
 
@@ -139,8 +141,8 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     simulation = _make_simulation(modeller.topology, system, mz["platform_preference"])
     simulation.context.setPositions(modeller.positions)
 
-    def energy_kj() -> float:
-        state = simulation.context.getState(getEnergy=True)
+    def energy_kj(sim=simulation) -> float:
+        state = sim.context.getState(getEnergy=True)
         return state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
 
     trace = []
@@ -148,26 +150,84 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     trace.append((0, e0))
     print(f"[minimize] initial energy: {e0:.1f} kJ/mol", flush=True)
 
-    # Minimize in chunks of `trace_interval` iterations, recording the energy
-    # after each one (L-BFGS restarts per call, which is harmless here). The
-    # divergence guard runs on every chunk; the stricter probe check (energy
-    # blowing up relative to the start) runs once, when probe_steps is reached.
     interval = max(1, int(mz.get("trace_interval", 50)))
     max_steps = int(mz["max_steps"])
     probe_steps = int(mz["probe_steps"])
     max_abs = float(mz["max_abs_energy"])
-    done, probed, prev = 0, False, e0
+    # Wall-clock budget (pre-relaxation included), checked between chunks: a
+    # badly interpenetrated model (dozens of sub-1 A overlaps) can take hours of
+    # line searches; past the budget the sane, already-relaxed structure is
+    # saved as not converged.
+    budget_s = 60.0 * float(mz.get("max_minutes") or 0)
+    t_start = time.monotonic()
+
+    # Pre-relaxation: vacuum, 1 nm cutoff (minimize.pre_relax). Raw models start
+    # at ~1e12 kJ/mol (median; up to 1e19): with forces that large OpenMM's
+    # minimizer evaluates them in double precision on one CPU thread, and with
+    # NoCutoff GB that is O(N^2) per evaluation -- hours for a 45k-atom complex.
+    # The cutoff system is cheap on any platform and pulls the overlaps apart.
+    pre = mz.get("pre_relax") or {}
+    pre_done = 0
+    if pre.get("enabled"):
+        from openmm.app import CutoffNonPeriodic
+
+        pre_system = ForceField(*pre.get("forcefield", ["amber14-all.xml"])).createSystem(
+            modeller.topology, nonbondedMethod=CutoffNonPeriodic,
+            nonbondedCutoff=float(pre.get("cutoff_nm", 1.0)) * unit.nanometer)
+        # Charges off: with overlapping atoms, vacuum Coulomb lets opposite
+        # charges collapse onto each other (-3e7 kJ/mol, then nan in the GB
+        # pass). Lennard-Jones + bonded terms alone push the overlaps apart.
+        from openmm import NonbondedForce
+
+        for force in pre_system.getForces():
+            if isinstance(force, NonbondedForce):
+                for i in range(force.getNumParticles()):
+                    _, sigma, eps = force.getParticleParameters(i)
+                    force.setParticleParameters(i, 0.0, sigma, eps)
+                for k in range(force.getNumExceptions()):
+                    p1, p2, _, sigma, eps = force.getExceptionParameters(k)
+                    force.setExceptionParameters(k, p1, p2, 0.0, sigma, eps)
+        pre_sim = _make_simulation(modeller.topology, pre_system, mz["platform_preference"])
+        pre_sim.context.setPositions(modeller.positions)
+        pre_steps = int(pre.get("max_steps", 500))
+        e_pre = energy_kj(pre_sim)
+        print(f"[minimize] pre-relax (vacuum, cutoff): start {e_pre:.1f} kJ/mol", flush=True)
+        while pre_done < pre_steps:
+            n = min(interval, pre_steps - pre_done)
+            LocalEnergyMinimizer.minimize(pre_sim.context, maxIterations=n)
+            pre_done += n
+            e = energy_kj(pre_sim)
+            if e != e:
+                raise RuntimeError(f"Pre-relaxation diverged (nan) at step {pre_done}")
+            if abs(e - e_pre) < float(mz.get("convergence_delta", 1e-3)):
+                break
+            e_pre = e
+        positions = pre_sim.context.getState(getPositions=True).getPositions()
+        del pre_sim
+        simulation.context.setPositions(positions)
+        e_start = energy_kj()
+        trace.append((pre_done, e_start))
+        print(f"[minimize] pre-relaxed in {pre_done} steps, {time.monotonic() - t_start:.0f}s: "
+              f"full-system energy {e_start:.1f} kJ/mol", flush=True)
+    else:
+        e_start = e0
+
+    # Minimize in chunks of `trace_interval` iterations, recording the energy
+    # after each one (L-BFGS restarts per call, which is harmless here). The
+    # divergence guard runs on every chunk; the stricter probe check (energy
+    # blowing up relative to the start) runs once, when probe_steps is reached.
+    done, probed, prev = 0, False, e_start
     while done < max_steps:
         n = min(interval, max_steps - done)
         LocalEnergyMinimizer.minimize(simulation.context, maxIterations=n)
         done += n
         e = energy_kj()
-        trace.append((done, e))
+        trace.append((pre_done + done, e))
 
         bad = e != e or abs(e) > max_abs
         if not probed and done >= probe_steps:
             probed = True
-            bad = bad or (e0 < 0 and e > 0 and abs(e) > float(mz["divergence_factor"]) * abs(e0))
+            bad = bad or (e_start < 0 and e > 0 and abs(e) > float(mz["divergence_factor"]) * abs(e_start))
             if not bad:
                 print(f"[minimize] probe energy looks sane ({e:.1f} kJ/mol) — continuing to convergence", flush=True)
         if bad:
@@ -178,6 +238,10 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
         # A chunk that moves nothing means L-BFGS converged before its cap.
         if done < max_steps and abs(e - prev) < float(mz.get("convergence_delta", 1e-3)):
             print(f"[minimize] converged at step {done}", flush=True)
+            break
+        if probed and budget_s and time.monotonic() - t_start > budget_s:
+            print(f"[minimize] time budget ({budget_s / 60:.0f} min) reached at step {done} — "
+                  f"saving unconverged ({e:.1f} kJ/mol)", flush=True)
             break
         prev = e
     e_final = trace[-1][1]

@@ -1858,6 +1858,17 @@ minimize:
   max_steps: 2000
   trace_interval: 50           # record energy every N iterations (-> sample_<i>_energy.parquet)
   convergence_delta: 1.0e-3    # kJ/mol: stop early if a chunk changes energy by less than this
+  pre_relax:                   # vacuum minimization with a cutoff before the GB one: raw models start at
+                               # ~1e12 kJ/mol (median, ColabFold DNE1 2026-10-27; up to 1e19), forces that
+                               # push OpenMM's minimizer to a 1-thread double-precision NoCutoff-GB pass
+    enabled: true
+    forcefield: ["amber14-all.xml"]
+    cutoff_nm: 1.0
+    max_steps: 500             # stops earlier once a chunk changes energy by < convergence_delta
+  max_minutes: 75              # wall-clock budget (checked between chunks, after the probe): past it,
+                               # save the structure unconverged. Keep below the minimize_cif runtime
+                               # (CAIUS profile: 120 min); a ColabFold model with 69 sub-1 A overlaps
+                               # ran out 2 x 2 h (2026-10-27). 0 = no budget
   # ChimeraX `clashes` defaults, used by nanopulldown.structure.clashes to compare
   # raw vs minimized structures (heavy atoms only -- see that script).
   clashes:
