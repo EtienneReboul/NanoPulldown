@@ -274,7 +274,8 @@ rule all:
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         [str(FOLD_REP / p / "plip_cdd.svg") for p in PAIRS],
         # MSA-based engines only (ESMFold2 has no MSA)
-        [str(FOLD_REP / p / "msa_coverage.svg") for p in PAIRS] if ENGINE == "colabfold" else [],
+        [str(FOLD_REP / "msa_unpaired" / f"{prot}.svg") for prot in DOMAIN_PROTEINS] if ENGINE == "colabfold" else [],
+        [str(FOLD_REP / p / "msa_paired.svg") for p in PAIRS] if ENGINE == "colabfold" else [],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         # per-bait report sections (the run-wide pages above are on-demand targets)
@@ -945,18 +946,48 @@ rule fig_domain_heatmap:
         """
 
 
-# ColabFold-style MSA coverage of each pair's complex a3m (paired + unpaired
-# blocks, identity to the query, depth line). Only with an MSA-based engine.
-# The a3m is not a declared output of colabfold_msa (it lives in the shared
-# content-keyed cache), so the rule waits on msa.done and takes the a3m path
-# as a param -- a new MSA for the pair changes the path and redraws the figure.
+# ColabFold-style MSA coverage (nanopulldown.report.plots.msa_coverage), only
+# with an MSA-based engine, in two report sections: each distinct protein's
+# unpaired MSA (Baits / Preys, like the domain map + AIUPred figures; drawn
+# from the a3m of the first pair it is in -- the unpaired search is per
+# sequence) and each pair's paired MSA (per bait). The a3m is not a declared
+# output of colabfold_msa (it lives in the shared content-keyed cache), so the
+# rules wait on msa.done and take the a3m path as a param -- a new MSA changes
+# the path and redraws the figure.
 if ENGINE == "colabfold":
-    rule fig_msa_coverage:
+    rule fig_msa_unpaired:
         input:
             msa=ancient(str(MSA_DONE)),
         output:
-            report(str(FOLD_REP / "{pair}" / "msa_coverage.svg"),
-                   category="MSA coverage", subcategory=bait_subcategory, labels=pair_report_labels),
+            report(str(FOLD_REP / "msa_unpaired" / "{protein}.svg"),
+                   category="MSA coverage (unpaired)",
+                   subcategory=lambda wc: "Baits" if DOMAIN_PROTEINS[wc.protein]["role"] == "bait" else "Preys",
+                   labels=lambda wc: {
+                       "protein": protein_name(DOMAIN_PROTEINS[wc.protein]["uniprot"], PROTEINS),
+                       "name": protein_name(DOMAIN_PROTEINS[wc.protein]["uniprot"], PROTEINS, "long"),
+                       "UniProt": DOMAIN_PROTEINS[wc.protein]["uniprot"],
+                       "pairs": str(len(DOMAIN_PROTEINS[wc.protein]["pairs"]))}),
+        conda:
+            "envs/analysis.yaml"
+        params:
+            theme=FIG_THEME,
+            fmts=FMTS,
+            pair=lambda wc: DOMAIN_PROTEINS[wc.protein]["pair"],
+            chain=lambda wc: DOMAIN_PROTEINS[wc.protein]["chain"],
+            a3m=lambda wc: str(a3m_path(SPECS[DOMAIN_PROTEINS[wc.protein]["pair"]], CF)),
+            labels=lambda wc: LABEL_KEY[DOMAIN_PROTEINS[wc.protein]["pair"]],
+        shell:
+            r"""
+            {NP} plot msa-unpaired --pair {params.pair} --chain {params.chain} --a3m {params.a3m} \
+              --out {output[0]} --formats {params.fmts}
+            """
+
+    rule fig_msa_paired:
+        input:
+            msa=ancient(str(MSA_DONE)),
+        output:
+            report(str(FOLD_REP / "{pair}" / "msa_paired.svg"),
+                   category="MSA coverage (paired)", subcategory=bait_subcategory, labels=pair_report_labels),
         conda:
             "envs/analysis.yaml"
         params:
@@ -966,7 +997,7 @@ if ENGINE == "colabfold":
             labels=lambda wc: LABEL_KEY[wc.pair],
         shell:
             r"""
-            {NP} plot msa-coverage --pair {wildcards.pair} --a3m {params.a3m} \
+            {NP} plot msa-paired --pair {wildcards.pair} --a3m {params.a3m} \
               --out {output[0]} --formats {params.fmts}
             """
 
