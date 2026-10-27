@@ -63,6 +63,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "plip-cdd": ("report.plots.plip_cdd:main", "PLIP contacts of one pair against its CDD sites"),
         "bait-cdd-map": ("report.plots.bait_cdd_map:main", "every prey's contacts on one bait vs its CDD sites"),
         "minimize-energy": ("report.plots.minimize_energy:main", "minimization energy traces of one pair"),
+        "msa-coverage": ("report.plots.msa_coverage:main", "ColabFold MSA coverage of one pair"),
         "violins": ("report.plots.violins:main", "interactive metric distributions"),
         "clash-test": ("report.plots.clash_test:main", "raw vs minimized clash test (Wilcoxon)"),
     },

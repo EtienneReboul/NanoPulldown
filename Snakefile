@@ -273,6 +273,8 @@ rule all:
         str(FOLD_REP / "clash_counts.csv"),
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
         [str(FOLD_REP / p / "plip_cdd.svg") for p in PAIRS],
+        # MSA-based engines only (ESMFold2 has no MSA)
+        [str(FOLD_REP / p / "msa_coverage.svg") for p in PAIRS] if ENGINE == "colabfold" else [],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         # per-bait report sections (the run-wide pages above are on-demand targets)
@@ -565,7 +567,7 @@ if ENGINE == "colabfold":
     # MSA cache, so adding pairs reruns it cheaply; the fold chunks take its
     # .done file as ancient() input, so that rerun does not refold finished
     # pairs. A pair's MSA identity is in the chunk's params instead (msas=).
-    from nanopulldown.fold.colabfold import msa_key, msa_settings, run_params as cf_run_params  # noqa: E402
+    from nanopulldown.fold.colabfold import a3m_path, msa_key, msa_settings, run_params as cf_run_params  # noqa: E402
 
     CF_MSA = CF.get("msa") or {}
     CF_MSA_MODE = msa_settings(CF)["mode"]
@@ -941,6 +943,32 @@ rule fig_domain_heatmap:
           --fold {input.fold} --annotation {input.annotation} \
           --pae-cutoff {params.pae} --out {output[0]} --formats {params.fmts}
         """
+
+
+# ColabFold-style MSA coverage of each pair's complex a3m (paired + unpaired
+# blocks, identity to the query, depth line). Only with an MSA-based engine.
+# The a3m is not a declared output of colabfold_msa (it lives in the shared
+# content-keyed cache), so the rule waits on msa.done and takes the a3m path
+# as a param -- a new MSA for the pair changes the path and redraws the figure.
+if ENGINE == "colabfold":
+    rule fig_msa_coverage:
+        input:
+            msa=ancient(str(MSA_DONE)),
+        output:
+            report(str(FOLD_REP / "{pair}" / "msa_coverage.svg"),
+                   category="MSA coverage", subcategory=bait_subcategory, labels=pair_report_labels),
+        conda:
+            "envs/analysis.yaml"
+        params:
+            theme=FIG_THEME,
+            fmts=FMTS,
+            a3m=lambda wc: str(a3m_path(SPECS[wc.pair], CF)),
+            labels=lambda wc: LABEL_KEY[wc.pair],
+        shell:
+            r"""
+            {NP} plot msa-coverage --pair {wildcards.pair} --a3m {params.a3m} \
+              --out {output[0]} --formats {params.fmts}
+            """
 
 
 rule fig_minimize_energy:

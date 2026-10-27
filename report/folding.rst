@@ -49,6 +49,14 @@ list, folded locally with ESMFold2-Fast (one seed,
   touch. The results table carries the same per sample and side: site
   residues contacted, their enrichment over the chain's contact rate, and
   the share of contacts inside CDD domains.
+* **MSA coverage** (ColabFold runs only) — per pair, the complex MSA
+  ColabFold folded from, drawn like ColabFold's own "Sequence coverage" plot:
+  one row per aligned sequence, the paired block (rows covering every chain)
+  first, then each chain's unpaired block, sorted and coloured by identity to
+  the query, blank where the row has a gap; the black line is the per-position
+  depth. The title gives the paired row count and each chain's median depth --
+  a prey with a shallow MSA, or no paired rows, gives AF2 little coevolution
+  signal for the interface.
 * **Minimization energy** — OpenMM energy trace per diffusion sample, plus a
   failure-rate table for any sample whose minimization diverged.
 
