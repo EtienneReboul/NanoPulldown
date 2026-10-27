@@ -32,6 +32,11 @@ Per bait and metric:
     proteins with more fragments) and as a Sidak-adjusted min p (slightly
     conservative) -- see protein_auc(). In fragment mode these are the AUCs to
     read: a partner binding through one domain is not diluted by the others.
+  * a prey-length check (length_bins.csv): AUC prey vs decoy per prey-length
+    quantile bin, and Spearman score ~ length of decoys and preys
+    (summary.csv decoy_len_rho / prey_len_rho). The decoys are length-matched,
+    but a pool short of long proteins under-fills the top bins; this shows
+    whether that matters for a metric. p-values stay pooled per bait.
   * positives are PER BAIT: a known partner counts only for the baits it
     reaches the positives' `min_tier` with (`known_direct_of`,
     nanopulldown.inputs.controls); a
@@ -54,7 +59,8 @@ Outputs (--outdir): calibration.csv (one row per bait x prey: score, p, q,
 hit per metric), summary.csv (per bait x metric: n decoys/preys/positives,
 AUCs, KS, hits), positives.csv (per bait protein x known partner: best q and
 recovered per metric), recall.csv (per bait protein x metric),
-protein_auc.csv (per bait protein x metric: best-fragment and fair AUCs), index.html
+protein_auc.csv (per bait protein x metric: best-fragment and fair AUCs),
+length_bins.csv (per bait x metric x prey-length bin), index.html
 (decoy / prey / positive ECDFs per bait x metric + the recall and hit tables).
 
 Usage (report env: envs/report.yaml):
@@ -110,6 +116,42 @@ def ks(x: np.ndarray, y: np.ndarray) -> float:
     return float(np.max(np.abs(np.searchsorted(x, g, "right") / len(x) - np.searchsorted(y, g, "right") / len(y))))
 
 
+def spearman(x: np.ndarray, y: np.ndarray) -> float:
+    if len(x) < 3:
+        return np.nan
+    return float(pd.Series(x).rank().corr(pd.Series(y).rank()))
+
+
+def length_bins(g: pd.DataFrame, metrics: list[str], n_bins: int, alpha: float,
+                min_decoys: int = 10) -> pd.DataFrame:
+    """Per bait x metric x prey-length bin (quantiles of the screen preys'
+    lengths, as build_decoys' strata): counts, medians, AUC prey vs decoy and
+    hits. The p-values stay pooled over all of a bait's decoys; this checks
+    that pooling where the decoys under-fill a length range (a decoy pool from
+    stroma/lumen/matrix compartments holds few > 1,300 aa proteins): if the
+    decoys' scores trend with length, a bin's AUC drifts from the bait's."""
+    scr_len = g.loc[~g.is_decoy, "prey_len"].dropna()
+    if scr_len.empty:
+        return pd.DataFrame()
+    edges = np.unique(np.quantile(scr_len, np.linspace(0, 1, n_bins + 1)))
+    edges[0], edges[-1] = 0, np.inf
+    g = g.assign(len_bin=pd.cut(g.prey_len, edges, right=False, labels=False))
+    rows = []
+    for (bait, b), d in g.dropna(subset=["len_bin"]).groupby(["bait_spec", "len_bin"]):
+        dec, scr = d[d.is_decoy], d[~d.is_decoy]
+        for m in metrics:
+            null, s = dec[m].dropna().to_numpy(), scr[m].dropna().to_numpy()
+            rows.append({"bait_spec": bait, "metric": m, "len_bin": int(b),
+                         "length_range": f"{edges[int(b)]:.0f}-{edges[int(b) + 1]:.0f}",
+                         "n_preys": len(s), "n_decoys": len(null),
+                         "prey_median": float(np.median(s)) if len(s) else np.nan,
+                         "decoy_median": float(np.median(null)) if len(null) else np.nan,
+                         "auc_prey_vs_decoy": auc(s, null) if len(s) and len(null) >= min_decoys else np.nan,
+                         f"hits_q{alpha:g}": int(scr[f"{m}_hit"].fillna(False).astype(bool).sum())
+                         if f"{m}_hit" in scr else 0})
+    return pd.DataFrame(rows)
+
+
 def prey_sequence(pair: str, specs: dict) -> str | None:
     spec = specs.get(pair)
     if not spec:
@@ -126,6 +168,8 @@ def main() -> int:
     ap.add_argument("--decoy-tag", default="decoy", help="input-source tag of the decoys")
     ap.add_argument("--positive-tag", default="known", help="input-source tag of the positive controls")
     ap.add_argument("--alpha", type=float, default=0.05)
+    ap.add_argument("--length-bins", type=int, default=8,
+                    help="prey-length quantile bins of the length check (build_decoys' length_bins)")
     a = ap.parse_args()
 
     t = pd.concat([pd.read_csv(p) for p in a.table], ignore_index=True)
@@ -164,6 +208,7 @@ def main() -> int:
     g = g[g.prey_seq.isna() | ~g.duplicated(["bait_spec", "prey_seq"])]
     if len(g) < n0:
         print(f"[decoy_calibration] collapsed {n0 - len(g)} pair(s) with a duplicate prey sequence")
+    g["prey_len"] = g.prey_seq.map(lambda s: len(s.replace("|", "")) if isinstance(s, str) else np.nan)
 
     summary, parts = [], []
     for bait, d in g.groupby("bait_spec"):
@@ -186,7 +231,11 @@ def main() -> int:
                             "n_positives": len(pos),
                             "min_p": 1 / (len(null) + 1), "auc_prey_vs_decoy": auc(s[ok].to_numpy(), null),
                             "auc_positive_vs_decoy": auc(pos, null) if len(pos) else np.nan,
-                            "ks": ks(s[ok].to_numpy(), null), "decoy_median": float(np.median(null)),
+                            "ks": ks(s[ok].to_numpy(), null),
+                            # score ~ prey length (Spearman): near 0 = the decoys' length mismatch is harmless
+                            "decoy_len_rho": spearman(dec.loc[dec[m].notna(), "prey_len"].to_numpy(), null),
+                            "prey_len_rho": spearman(scr.loc[ok, "prey_len"].to_numpy(), s[ok].to_numpy()),
+                            "decoy_median": float(np.median(null)),
                             "prey_median": float(s[ok].median()), f"hits_q{a.alpha:g}": int((q <= a.alpha).sum())})
         parts.append(d)
     if not parts:
@@ -202,6 +251,7 @@ def main() -> int:
     prot_auc = protein_auc(g, metrics)
     if not prot_auc.empty:
         print(prot_auc.round(3).to_string(index=False))
+    lbins = length_bins(g, metrics, a.length_bins, a.alpha)
 
     out = Path(a.outdir)
     out.mkdir(parents=True, exist_ok=True)
@@ -210,9 +260,10 @@ def main() -> int:
     positives.to_csv(out / "positives.csv", index=False)
     recall.to_csv(out / "recall.csv", index=False)
     prot_auc.to_csv(out / "protein_auc.csv", index=False)
-    write_html(g, summ, recall, prot_auc, positives, metrics, a.alpha, out / "index.html")
+    lbins.to_csv(out / "length_bins.csv", index=False)
+    write_html(g, summ, recall, prot_auc, positives, lbins, metrics, a.alpha, out / "index.html")
     print(f"[decoy_calibration] -> {out}/calibration.csv, summary.csv, positives.csv, recall.csv, "
-          "protein_auc.csv, index.html")
+          "protein_auc.csv, length_bins.csv, index.html")
     return 0
 
 
@@ -338,7 +389,8 @@ def positive_recovery(g: pd.DataFrame, metrics: list[str],
 
 
 def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, prot_auc: pd.DataFrame,
-               positives: pd.DataFrame, metrics: list[str], alpha: float, path: Path) -> None:
+               positives: pd.DataFrame, lbins: pd.DataFrame, metrics: list[str], alpha: float,
+               path: Path) -> None:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -453,6 +505,17 @@ def write_html(g: pd.DataFrame, summ: pd.DataFrame, recall: pd.DataFrame, prot_a
         + "<h3 style='margin-left:24px'>Per bait (fragment) and metric</h3>"
           "<p style='margin-left:24px'>— = not applicable: the bait has no known direct partner.</p>"
         + tbl(summ)
+        + "<h3 style='margin-left:24px'>Prey-length check: AUC prey vs decoy per length bin</h3>"
+          "<p style='margin-left:24px;max-width:900px'>Bins are quantiles of the screen preys' lengths; "
+          "p-values stay pooled over all of a bait's decoys. Where a bin's AUC drifts from the bait's "
+          "(and decoy_len_rho above is far from 0), its preys' p-values lean on decoys of other lengths. "
+          "— = fewer than 10 decoys in the bin. Full counts and medians: length_bins.csv.</p>"
+        + (tbl(lbins.drop_duplicates(["bait_spec", "len_bin"])
+               .set_index(["bait_spec", "len_bin"])[["length_range", "n_preys", "n_decoys"]]
+               .join(lbins.pivot(index=["bait_spec", "len_bin"], columns="metric",
+                                 values="auc_prey_vs_decoy")[metrics])
+               .reset_index(), 2)
+           if not lbins.empty else "<p style='margin-left:24px'>no prey lengths</p>")
         + f"<h3 style='margin-left:24px'>Hits on any metric ({len(hits)})</h3>"
         + tbl(hits, 4) + "</body>"))
     path.write_text(html)

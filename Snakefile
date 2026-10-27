@@ -186,6 +186,8 @@ wildcard_constraints:
 _CTL = CFG.get("controls") or {}
 DECOY_TAG = (_CTL.get("decoys") or {}).get("name", "decoy")
 POSITIVE_TAG = (_CTL.get("positives") or {}).get("name", "known")
+# the calibration's prey-length check bins like build_decoys' strata
+DECOY_LENGTH_BINS = int((_CTL.get("decoys") or {}).get("length_bins", 8))
 
 
 def _run_has_decoys() -> bool:
@@ -1165,10 +1167,12 @@ rule decoy_calibration:
     params:
         decoy=DECOY_TAG,
         positive=POSITIVE_TAG,
+        length_bins=DECOY_LENGTH_BINS,
     shell:
         r"""
         {NP} calibrate --table {input[0]} --outdir {output[0]} \
-          --decoy-tag {params.decoy} --positive-tag {params.positive} > {log} 2>&1
+          --decoy-tag {params.decoy} --positive-tag {params.positive} \
+          --length-bins {params.length_bins} > {log} 2>&1
         """
 
 
@@ -1331,10 +1335,12 @@ rule decoy_calibration_bait:
     params:
         decoy=DECOY_TAG,
         positive=POSITIVE_TAG,
+        length_bins=DECOY_LENGTH_BINS,
     shell:
         r"""
         {NP} calibrate --table {input[0]} --outdir {output[0]} \
-          --decoy-tag {params.decoy} --positive-tag {params.positive} > {log} 2>&1
+          --decoy-tag {params.decoy} --positive-tag {params.positive} \
+          --length-bins {params.length_bins} > {log} 2>&1
         """
 
 

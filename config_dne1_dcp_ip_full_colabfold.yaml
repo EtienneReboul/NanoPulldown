@@ -6,8 +6,11 @@
 # job) on the ColabFold databases; paths in CAIUS's config.local.yaml.
 #   NANOPULLDOWN_RUN_CONFIG=config_dne1_dcp_ip_full_colabfold.yaml scripts/caius/run.sh
 
-run_name: "dne1_dcp_ip_full"            # same inputs table / pair list as the ESMFold2 run
-pairs_file: configs/pairs_dne1_dcp_ip_full.txt
+run_name: "dne1_dcp_ip_full"            # same inputs table, interactor snapshot (-> positives) and
+                                        # decoy draw as the ESMFold2 run
+pairs_file: configs/pairs_dne1_dcp_ip_full_colabfold.txt   # its own list: the 543 screen + positive
+                                        # pairs + 500 decoys x 5 baits (added 2026-10-27, after the
+                                        # first pass); the ESMFold2 run's list stays decoy-free
 
 fold:
   engine: colabfold
@@ -31,15 +34,16 @@ colabfold:
                                         # and it took longer -- the job failed at 10:53 (2026-10-26)
     db_load_mode: 0                     # the databases have no .idx index: colabfold_search reads
                                         # _seq/_aln and forces 0 anyway
-    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 720}   # ~270 GB of padded
-                                        # sequences (UniRef30 + envdb) stream through one H200
+    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 1440}  # ~270 GB of padded
+                                        # sequences (UniRef30 + envdb) stream through one H200; 543
+                                        # pairs took 5.4 h, the decoys' scaling is unmeasured
 
 fragments:
   enabled: false
 
 controls:
   decoys:
-    enabled: false
+    enabled: true                       # n: 500 (config.yaml) x 5 baits = 2,500 folds, smallest p = 1/501
 
 dirs:
   annotation:  "data/annotation_dne1_dcp_ip_full"   # shared with the ESMFold2 run: same pairs, no re-query
