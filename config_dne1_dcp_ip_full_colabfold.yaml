@@ -18,8 +18,9 @@ fold:
 colabfold:
   num_models: 5
   num_seeds: 1
-  max_tokens: 2880                      # the ESMFold2 run's limit: the same 543 pairs (largest 2,880
-                                        # tokens; AF2-multimer, unified memory, on a 141 GB H200)
+  max_tokens: 4000                      # raised from the ESMFold2 run's 2,880 (2026-10-28): F4I983 x
+                                        # Q9FR53 (3,976 tokens, the largest) folded on one H200 in
+                                        # ~53 GB, 26 min/model -> the 32 pairs skipped at 2,880 are in
   pairs_per_load: 30                    # hpc.fold_chunk_minutes (23 h) usually cuts first
   fast_kernels: true                    # fused Pallas kernels (every GPU below is sm_80+: one backend)
   gpu_classes:                          # small pairs to any Ampere+ GPU (40-48 GB; nodes have 128 GB+ RAM
@@ -44,6 +45,8 @@ fragments:
 controls:
   decoys:
     enabled: true                       # n: 500 (config.yaml) x 5 baits = 2,500 folds, smallest p = 1/501
+    max_tokens: 2880                    # the draw's fit limit, pinned: the set was drawn (and its MSAs
+                                        # searched) at 2,880, before colabfold.max_tokens was raised
 
 dirs:
   annotation:  "data/annotation_dne1_dcp_ip_full"   # shared with the ESMFold2 run: same pairs, no re-query

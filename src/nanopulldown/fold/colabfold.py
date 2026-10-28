@@ -120,8 +120,10 @@ def _run(cmd: list[str], env: dict | None = None) -> int:
     return subprocess.run(cmd, env=env).returncode
 
 
-def build_msas(pairs: list[str], cfg: dict) -> int:
-    """Search the MSAs the cache lacks for `pairs` (one batch); 0 when all exist."""
+def build_msas(pairs: list[str], cfg: dict, work_tag: str | None = None) -> int:
+    """Search the MSAs the cache lacks for `pairs` (one batch); 0 when all exist.
+
+    `work_tag` gives the batch its own work dir, so several batches can search at once."""
     cf = cfg["colabfold"]
     m = cf.get("msa") or {}
     mode = msa_settings(cf)["mode"]
@@ -142,10 +144,10 @@ def build_msas(pairs: list[str], cfg: dict) -> int:
         return 1
 
     cache = msa_dir(cf)
-    work = cache / "_work" / mode
+    work = cache / "_work" / (f"{mode}_{work_tag}" if work_tag else mode)
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
-    fasta = work.parent / f"queries_{mode}.fasta"
+    fasta = work.parent / f"queries_{work.name}.fasta"
     fasta.write_text("".join(f">{k}\n{':'.join(c['sequence'] for c in protein_chains(s))}\n"
                              for k, s in todo.items()))
 
@@ -196,8 +198,9 @@ def msa_main() -> int:
     ap = argparse.ArgumentParser(description="ColabFold MSAs of pairs (server or local MMseqs2[-GPU])")
     ap.add_argument("--pairs", nargs="+", required=True)
     ap.add_argument("--done", help="touched once every pair has its MSA")
+    ap.add_argument("--work-tag", help="own work dir (data/msa/_work/<mode>_<tag>): concurrent batches")
     a = ap.parse_args()
-    rc = build_msas(a.pairs, load_config())
+    rc = build_msas(a.pairs, load_config(), a.work_tag)
     if rc == 0 and a.done:
         Path(a.done).parent.mkdir(parents=True, exist_ok=True)
         Path(a.done).touch()

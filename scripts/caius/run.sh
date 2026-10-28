@@ -29,6 +29,7 @@ from nanopulldown.core.config import load_config
 from nanopulldown.core.fold_table import fold_engine
 cfg = load_config(".")
 print(f'{cfg["dirs"]["annotation"]}/_cache/domains.done')
+print(f'{cfg["dirs"]["annotation"]}/cdd_sites.parquet')   # InterPro API: compute nodes are offline
 if fold_engine(cfg) == "colabfold" and (cfg["colabfold"].get("msa") or {}).get("mode", "server") == "server":
     print(f'{cfg["dirs"]["postproc"]}/_colabfold/msa.done')
 PY

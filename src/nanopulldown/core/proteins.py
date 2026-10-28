@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -24,7 +25,8 @@ from .specs import protein_chains
 # filesystem-safe); names are a DISPLAY layer only. configs/proteins.parquet
 # holds one row per accession with UniProt's metadata (nanopulldown.services.uniprot)
 # and a resolved `short_name` (axes, titles, pair labels: gene -> source-given
-# name -> gene-like protein name -> AGI locus -> accession, made unique) and
+# name -> gene-like protein name -> Swiss-Prot mnemonic -> AGI locus ->
+# accession, made unique) and
 # `long_name` (the protein name, for subtitles / tables / tooltips).
 # configs/protein_names.yaml ({accession: {short: .., long: ..}}, tracked)
 # overrides either one by hand. Every lookup falls back to the accession, so a
@@ -41,10 +43,11 @@ PROTEINS_TABLE_DESCRIPTION = (
 )
 PROTEINS_COLUMNS = {
     "accession": "UniProt accession (the key pairs and paths use)",
-    "short_name": "Display label: gene > source name > gene-like protein name > AGI locus > accession, unique",
+    "short_name": "Display label: gene > source name > gene-like protein name > Swiss-Prot mnemonic > AGI locus > accession, unique",
     "long_name": "Protein name (UniProt recommended, else submitted); null if absent or a placeholder",
     "protein_name": "UniProt recommended (Swiss-Prot) or submitted (TrEMBL) protein name; placeholders dropped",
     "gene_name": "UniProt primary gene name",
+    "entry_name": "UniProtKB entry name (DCP1_ARATH; accession-based for TrEMBL)",
     "gene_synonyms": "UniProt gene name synonyms",
     "manual_name": "Name given by an input source (e.g. an IP-MS table's gene column)",
     "locus": "Ordered locus; Arabidopsis AGI code normalised to AT#G#####",
@@ -62,7 +65,7 @@ def _proteins_schema():
     import pyarrow as pa
 
     types = {"accession": pa.string(), "short_name": pa.string(), "long_name": pa.string(),
-             "protein_name": pa.string(), "gene_name": pa.string(),
+             "protein_name": pa.string(), "gene_name": pa.string(), "entry_name": pa.string(),
              "gene_synonyms": pa.list_(pa.string()), "manual_name": pa.string(),
              "locus": pa.string(), "organism": pa.string(), "taxon_id": pa.int64(),
              "length": pa.int32(), "reviewed": pa.bool_(), "function": pa.string(),
@@ -79,10 +82,26 @@ def _gene_like(name: str | None) -> bool:
     return bool(name) and " " not in name and len(name) <= 15
 
 
+_AGI_IN_NAME = re.compile(r"\bAt[1-5CM]g\d{5}\b", re.IGNORECASE)
+_PLACEHOLDER_MNEMONIC = re.compile(r"^Y[0-9A-Z]*\d[0-9A-Z]*$")
+
+
+def _mnemonic(r: dict) -> str | None:
+    """'DCP1' from Swiss-Prot entry DCP1_ARATH, for entries with no gene name.
+    Skipped when the protein name carries the AGI code ('F-box protein
+    At4g35733' -> FB311 is a UniProt-internal serial; the locus says more), for
+    Y#### placeholders, and for TrEMBL (entry name = accession)."""
+    entry, name = r.get("entry_name"), r.get("protein_name")
+    if not (r.get("reviewed") and entry and "_" in entry and name) or _AGI_IN_NAME.search(name):
+        return None
+    m = entry.split("_", 1)[0]
+    return None if _PLACEHOLDER_MNEMONIC.match(m) else m
+
+
 def _base_short(r: dict) -> str:
     for cand in (r.get("gene_name"), r.get("manual_name"),
                  r.get("protein_name") if _gene_like(r.get("protein_name")) else None,
-                 r.get("locus")):
+                 _mnemonic(r), r.get("locus")):
         if cand:
             return str(cand)
     return r["accession"]

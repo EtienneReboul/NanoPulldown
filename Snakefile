@@ -191,11 +191,15 @@ DECOY_LENGTH_BINS = int((_CTL.get("decoys") or {}).get("length_bins", 8))
 
 
 def _run_has_decoys() -> bool:
+    # decoys among THIS run's folded preys: runs sharing a run_name share the inputs
+    # table, and one of them may fold a decoy-free pairs_file
     if not INPUTS_TABLE.exists():
         return False
     import pyarrow.parquet as pq
-    t = pq.read_table(INPUTS_TABLE, columns=["role", "sources"]).to_pydict()
-    return any(r == "prey" and DECOY_TAG in (s or []) for r, s in zip(t["role"], t["sources"]))
+    t = pq.read_table(INPUTS_TABLE, columns=["accession", "role", "sources"]).to_pydict()
+    decoys = {a for a, r, s in zip(t["accession"], t["role"], t["sources"])
+              if r == "prey" and DECOY_TAG in (s or [])}
+    return any(p.split("__", 1)[-1].split("x", 1)[0] in decoys for p in PAIRS)
 
 
 HAS_DECOYS = _run_has_decoys()

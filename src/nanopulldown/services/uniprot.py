@@ -79,7 +79,7 @@ def fetch_sequence(spec: str, cfg: dict, cache_dir: Path | None = None) -> str:
 
 # ── metadata ────────────────────────────────────────────────────────────────
 
-META_FIELDS = ("accession,reviewed,protein_name,gene_names,gene_oln,organism_name,"
+META_FIELDS = ("accession,id,reviewed,protein_name,gene_names,gene_oln,organism_name,"
                "length,cc_function,cc_subcellular_location")
 # TrEMBL placeholders that say nothing -- treated as "no protein name"
 _GENERIC_NAME = re.compile(r"^(putative |probable )?(uncharacteri[sz]ed|unknown|hypothetical)"
@@ -130,6 +130,7 @@ def parse_entry(e: dict) -> dict:
                  for sl in c.get("subcellularLocations", []) if sl.get("location")]
     return {
         "accession": e.get("primaryAccession"),
+        "entry_name": e.get("uniProtkbId"),
         "reviewed": "reviewed" in (e.get("entryType") or "").lower()
                     and "unreviewed" not in (e.get("entryType") or "").lower(),
         "protein_name": name,
@@ -156,8 +157,9 @@ def fetch_metadata(accessions, cfg: dict, cache_dir: Path | None = None,
     out, todo = {}, []
     for acc in dict.fromkeys(accessions):
         path = cache_dir / f"{acc}.json"
-        if path.exists():
-            out[acc] = json.loads(path.read_text())
+        md = json.loads(path.read_text()) if path.exists() else None
+        if md and "entry_name" in md:              # older caches lack it: refetch
+            out[acc] = md
         else:
             todo.append(acc)
     base = ucfg["base_url"].rstrip("/")

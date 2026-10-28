@@ -34,7 +34,8 @@ flags override):
                    `fragments:` rules (nanopulldown.inputs.fragments), so decoy
                    fragments are domain blocks of the same kind as the preys';
                    otherwise whole proteins. Fragments too long to fold with the
-                   longest bait chain (esmfold2.max_tokens) are dropped, as are
+                   longest bait chain (controls.decoys.max_tokens, default the
+                   fold engine's max_tokens) are dropped, as are
                    duplicate sequences and more than `max_per_protein` per protein.
   4. matching   -- stratified on the run's screen prey fragments (positive
                    controls left out, unless the run has no other preys):
@@ -127,14 +128,22 @@ def decoy_paths(cfg: dict) -> tuple[Path, Path, Path]:
     return REPO_ROOT / "configs" / f"decoys_{run}.txt", prov, prov.with_suffix(".json")
 
 
+def decoy_max_tokens(cfg: dict, dcfg: dict) -> int:
+    """The token limit the draw fits decoys under: `controls.decoys.max_tokens`
+    when set (pins a drawn set while the fold limit is raised), else the fold
+    engine's max_tokens."""
+    return int(dcfg["max_tokens"]) if dcfg.get("max_tokens") is not None else fold_max_tokens(cfg)
+
+
 def decoy_settings(cfg: dict, dcfg: dict) -> dict:
     """Everything that changes the draw (the reuse key). The prey reference is
     left out on purpose: growing a screen keeps its decoys (and their folds)."""
     fcfg = fragment_config(cfg)
-    return {"format": FORMAT, "decoys": {k: v for k, v in dcfg.items() if k not in ("enabled", "name")},
+    return {"format": FORMAT,
+            "decoys": {k: v for k, v in dcfg.items() if k not in ("enabled", "name", "max_tokens")},
             "fragments": {k: fcfg[k] for k in ("enabled", "sides", "merge_gap", "repeat_gap", "min_length",
                                                "padding", "without_domains")},
-            "max_tokens": fold_max_tokens(cfg)}
+            "max_tokens": decoy_max_tokens(cfg, dcfg)}
 
 
 def pool_query(dcfg: dict) -> str:
@@ -202,7 +211,7 @@ def select_decoys(cfg: dict, dcfg: dict, ref: pd.DataFrame, bait_len: int,
     stratum], pool query). Prints the match report."""
     run = cfg.get("run_name") or "main"
     rng = np.random.default_rng(int(dcfg["seed"]))
-    max_tokens = fold_max_tokens(cfg)
+    max_tokens = decoy_max_tokens(cfg, dcfg)
     ref = ref.copy()
 
     query = pool_query(dcfg)
@@ -356,7 +365,7 @@ def decoy_fragments(cfg: dict, ref_frags: list[Fragment], bait_frags: list[Fragm
     _, out_prov, out_meta = decoy_paths(cfg)
     settings = decoy_settings(cfg, dcfg)
     ref = reference_table(ref_frags, cfg)
-    max_tokens = fold_max_tokens(cfg)
+    max_tokens = decoy_max_tokens(cfg, dcfg)
     if max_tokens:                  # only preys some bait is folded with
         shortest = min(len(fetch_sequence(f.spec, cfg)) * parse_protein_spec(f.spec).copies
                        for f in bait_frags)
