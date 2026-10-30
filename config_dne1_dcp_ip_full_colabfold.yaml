@@ -26,7 +26,10 @@ colabfold:
   gpu_classes:                          # small pairs to any Ampere+ GPU (40-48 GB; nodes have 128 GB+ RAM
                                         # for 2-4 GPUs), the rest to H200 -- frees the H200s
     - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
-    - {gpu_model: "h200", max_tokens: 0, mem_mb: 200000, cpus: 8}
+    - {constraint: "gpuh200|gpu80g", max_tokens: 0, mem_mb: 100000, cpus: 8}  # H200 or any 80 GB
+                                        # GPU (H100/A100 80g): the largest pair peaked at ~53 GB GPU,
+                                        # 61 GiB RSS; 100 GB fits an A100-80g node (128 GB, 4 GPUs)
+                                        # -- the H200s were all taken on 2026-10-30
   msa:
     mode: local
     gpu: 1

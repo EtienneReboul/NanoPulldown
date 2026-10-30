@@ -45,7 +45,7 @@ set-resources:
     slurm_partition: "publicgpu"
     gpu: 0
     gres: "gpu:1"
-    constraint: "gpua100|gpuh100|gpul40s|gpuh200"
+    constraint: "gpua100|gpuh100|gpul40s|gpua40"   # not H200: kept for the large fold chunks
     runtime: 120             # structures with ~1e11 kJ/mol clashes minimize on the CPU (GPU idle,
     mem_mb: 8000             # 2 threads busy): 5 min on a quiet node, >30 on a loaded one (2026-10-22)
     cpus_per_task: 4

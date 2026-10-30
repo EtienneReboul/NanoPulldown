@@ -13,6 +13,7 @@
 # chunks, and with the default triggers the finished chunks' changed `pairs`
 # param reruns them -- relinking their structures and so redoing every
 # minimization / PLIP downstream (750 jobs on 2026-10-22).
+# EXTRA_ARGS (e.g. --groups ... --group-components ...) is appended to every relaunch.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 : "${NANOPULLDOWN_RUN_CONFIG:?set NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml}"
@@ -25,6 +26,7 @@ export PATH=${MAMBA_ROOT_PREFIX:-$HOME/micromamba}/envs/nanopulldown/bin:$PATH
 SESSION=${SESSION:-dne1}
 POLL=${POLL:-300}
 MAX_RELAUNCH=${MAX_RELAUNCH:-4}
+EXTRA_ARGS=${EXTRA_ARGS:-}
 STATUS=${STATUS:-$HOME/caius_logs/STATUS}
 logs=$(python -c "
 import os, yaml
@@ -50,7 +52,8 @@ status() {
 }
 
 controller_alive() {
-  tmux has-session -t "$SESSION" 2>/dev/null
+  # "=": exact name -- a bare target prefix-matches, so dne1cf_sup would count as dne1cf
+  tmux has-session -t "=$SESSION" 2>/dev/null
 }
 
 remaining() {   # jobs a dry run would still do; 0 = finished
@@ -94,6 +97,6 @@ while true; do
   [ -f "$LOG" ] && cp "$LOG" "$LOGS/snakemake.before_relaunch$relaunches.log"
   echo "$(date '+%F %T') relaunch $relaunches ($left job(s) left)" >> "$STATUS.log"
   tmux new -d -s "$SESSION" \
-    "NANOPULLDOWN_RUN_CONFIG=$NANOPULLDOWN_RUN_CONFIG scripts/caius/run.sh --rerun-triggers mtime > $LOG 2>&1"
+    "NANOPULLDOWN_RUN_CONFIG=$NANOPULLDOWN_RUN_CONFIG scripts/caius/run.sh --rerun-triggers mtime $EXTRA_ARGS > $LOG 2>&1"
   sleep "$POLL"
 done
