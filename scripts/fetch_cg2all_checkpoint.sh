@@ -34,5 +34,5 @@ with open(sys.argv[1], "w") as fh:
     fh.write("END\n")
 PY
   "$env/bin/convert_cg2all" -p "$tmp/ca.pdb" -o "$tmp/all.pdb" --cg CalphaBasedModel --fix --device cpu
-  ls -la "$env"/lib/python3*/site-packages/cg2all/model/CalphaBasedModel-FIX.ckpt
+  ls -la "$env"/lib/python3.*/site-packages/cg2all/model/CalphaBasedModel-FIX.ckpt | head -1
 done
