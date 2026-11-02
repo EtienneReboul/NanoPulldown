@@ -11,7 +11,12 @@
 # run.sh before this profile takes over.
 executor: slurm
 software-deployment-method: conda   # rule envs prebuilt by scripts/caius/setup.sh
-jobs: 150
+jobs: 400                    # 150 filled up with GPU minimizations and starved the CPU PLIP jobs (2026-11-01)
+# minimize_cif jobs WAITING for a GPU also count against `jobs`: without a cap
+# they took all 400 slots and PLIP (CPU, `public`) got ~1 (2026-11-02). 120 = the
+# GPUs we can get (~80-100) + a short queue; the other ~280 go to PLIP/post/single steps
+resources:
+  - minslot=120
 latency-wait: 60             # BeeGFS
 retries: 1                   # a timed-out fold chunk resumes: finished pairs are skipped
 keep-going: true
@@ -45,7 +50,10 @@ set-resources:
     slurm_partition: "publicgpu"
     gpu: 0
     gres: "gpu:1"
-    constraint: "gpua100|gpuh100|gpul40s|gpua40"   # not H200: kept for the large fold chunks
+    constraint: "gpua100|gpuh100|gpul40s|gpua40|gpuh200|gpuv100|gpup100"   # drop gpuh200 while large fold
+                             # chunks wait for them; P100 tested 2026-11-02 (OpenCL, same energies)
+    slurm_extra: "--exclude=hpc-n862"   # V100 node with a dead GPU: OpenMM falls back to the CPU
+    minslot: 1               # see `resources:` below
     runtime: 120             # structures with ~1e11 kJ/mol clashes minimize on the CPU (GPU idle,
     mem_mb: 8000             # 2 threads busy): 5 min on a quiet node, >30 on a loaded one (2026-10-22)
     cpus_per_task: 4

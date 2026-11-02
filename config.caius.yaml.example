@@ -47,7 +47,7 @@ hpc:
   fold_chunk_minutes: 1380     # cut chunks at 23 h estimated
 
 minimize:
-  platform_preference: ["OpenCL", "CPU"]   # H200 smoke test 2026-10-21: OpenCL OK; CUDA fails
+  platform_preference: ["OpenCL"]   # H200 smoke test 2026-10-21: OpenCL OK; CUDA fails
                                            # (CUDA_ERROR_UNSUPPORTED_PTX_VERSION, driver 580)
 
 annotate:

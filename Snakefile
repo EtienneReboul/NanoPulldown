@@ -751,7 +751,8 @@ rule minimize_cif:
     log:
         str(FOLD_LOG / "minimize" / "{pair}" / "sample_{sample}.log"),
     conda:
-        "envs/minimize.yaml"
+        # + cg2all for the NaN-start fallback (minimize.cg2all_fallback)
+        "envs/minimize_cg2all.yaml" if (MZ.get("cg2all_fallback") or {}).get("enabled") else "envs/minimize.yaml"
     resources:
         # Shares config.yaml's docker_heavy pool with run_esmfold2/run_plip
         # -- see run_esmfold2's resources: comment.

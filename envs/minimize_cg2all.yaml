@@ -1,0 +1,39 @@
+name: nanopulldown-minimize-cg2all
+# envs/minimize.yaml + cg2all (https://github.com/huhlim/cg2all), for the
+# `minimize.cg2all_fallback` of nanopulldown.structure.minimize: a raw model
+# whose first energy evaluation is infinite/NaN is rebuilt from its CA trace
+# and minimized again. Selected by the Snakefile when that fallback is enabled;
+# envs/minimize.yaml (hash unchanged) is used otherwise.
+#
+# Why these pins: cg2all needs dgl<=1.0 (the README: dgl>=1.1 raises errors),
+# and dgl 1.0 needs torch 1.13 and python<=3.10. e3nn is pinned because 0.5.9
+# calls torch.compiler (torch>=2.1). numpy<2 is what that torch/dgl stack
+# was built against. CPU torch/dgl: cg2all runs on one structure faster on CPU
+# than on a GPU (its README), and these jobs hold the GPU for OpenMM anyway.
+# (dgl from the dglteam conda channel is a CPU build.)
+# The checkpoint is downloaded from Zenodo on first use INTO THE ENV: run
+# scripts/fetch_cg2all_checkpoint.sh once on a node with internet (CAIUS
+# compute nodes have none).
+channels:
+  - conda-forge
+  - dglteam
+  - nodefaults
+dependencies:
+  - python=3.10
+  - openmm>=8.1
+  - pdbfixer>=1.9
+  - numpy=1.26
+  - scipy
+  - pandas>=2.0
+  - pyarrow>=15.0   # energy trace parquet (nanopulldown.core.io)
+  - pyyaml>=6.0     # nanopulldown.core.config
+  - dgl=1.0
+  - pip
+  - pip:
+      # torch from pip: conda's pytorch 1.13 pins libprotobuf 3.21, which conflicts with
+      # the current pyarrow/openmm builds. The +cpu wheel avoids PyPI's ~2 GB of CUDA libs.
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==1.13.1+cpu
+      - e3nn==0.5.1
+      # commit tested 2026-11-02 (installs as cg2all 1.2.0)
+      - git+https://github.com/huhlim/cg2all@a00b8816736c08852944f147e39164d0f5e1834e

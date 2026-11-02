@@ -1851,7 +1851,8 @@ metrics:
 # ── Stage 2c: OpenMM minimization (no ChimeraX, no antechamber) ────────────
 minimize:
   forcefield: ["amber14-all.xml", "implicit/gbn2.xml"]
-  platform_preference: ["OpenCL", "CPU"]   # OpenCL for Mac Metal-backed GPU accel; CPU fallback
+  platform_preference: ["OpenCL"]   # OpenCL for Mac Metal-backed GPU accel. No CPU fallback: a CPU minimization of
+                                    # a clashed complex runs for hours without a guarantee of converging
   max_abs_energy: 1.0e15       # |energy| kJ/mol above this = diverged, stop and flag
   divergence_factor: 100.0     # energy rising by more than this x its running min = diverged
   probe_steps: 200
@@ -1865,6 +1866,16 @@ minimize:
     forcefield: ["amber14-all.xml"]
     cutoff_nm: 1.0
     max_steps: 500             # stops earlier once a chunk changes energy by < convergence_delta
+  cg2all_fallback:             # a model whose FIRST energy evaluation is infinite/NaN (atoms ~0.01 A apart,
+                               # >= 1e31 kJ/mol; 4 of 2765 ColabFold DNE1 samples) is rebuilt by cg2all and
+                               # minimized again; every other model is untouched. Needs envs/minimize_cg2all.yaml
+                               # (the Snakefile picks it when enabled) and its checkpoint fetched once
+                               # (scripts/fetch_cg2all_checkpoint.sh). false = those models just fail.
+    enabled: true
+    model: CalphaBasedModel    # CA trace in, all-atom out, CA kept (--fix): MainchainModel keeps the
+                               # clashing backbone and failed 1 of the 4 test cases
+    device: cpu                # cg2all's README: faster than cuda for a single structure
+    timeout_s: 900
   max_minutes: 75              # wall-clock budget (checked between chunks, after the probe): past it,
                                # save the structure unconverged. Keep below the minimize_cif runtime
                                # (CAIUS profile: 120 min); a ColabFold model with 69 sub-1 A overlaps

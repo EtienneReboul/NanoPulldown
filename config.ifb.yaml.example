@@ -26,7 +26,7 @@ esmfold2:
   pairs_per_load: 20           # ~9x the Mac's per-pair work: keep a fold job to a few hours
 
 minimize:
-  platform_preference: ["OpenCL", "CPU"]   # minimize_cif runs on L40S nodes (profiles/ifb): OpenCL takes
+  platform_preference: ["OpenCL"]   # minimize_cif runs on L40S nodes (profiles/ifb): OpenCL takes
                                            # seconds per sample; CUDA fails there (PTX newer than the driver)
 
 annotate:

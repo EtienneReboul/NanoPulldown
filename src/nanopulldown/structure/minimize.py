@@ -16,17 +16,26 @@ minimization to convergence -> minimized PDB (gzipped, sample_<i>.pdb.gz --
 ChimeraX/gemmi read it as-is) + an energy trace parquet (sample_<i>_energy.parquet,
 one point every `minimize.trace_interval` iterations) for nanopulldown.report.plots.minimize_energy.
 
-Platform: tries `minimize.platform_preference` in order (OpenCL first, for
-Mac Metal-backed GPU acceleration, then CPU) -- confirm OpenCL actually
-initializes on the target Mac before relying on GPU accel; CPU is always a
-safe fallback.
+Platform: the first of `minimize.platform_preference` that starts (OpenCL: a
+GPU vendor's platform, never a CPU one). There is NO implicit CPU/Reference
+fallback: a CPU minimization of a clashed 45k-atom complex runs for hours
+without a guarantee of converging, so no GPU platform = the job fails.
+
+Fallback (`minimize.cg2all_fallback`): a model so clashed that the very first
+energy/force evaluation is infinite or NaN (atoms ~0.01 A apart, 1e31 kJ/mol
+and up) is re-built with cg2all (Heo & Feig; CA trace in, all-atom out, CA
+positions kept via --fix) and minimized again. Only that error triggers it:
+every other model goes through the plain route, unchanged.
 """
 from __future__ import annotations
 
 import argparse
 import gzip
 import io
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -70,17 +79,12 @@ def _make_simulation(topology, system, preference: list[str]):
     """Simulation on the first platform of `preference` that both exists AND
     starts: a platform can be listed yet fail on its first Context -- e.g.
     OpenMM's CUDA kernels built for a newer CUDA than the node's driver
-    (CUDA_ERROR_UNSUPPORTED_PTX_VERSION on IFB). Reference is the last resort."""
-    import os
-
-    # OpenMM's CPU platform otherwise starts one thread per core of the whole
-    # node, not of the SLURM allocation
-    if os.environ.get("SLURM_CPUS_PER_TASK") and not os.environ.get("OPENMM_CPU_THREADS"):
-        os.environ["OPENMM_CPU_THREADS"] = os.environ["SLURM_CPUS_PER_TASK"]
+    (CUDA_ERROR_UNSUPPORTED_PTX_VERSION on IFB). No CPU/Reference platform is
+    tried unless the config lists it explicitly (see the module docstring)."""
     from openmm import LangevinMiddleIntegrator, Platform, unit
     from openmm.app import Simulation
 
-    for name in [*preference, "Reference"]:
+    for name in preference:
         try:
             platform = Platform.getPlatformByName(name)
             # OpenCL: a GPU vendor's OpenCL platform, never a CPU one. CAIUS nodes
@@ -105,22 +109,14 @@ def _make_simulation(topology, system, preference: list[str]):
             device = " (" + platform.getPropertyValue(simulation.context, "DeviceName").strip() + ")"
         print(f"[minimize] platform: {name}{device}", flush=True)
         return simulation
-    raise RuntimeError("no OpenMM platform could start, not even Reference")
+    raise RuntimeError(f"no OpenMM GPU platform could start (tried {', '.join(preference)}); "
+                       "there is no CPU fallback")
 
 
-def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
-    from openmm import LocalEnergyMinimizer, unit
-    from openmm.app import ForceField, Modeller, PDBFile
+def _load_fixer(cif_path: Path):
+    """PDBFixer of a raw model with its missing heavy atoms added (no hydrogens)."""
     from pdbfixer import PDBFixer
 
-    mz = cfg["minimize"]
-
-    if pdb_path.exists():
-        print(f"[minimize] output already exists — skipping: {pdb_path.name}", flush=True)
-        return
-    pdb_path.parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"[minimize] loading {cif_path.name}", flush=True)
     # pdbxfile= wants a seekable file OBJECT; filename= can't read gzip.
     if cif_path.suffix == ".gz":
         with gzip.open(cif_path, "rt") as fh:
@@ -130,6 +126,62 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     fixer.findMissingResidues()
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
+    return fixer
+
+
+def _cg2all_cli(name: str) -> str:
+    """Path of a cg2all console script: next to this interpreter (the rule's
+    conda env), else on PATH."""
+    local = Path(sys.executable).parent / name
+    found = str(local) if local.exists() else shutil.which(name)
+    if not found:
+        raise RuntimeError(f"{name} not found -- cg2all is not installed in this environment "
+                           "(use envs/minimize_cg2all.yaml, see minimize.cg2all_fallback)")
+    return found
+
+
+def _cg2all_rebuild(cif_path: Path, workdir: Path, fb: dict) -> Path:
+    """Heavy-atom PDB of `cif_path` rebuilt by cg2all: all-atom -> CA trace ->
+    all-atom with the CA coordinates fixed (--fix), IUPAC atom names, hydrogens
+    dropped again (PDBFixer re-adds its own protonation)."""
+    from openmm.app import PDBFile
+
+    model = fb.get("model", "CalphaBasedModel")
+    all_pdb, cg_pdb, rebuilt = workdir / "input.pdb", workdir / "cg.pdb", workdir / "rebuilt_all.pdb"
+    fixer = _load_fixer(cif_path)
+    with open(all_pdb, "w") as fh:
+        PDBFile.writeFile(fixer.topology, fixer.positions, fh, keepIds=True)
+    steps = (
+        ([_cg2all_cli("convert_all2cg"), "-p", str(all_pdb), "-o", str(cg_pdb), "--cg", model], cg_pdb),
+        ([_cg2all_cli("convert_cg2all"), "-p", str(cg_pdb), "-o", str(rebuilt), "--cg", model,
+          "--fix", "--standard-name", "--device", fb.get("device", "cpu")], rebuilt),
+    )
+    for cmd, out in steps:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=int(fb.get("timeout_s", 900)))
+        if proc.returncode != 0 or not out.exists():
+            raise RuntimeError(f"{Path(cmd[0]).name} failed ({proc.returncode}): {proc.stderr[-400:]}")
+    heavy = workdir / "rebuilt.pdb"
+    with open(rebuilt) as src, open(heavy, "w") as dst:
+        for line in src:
+            if line.startswith(("ATOM", "HETATM")) and line[12:16].strip().startswith("H"):
+                continue
+            dst.write(line)
+    return heavy
+
+
+def _minimize(cif_path: Path, pdb_path: Path, cfg: dict, table_note: str = "") -> None:
+    from openmm import LocalEnergyMinimizer, unit
+    from openmm.app import ForceField, Modeller, PDBFile
+
+    mz = cfg["minimize"]
+
+    if pdb_path.exists():
+        print(f"[minimize] output already exists — skipping: {pdb_path.name}", flush=True)
+        return
+    pdb_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"[minimize] loading {cif_path.name}", flush=True)
+    fixer = _load_fixer(cif_path)
     fixer.addMissingHydrogens(7.0)
 
     forcefield = ForceField(*mz["forcefield"])
@@ -259,10 +311,34 @@ def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
     df = pd.DataFrame(trace, columns=["step", "energy_kJ_mol"])
     write_parquet_with_metadata(
         df, energy_pq,
-        table_description=ENERGY_TABLE_DESCRIPTION,
+        table_description=ENERGY_TABLE_DESCRIPTION + table_note,
         column_descriptions=ENERGY_COLUMN_DESCRIPTIONS,
     )
     print(f"[minimize] energy trace ({len(df)} points) -> {energy_pq.name}", flush=True)
+
+
+def minimize_one(cif_path: Path, pdb_path: Path, cfg: dict) -> None:
+    fb = cfg["minimize"].get("cg2all_fallback") or {}
+    try:
+        _minimize(cif_path, pdb_path, cfg)
+        return
+    except Exception as e:                                    # noqa: BLE001
+        # OpenMM's "Energy or force at minimization starting point is infinite or NaN"
+        # (and the pre-relaxation's own nan guard): atoms so close the first
+        # evaluation overflows. Nothing else is retried.
+        if not (fb.get("enabled") and "NaN" in str(e)):
+            raise
+        first_error = str(e).splitlines()[0]
+    print(f"[minimize] {first_error} -- rebuilding with cg2all ({fb.get('model', 'CalphaBasedModel')}, "
+          "CA coordinates fixed) and minimizing that", flush=True)
+    with tempfile.TemporaryDirectory() as td:
+        t0 = time.monotonic()
+        rebuilt = _cg2all_rebuild(cif_path, Path(td), fb)
+        print(f"[minimize] cg2all rebuild: {time.monotonic() - t0:.0f}s", flush=True)
+        _minimize(rebuilt, pdb_path, cfg,
+                  table_note=" Minimized from a cg2all rebuild of the raw model (the raw model's "
+                             "first energy evaluation was infinite or NaN): step 0 is the rebuilt "
+                             "model's energy, not the raw model's.")
 
 
 def main() -> int:
