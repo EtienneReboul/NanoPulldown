@@ -17,6 +17,15 @@ jobs: 400                    # 150 filled up with GPU minimizations and starved 
 # GPUs we can get (~80-100) + a short queue; the other ~280 go to PLIP/post/single steps
 resources:
   - minslot=120
+# Pack the seconds-long CPU steps (Snakefile "SLURM job packing"): ~6,000 SLURM jobs for
+# 625 pairs on 2026-11-03, now one job per N pairs / proteins. A pack asks for N cpus and
+# N x 4 GB (its members run in parallel) and finishes in about its slowest member's time.
+group-components:
+  - annot=16                 # merge_annotation, 1 pair each
+  - protein_fig=16           # domain-map / unpaired-MSA figure, 1 protein each
+  - pair_plip=2              # 2 pairs x 5 samples = 10 PLIP containers at once (10 cpus, 80 GB, 180 min)
+  - pair_post=16             # metrics / clashes / pyDock / figures, 1 pair x 1 step each
+  # bait_report: one job per bait already
 latency-wait: 60             # BeeGFS
 retries: 1                   # a timed-out fold chunk resumes: finished pairs are skipped
 keep-going: true

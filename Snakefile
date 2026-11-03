@@ -265,6 +265,24 @@ def _domain_proteins():
 DOMAIN_PROTEINS = _domain_proteins()
 
 
+# SLURM job packing. The per-pair / per-protein / per-bait steps below are seconds
+# long, and each is a SLURM job of its own unless the profile packs them: `group:`
+# names the rules that may share one job, `group-components: <group>=N` (profiles/caius)
+# puts N of a group's connected components in ONE sbatch, run by a sub-snakemake whose
+# jobs run side by side. The job asks for the SUM of its members' cpus / mem_mb (one
+# per member) and the longest member's runtime -- so N is also the job's width.
+# Without group-components a component is its own job: pair_plip then bundles one
+# pair's PLIP runs (and aggregation), the others stay one job per member.
+#   annot        merge_annotation (one pair each)
+#   protein_fig  domain-map and unpaired-MSA figures (one protein each)
+#   pair_plip    run_plip -> plip_parse -> aggregate_plip, one component per pair
+#   pair_post    metrics, clashes, pyDock and the per-pair figures (CPU, needs the
+#                minimized samples / PLIP, so waits for the whole pack)
+#   bait_report  one bait's tables, violins, calibration, datavzrd (one job per bait)
+# Not grouped: folding, minimize_cif (GPU, other partition), the single run-wide steps.
+# All members of a group must agree on the string resources (partition, account).
+
+
 rule all:
     default_target: True
     input:
@@ -342,6 +360,7 @@ rule annotate_disorder_batch:
 # Per pair, straight from the per-sequence cache the batch rules filled (with
 # a live lookup for any sequence they missed).
 rule merge_annotation:
+    group: "annot"
     input:
         domains=str(ANN_CACHE / "domains.done"),
         disorder=str(ANN_CACHE / "disorder.done"),
@@ -381,6 +400,7 @@ rule annotate_cdd:
 
 
 rule fig_domain_bar:
+    group: "protein_fig"
     input:
         annotation=lambda wc: str(ANN / DOMAIN_PROTEINS[wc.protein]["pair"] / "annotation.yaml"),
     output:
@@ -716,6 +736,7 @@ else:
 
 
 rule compute_metrics:
+    group: "pair_post"
     input:
         fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
     output:
@@ -787,6 +808,7 @@ PLIP_RUN = " ".join(run_command(CFG, image=PLIP["image"], sif="plip", args=[],
 # decompressed into the report dir for the run, then deleted together with
 # PLIP's own <name>_protonated.pdb (~2 MB/sample, read by nothing).
 rule run_plip:
+    group: "pair_plip"
     input:
         pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb.gz"),
     output:
@@ -833,6 +855,7 @@ rule run_plip:
 # chains the other; the minimized .pdb.gz is referenced by absolute path
 # (ChimeraX opens gzip directly).
 rule plip_parse:
+    group: "pair_plip"
     input:
         report=str(POST / "{pair}" / "plip" / "sample_{sample}_report" / "sample_{sample}_report.txt"),
         pdb=str(POST / "{pair}" / "minimized" / "sample_{sample}.pdb.gz"),
@@ -864,6 +887,7 @@ rule plip_parse:
 
 
 rule aggregate_plip:
+    group: "pair_plip"
     input:
         csvs=lambda wc: expand(
             str(POST / "{{pair}}" / "plip" / "sample_{s}_report" / "sample_{s}_summary.csv"), s=SAMPLE_IDX),
@@ -880,6 +904,7 @@ rule aggregate_plip:
 
 
 rule fig_plip_contacts:
+    group: "pair_post"
     input:
         contacts=str(POST / "{pair}" / "plip_contacts.parquet"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
@@ -906,6 +931,7 @@ rule fig_plip_contacts:
 # PLIP contact frequency per residue of each chain against its CDD domains and
 # conserved-feature sites (nanopulldown.report.cdd).
 rule fig_plip_cdd:
+    group: "pair_post"
     input:
         contacts=str(POST / "{pair}" / "plip_contacts.parquet"),
         cdd=str(ANN / "cdd_sites.parquet"),
@@ -930,6 +956,7 @@ rule fig_plip_cdd:
 
 
 rule fig_domain_heatmap:
+    group: "pair_post"
     input:
         fold=str(POST / "{pair}" / "raw" / "fold.parquet"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
@@ -963,6 +990,7 @@ rule fig_domain_heatmap:
 # the path and redraws the figure.
 if ENGINE == "colabfold":
     rule fig_msa_unpaired:
+        group: "protein_fig"
         input:
             msa=ancient(str(MSA_DONE)),
         output:
@@ -990,6 +1018,7 @@ if ENGINE == "colabfold":
             """
 
     rule fig_msa_paired:
+        group: "pair_post"
         input:
             msa=ancient(str(MSA_DONE)),
         output:
@@ -1010,6 +1039,7 @@ if ENGINE == "colabfold":
 
 
 rule fig_minimize_energy:
+    group: "pair_post"
     input:
         energy=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}_energy.parquet"), s=SAMPLE_IDX),
     output:
@@ -1033,6 +1063,7 @@ rule fig_minimize_energy:
 # ChimeraX-style clash counting (`nanopulldown clashes`) on the raw ESMFold2
 # sample and its minimized counterpart, then a paired Wilcoxon test.
 rule count_clashes:
+    group: "pair_post"
     input:
         raw=lambda wc: expand(str(POST / wc.pair / "raw" / "sample_{s}.cif.gz"), s=SAMPLE_IDX),
         minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb.gz"), s=SAMPLE_IDX),
@@ -1055,6 +1086,7 @@ rule count_clashes:
 # pyDock binding energy between the bait chains and the prey chains of every
 # minimized sample (the AMBER charges need the hydrogens minimization adds).
 rule pydock_energy:
+    group: "pair_post"
     input:
         minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb.gz"), s=SAMPLE_IDX),
     output:
@@ -1205,6 +1237,7 @@ rule collect_minimize_failures:
 # demand but are no longer in the report.
 
 rule bait_tables:
+    group: "bait_report"
     input:
         results=str(FOLD_REP / "results_table.csv"),
         failures=str(FOLD_REP / "minimize_failure_rate.csv"),
@@ -1234,6 +1267,7 @@ PLIP_TYPE_CAPTION = caption_rst(
 
 
 rule fig_metric_violins_bait:
+    group: "bait_report"
     input:
         str(BY_BAIT / "{bait}" / "results_table.csv"),
     output:
@@ -1253,6 +1287,7 @@ rule fig_metric_violins_bait:
 
 
 rule fig_plip_type_violins_bait:
+    group: "bait_report"
     input:
         str(BY_BAIT / "{bait}" / "results_table.csv"),
     output:
@@ -1280,6 +1315,7 @@ rule fig_plip_type_violins_bait:
 # the bait's CDD sites. Paths come from the table (--results-root), not the
 # command line: a fragment run's bait has thousands of pairs.
 rule fig_bait_cdd_map:
+    group: "bait_report"
     input:
         table=str(BY_BAIT / "{bait}" / "results_table.csv"),
         contacts=lambda wc: [str(POST / p / "plip_contacts.parquet") for p in PAIRS_OF[wc.bait]],
@@ -1305,6 +1341,7 @@ rule fig_bait_cdd_map:
 
 
 rule fig_clash_test_bait:
+    group: "bait_report"
     input:
         lambda wc: [str(POST / p / "clashes.csv") for p in PAIRS_OF[wc.bait]],
     output:
@@ -1326,6 +1363,7 @@ rule fig_clash_test_bait:
 
 
 rule decoy_calibration_bait:
+    group: "bait_report"
     input:
         str(BY_BAIT / "{bait}" / "results_table.csv"),
     output:
@@ -1350,6 +1388,7 @@ rule decoy_calibration_bait:
 
 
 rule datavzrd_bait:
+    group: "bait_report"
     input:
         config=str(REPO / "report" / "datavzrd" / "nanopulldown.datavzrd.yaml"),
         css=str(REPO / "src" / "nanopulldown" / "report" / "assets" / "datavzrd-dark.css"),

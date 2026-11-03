@@ -66,8 +66,7 @@ set-resources:
   datavzrd_folding:
     mem_mb: 8000
 
-# Not grouped (yet): with 5 samples a pair is ~20 short CPU jobs (minimize,
-# PLIP, parse x 5, ...), each its own SLURM job, throttled by `jobs:`. Snakemake
-# `groups` + `group-components` could bundle them, but it sizes a group job by
-# SUMMING its parallel members (10 pairs x 5 minimizations ~ 400 GB / 200 CPUs),
-# so it needs tuning against a real run before it is turned on.
+# No `group-components` here (profiles/caius has them, tuned on a real run): the
+# Snakefile's `group:` rules still bundle one pair's PLIP runs into one job, but the
+# other short CPU steps stay one SLURM job each, throttled by `jobs:`. A group job
+# asks for the SUM of its parallel members (10 pairs x 5 PLIP ~ 400 GB / 50 CPUs).
