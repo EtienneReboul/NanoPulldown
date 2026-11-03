@@ -45,6 +45,11 @@ colabfold:
 fragments:
   enabled: false
 
+plip:
+  max_chain_len: 500                    # down from 700: PLIP segfaulted on 8 of the 25 samples with
+                                        # the 665-residue prey Q9T0J1 (unsplit); split at 500 they pass
+                                        # (F4HSW8__Q9T0J1 sample_0, 2026-11-03)
+
 controls:
   decoys:
     enabled: true                       # n: 500 (config.yaml) x 5 baits = 2,500 folds, smallest p = 1/501
