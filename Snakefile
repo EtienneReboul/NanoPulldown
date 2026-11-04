@@ -852,8 +852,8 @@ rule run_plip:
 # csv2cxc runs (the .cxc is self-contained), so they live in a scratch dir;
 # the summary CSV is kept, as temp(), until aggregate_plip has folded it into
 # the pair's plip_contacts.parquet. Bait chains are one colored group, prey
-# chains the other; the minimized .pdb.gz is referenced by absolute path
-# (ChimeraX opens gzip directly).
+# chains the other; the minimized .pdb.gz is referenced relative to the .cxc (../../minimized/...),
+# so the results tree stays portable off the cluster (ChimeraX opens gzip directly).
 rule plip_parse:
     group: "pair_plip"
     input:
@@ -877,7 +877,7 @@ rule plip_parse:
         rm -rf {params.tmp} && mkdir -p {params.tmp}/csv
         pliparser plip2csv --input {input.report} --output {params.tmp}/csv/ > {log} 2>&1
         {NP} plip cxc-config --pdb {input.pdb} --csv-dir {params.tmp}/csv \
-          --out {params.tmp}/cxc-config.json --bait-chains {params.bait} --prey-chains {params.prey} \
+          --out {params.tmp}/cxc-config.json --cxc-dir "$(dirname {output.cxc})" --bait-chains {params.bait} --prey-chains {params.prey} \
           --bait-color {params.bait_color} --prey-color {params.prey_color} \
           --transparency {params.transparency} >> {log} 2>&1
         pliparser csv2cxc --config {params.tmp}/cxc-config.json --output {output.cxc} >> {log} 2>&1

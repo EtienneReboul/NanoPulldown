@@ -15,8 +15,12 @@ name: nanopulldown-minimize-cg2all
 # scripts/fetch_cg2all_checkpoint.sh once on a node with internet (CAIUS
 # compute nodes have none).
 channels:
-  - conda-forge
+  # dglteam FIRST: conda-forge also has a `dgl`, so under strict channel priority
+  # (scripts/caius/run.sh sets CONDA_CHANNEL_PRIORITY=strict) dglteam's dgl 1.0 is
+  # excluded and the solve fails (2026-11-03). dglteam ships only dgl: every
+  # other package still comes from conda-forge.
   - dglteam
+  - conda-forge
   - nodefaults
 dependencies:
   - python=3.10
