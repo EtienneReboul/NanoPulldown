@@ -20,7 +20,8 @@ One figure per protein, laid out like InterPro's protein viewer:
 Everything below the AIUPred panel comes from data/annotation/<pair>/
 annotation.yaml (its `domains:` and `interpro:` blocks), so the figure needs
 no network. Row identity is written in the left margin (name + a grey line
-with accession and sources); colour encodes the entry type.
+with accession and sources); colour encodes the entry type. A family or domain
+name too long for its bar is written under the row, with a leader line.
 """
 from __future__ import annotations
 
@@ -53,6 +54,8 @@ INK, INK2, RULE = TH.ink, TH.ink2, TH.rule
 
 AX_W_IN, LEFT_IN, FIG_W = 6.7, 2.95, 10.0     # fixed geometry: label fitting is computable
 ROW_IN = 0.30
+CALLOUT, LANE = 0.5, 0.4                      # y units under a row with labels below its bars, + per extra lane
+LABEL_PT, CHAR_EM = 6.5, 0.58                 # bar label size; estimated glyph width / font size
 
 
 def protein_title(spec: dict, chain: str) -> str:
@@ -68,11 +71,16 @@ def protein_title(spec: dict, chain: str) -> str:
     return short + (f" — {long}" if long and long != short else "") + f"  ({', '.join(ids)})"
 
 
-def _fit(label: str | None, s: int, e: int, seqlen: int, size: float = 6.5) -> str | None:
+def _capacity(s: int, e: int, seqlen: int, size: float = LABEL_PT) -> int:
+    """How many characters fit inside the bar s-e."""
+    return int(((e - s + 1) / max(seqlen, 1)) * AX_W_IN * 72 / (size * CHAR_EM))
+
+
+def _fit(label: str | None, s: int, e: int, seqlen: int, size: float = LABEL_PT) -> str | None:
     """Label truncated to the bar's width, or None when fewer than 5 chars fit."""
     if not label:
         return None
-    n = int(((e - s + 1) / max(seqlen, 1)) * AX_W_IN * 72 / (size * 0.58))
+    n = _capacity(s, e, seqlen, size)
     if n >= len(label):
         return label
     return label[:n - 1] + "…" if n >= 5 else None
@@ -85,6 +93,35 @@ def _bar(ax, y, s, e, color, seqlen, label=None, h=0.62, alpha=1.0):
     t = _fit(label, s, e, seqlen)
     if t:
         ax.text((s + e) / 2, y, t, ha="center", va="center", fontsize=6.5, color="white")
+
+
+def _callouts(row: dict, seqlen: int) -> list[tuple[float, float, int, str]]:
+    """Labels of a row too long for their bar, as (leader x, text x, lane, text).
+    The text slides inward to stay within the axis, and takes the first lane where
+    it clears the labels already there."""
+    placed, lanes = [], []
+    for s, e, text in sorted((int(s), int(e), text) for s, e, _, text, _, _ in row["bars"] if text):
+        if len(text) <= _capacity(s, e, seqlen):
+            continue
+        x = (s + e) / 2
+        half = len(text) * LABEL_PT * CHAR_EM / 72 / AX_W_IN * seqlen / 2
+        tx = max(min(x, seqlen - half), 1 + half)
+        lane = next((k for k, end in enumerate(lanes) if end < tx - half), len(lanes))
+        lanes[lane:lane + 1] = [tx + half]
+        placed.append((x, tx, lane, text))
+    return placed
+
+
+def _callout_height(placed: list[tuple[float, float, int, str]]) -> float:
+    """Extra y units under a row for its callouts."""
+    return CALLOUT + LANE * max(c[2] for c in placed) if placed else 0.0
+
+
+def _draw_callouts(ax, y, placed: list[tuple[float, float, int, str]], h: float):
+    for x, tx, lane, text in placed:
+        ly = y - h / 2 - 0.25 - LANE * lane
+        ax.plot([x, x], [y - h / 2, ly + 0.1], color=INK2, lw=0.5)
+        ax.text(tx, ly, text, ha="center", va="top", fontsize=LABEL_PT, color=INK)
 
 
 def _pack(items: list[dict]) -> list[list[dict]]:
@@ -177,6 +214,7 @@ def main() -> int:
     TH.apply()
     rows = build_rows(segs, ipr, source_label)
     n_extra = sum(0.6 for r in rows if r.get("header") or r.get("gap"))
+    n_extra += sum(_callout_height(_callouts(r, seqlen)) for r in rows)
     top_in, aiu_in, gap_in, bot_in = 0.45, (0 if args.no_disorder else 1.35), 0.35, 0.75
     trk_in = ROW_IN * (len(rows) + n_extra + 0.6)
     H = top_in + aiu_in + (gap_in if aiu_in else 0) + trk_in + bot_in
@@ -218,8 +256,12 @@ def main() -> int:
                         va="center", ha="right", fontweight="bold")
             y -= 0.3
         ax.axhline(y, color=RULE, lw=0.6, zorder=0)
+        placed = _callouts(r, seqlen)
         for s, e, color, text, h, alpha in r["bars"]:
-            _bar(ax, y, int(s), int(e), color, seqlen, text, h, alpha)
+            _bar(ax, y, int(s), int(e), color, seqlen,
+                 text if text and len(text) <= _capacity(int(s), int(e), seqlen) else None, h, alpha)
+        if placed:
+            _draw_callouts(ax, y, placed, max(b[4] for b in r["bars"]))
         dy = 0.17 if r.get("sub") else 0
         if r["label"]:
             ax.text(-0.012, y + dy, _clip(r["label"], 46), transform=tr, ha="right", va="center",
@@ -227,7 +269,7 @@ def main() -> int:
         if r.get("sub"):
             ax.text(-0.012, y - 0.24, _clip(r["sub"], 60), transform=tr, ha="right", va="center",
                     fontsize=5.6, color=INK2)
-        y -= 1
+        y -= 1 + _callout_height(placed)
     ax.set_ylim(y + 0.4, 0.6)
     ax.set_xlim(1, max(seqlen, 1))
     ax.set_yticks([])
