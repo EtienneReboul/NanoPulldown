@@ -1,0 +1,2 @@
+# bait for run fbl17_preys: Q8W104 = FBL17 (F-box/LRR-repeat protein 17, AT3G54650)
+Q8W104

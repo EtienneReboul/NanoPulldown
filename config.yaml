@@ -1808,7 +1808,7 @@ colabfold:
   data_dir: ""                    # AF2 weights dir (`--data`; holds params/): pre-downloaded on offline
                                   # GPU nodes (scripts/colabfold/setup.sh weights); "" = ColabFold's cache
   conda_lib_first: false          # as esmfold2.conda_lib_first (CAIUS: RHEL 8's libstdc++)
-  keep_raw_outputs: false         # keep ColabFold's PDB/JSON in results/_colabfold/ after conversion
+  keep_raw_outputs: false         # keep ColabFold's PDB/JSON/a3m in results/_colabfold/ after conversion
   extra_args: []                  # appended to colabfold_batch, e.g. ["--max-msa", "512:1024"]
   time_fit: {}                    # {base_s, coef_s, exponent}: ONE model's time, t = base_s + coef_s *
                                   # (n/600)^exponent; {} = a rough AF2-multimer guess -- refit after a run
@@ -1819,7 +1819,7 @@ colabfold:
   msa:
     mode: "server"                # server: ColabFold's MMseqs2 web API (internet; small runs only) |
                                   # local: colabfold_search on local databases (MMseqs2-GPU with gpu: 1)
-    cache_dir: "data/msa"         # <key>.a3m per complex (key = sequences + the settings below)
+    cache_dir: "data/msa"         # <key>.a3m.xz per complex (key = sequences + the settings below)
     msa_mode: "mmseqs2_uniref_env"   # server: colabfold_batch --msa-mode
     pair_mode: "unpaired_paired"
     server_max_queries: 500       # server mode refuses more new complexes than this: the public

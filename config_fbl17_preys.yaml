@@ -1,0 +1,53 @@
+# Run overlay: bait Q8W104 (FBL17) x the 262 preys of data/preys-FBL17.fasta,
+# full length, folded with ColabFold (AlphaFold2-multimer v3) on CAIUS with fast
+# kernels: 5 models x 1 seed = 5 samples per pair. Settings follow
+# config_dne1_dcp_ip_full_colabfold.yaml. MSAs: local MMseqs2-GPU search (one
+# H200 job) on the ColabFold databases; paths in CAIUS's config.local.yaml.
+# Controls: positives only (tier >= high); decoys off to have results by Monday 2026-11-09.
+#   nanopulldown --run-config config_fbl17_preys.yaml inputs expand
+#   NANOPULLDOWN_RUN_CONFIG=config_fbl17_preys.yaml scripts/caius/run.sh
+
+run_name: "fbl17_preys"
+pairs_file: configs/pairs_fbl17_preys.txt
+
+fold:
+  engine: colabfold
+
+colabfold:
+  num_models: 5
+  num_seeds: 1
+  max_tokens: 4000                      # largest pair measured on one H200: 3,976 tokens, ~53 GB, 26 min/model
+  pairs_per_load: 30                    # hpc.fold_chunk_minutes (23 h) usually cuts first
+  fast_kernels: true                    # fused Pallas kernels (every GPU below is sm_80+: one backend)
+  gpu_classes:                          # small pairs to any Ampere+ GPU, the rest to any 80 GB GPU
+    - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
+    - {constraint: "gpuh200|gpu80g", max_tokens: 0, mem_mb: 100000, cpus: 8}
+  msa:
+    mode: local
+    gpu: 1
+    gpu_server: 0                       # NOT 1: mmseqs waits only 600 s for the gpuserver to load
+                                        # the padded UniRef30 from BeeGFS, and it takes longer
+    db_load_mode: 0                     # the databases have no .idx index
+    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 1440}
+
+fragments:
+  enabled: false
+
+controls:
+  decoys:
+    enabled: false
+
+plip:
+  max_chain_len: 500                    # PLIP segfaulted on a 665-residue unsplit prey; passes split at 500
+
+dirs:
+  annotation:  "data/annotation_fbl17_preys"
+  postproc:    "results_fbl17_preys"
+  reports:     "reports_fbl17_preys"
+  logs:        "logs_fbl17_preys"
+
+inputs:
+  baits:
+    - list: configs/baits_fbl17.txt
+  preys:
+    - list: configs/preys_fbl17.txt
