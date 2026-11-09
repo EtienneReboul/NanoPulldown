@@ -41,6 +41,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "msa": ("fold.colabfold:msa_main", "ColabFold MSAs of pairs (MMseqs2 server, or local MMseqs2-GPU)"),
         "fold": ("fold.colabfold:fold_main", "fold pairs with ColabFold (AlphaFold2-multimer)"),
         "convert": ("fold.colabfold:convert_main", "one pair's ColabFold outputs -> sample_<i>.cif.gz + fold.parquet"),
+        "tidy": ("fold.colabfold:tidy_main", "xz cached MSAs; delete a run's leftover ColabFold outputs"),
     },
     None: {
         "fold": ("fold.esmfold2:main", "fold pairs with ESMFold2-Fast (MLX); ONE model at a time"),

@@ -27,3 +27,5 @@ reports_*/
 logs_*/
 # local build/test leftovers (e.g. the old image tarballs) -- never commit
 build/
+# add reports zip to ignore 
+share_dne1_dcp_ip_full_colabfold/dne1_dcp_ip_full_colabfold_all.zip

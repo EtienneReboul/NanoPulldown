@@ -33,6 +33,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from nanopulldown.core.io import a3m_file, open_a3m
 from nanopulldown.core.proteins import chain_labels, load_proteins, pair_labels
 from nanopulldown.core.specs import load_pair, protein_chains
 from nanopulldown.report.theme import lazy_theme
@@ -48,7 +49,7 @@ GAP = ord("-")
 def read_a3m(path: Path) -> tuple[list[int], list[int], np.ndarray]:
     """(unique-sequence lengths, their cardinalities, match-state rows as uint8 (N, L))."""
     lens, cards, seqs, cur = None, None, [], []
-    with open(path) as fh:
+    with open_a3m(path) as fh:
         for ln in fh:
             ln = ln.rstrip("\n")
             if ln.startswith("#") and lens is None and not seqs:
@@ -86,7 +87,7 @@ def segment_chains(spec: dict, lens: list[int], cards: list[int]) -> list[list[s
 def load(pair: str, a3m: Path):
     """(spec, segment bounds, segment chain ids, rows, covered[N, n_seg])."""
     spec = load_pair(pair)
-    if not a3m.exists():
+    if not a3m_file(a3m).exists():
         return spec, None, None, None, None
     lens, cards, msa = read_a3m(a3m)
     bounds = np.concatenate([[0], np.cumsum(lens)])

@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import lzma
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -92,6 +93,20 @@ def read_schema_metadata(path: Path) -> tuple[str | None, dict[str, str]]:
         if desc is not None:
             columns[field.name] = desc.decode()
     return (table_desc.decode() if table_desc else None), columns
+
+def a3m_file(path: Path) -> Path:
+    """The file holding the a3m called `path`: <path>.xz, or the plain file of a
+    cache not compressed yet. Callers keep the plain name, so it stays a stable
+    identifier (a Snakefile param: compressing a cache redraws no figure)."""
+    xz = Path(f"{path}.xz")
+    return xz if xz.exists() else Path(path)
+
+
+def open_a3m(path: Path):
+    """Open the a3m called `path` as text, compressed or not (see a3m_file)."""
+    f = a3m_file(path)
+    return lzma.open(f, "rt") if f.suffix == ".xz" else open(f)
+
 
 def seq_md5(seq: str) -> str:
     return hashlib.md5(seq.encode("ascii")).hexdigest()

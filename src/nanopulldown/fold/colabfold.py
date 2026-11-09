@@ -10,7 +10,7 @@ minimization, PLIP, pyDock and the report run unchanged.
   `nanopulldown colabfold msa --pairs P... --done F`   (rule colabfold_msa)
       One paired + unpaired MSA per COMPLEX (a3m with ColabFold's
       `#len1,len2<TAB>card1,card2` header), cached by content in
-      colabfold.msa.cache_dir/<key>.a3m -- key = the chain sequences + MSA
+      colabfold.msa.cache_dir/<key>.a3m.xz -- key = the chain sequences + MSA
       settings (msa_key), so a complex shared by two runs or renamed is
       searched once. Only missing keys are searched, in ONE batch:
         mode: server  `colabfold_batch --msa-only` against the ColabFold
@@ -23,12 +23,17 @@ minimization, PLIP, pyDock and the report run unchanged.
 
   `nanopulldown colabfold fold --pairs P... --out-root R`   (rule run_colabfold*)
       One `colabfold_batch` call per chunk (model weights compiled once per
-      chunk) over a directory of the chunk's cached a3m files, into
-      R/_colabfold/<chunk>/ -- ColabFold's own <job>.done.txt markers make a
-      rerun skip finished pairs. Each finished pair is converted (convert())
-      into R/_colabfold_cache/<pair>/ and hard-linked into R/<pair>/raw/, the
-      crash-safety scheme of nanopulldown.fold.esmfold2 (its own cache dir,
-      so an ESMFold2 cache in the same results root is never mistaken for it).
+      chunk) over a directory of the chunk's cached a3m files (unpacked for the
+      run, deleted after it), into R/_colabfold/<chunk>/ -- ColabFold's own
+      <job>.done.txt markers make a rerun skip finished pairs. Each finished pair
+      is converted (convert()) into R/_colabfold_cache/<pair>/ and hard-linked
+      into R/<pair>/raw/, the crash-safety scheme of nanopulldown.fold.esmfold2
+      (its own cache dir, so an ESMFold2 cache in the same results root is never
+      mistaken for it). Its ColabFold outputs are then deleted (_purge_outputs).
+
+  `nanopulldown colabfold tidy [--out-root R]`
+      Bring an older run down to that: xz its plain cached a3m files and, with
+      --out-root, delete the outputs its finished pairs left in R/_colabfold/.
 
   `nanopulldown colabfold convert --pair P --run-dir D --out-dir O`
       The conversion alone, e.g. for folds run by hand.
@@ -49,6 +54,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import lzma
 import os
 import re
 import shlex
@@ -57,16 +63,21 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 
 from nanopulldown.core.config import REPO_ROOT, load_config
 from nanopulldown.core.fold_table import FOLD_FILE, engine_samples, fold_row, write_fold
+from nanopulldown.core.io import a3m_file, open_a3m
 from nanopulldown.core.specs import load_pairs, protein_chains
 
 CACHE_DIR = "_colabfold_cache"
 RUN_DIR = "_colabfold"
+# a fold chunk's unpacked inputs left by a killed job (walltime, preemption): deleted
+# once older than any job can live (24 h on publicgpu), so a running job's are safe
+STALE_INPUTS_S = 2 * 86400
 # <job>_scores_rank_001_alphafold2_multimer_v3_model_1_multimer_v3_seed_000.json
 _SCORES = re.compile(r"_scores_rank_\d+_.*?_model_(\d+)\S*?_seed_(\d+)\.json$")
 
@@ -100,15 +111,55 @@ def msa_dir(cf: dict) -> Path:
 
 
 def a3m_path(spec: dict, cf: dict) -> Path:
+    """The a3m's name in the cache: read it through core.io.open_a3m / a3m_file."""
     return msa_dir(cf) / f"{msa_key(spec, cf)}.a3m"
+
+
+def _workers() -> int:
+    # 4 without SLURM: server mode collects its MSAs on the login node
+    return int(os.environ.get("SLURM_CPUS_PER_TASK", 0)) or 4
+
+
+def store_a3m(src: Path, dst: Path) -> None:
+    """Move plain a3m `src` into the cache as <dst>.xz (xz -6: 7-12x on 2 of our MSAs,
+    smaller than zstd -19 and readable with the stdlib). Atomic, and checked by reading
+    it back before `src` goes: a lost MSA costs a GPU search."""
+    xz = Path(f"{dst}.xz")
+    tmp = xz.with_name(f".{xz.name}.{os.getpid()}.tmp")
+    try:
+        plain = hashlib.sha1()
+        with open(src, "rb") as fin, lzma.open(tmp, "wb", preset=6) as fout:
+            while block := fin.read(1 << 20):
+                plain.update(block)
+                fout.write(block)
+        back = hashlib.sha1()
+        with lzma.open(tmp, "rb") as fin:
+            while block := fin.read(1 << 20):
+                back.update(block)
+        if back.digest() != plain.digest():
+            raise OSError(f"{tmp}: does not read back as {src}")
+        os.replace(tmp, xz)
+    finally:
+        tmp.unlink(missing_ok=True)
+    src.unlink()
+
+
+def _unpack_a3m(a3m: Path, dst: Path) -> None:
+    """Put the cached a3m called `a3m` at `dst`, plain: colabfold_batch can't read .xz."""
+    f = a3m_file(a3m)
+    if f.suffix != ".xz":
+        os.symlink(f.resolve(), dst)
+        return
+    with lzma.open(f, "rb") as fin, open(dst, "wb") as fout:
+        shutil.copyfileobj(fin, fout, 1 << 20)
 
 
 def _valid_a3m(path: Path, n_chains: int) -> bool:
     """A complex a3m: `#lens<TAB>cards` header, then at least the query."""
     try:
-        with open(path) as fh:
+        with open_a3m(path) as fh:
             head = [fh.readline() for _ in range(3)]
-    except OSError:
+    except (OSError, EOFError, lzma.LZMAError):
         return False
     if len(head) < 3 or not head[2].strip():
         return False
@@ -180,12 +231,16 @@ def build_msas(pairs: list[str], cfg: dict, work_tag: str | None = None) -> int:
     t0 = time.time()
     rc = _run(cmd)
     # collect whatever finished, even after a failure: a rerun searches only the rest
-    got = 0
-    for k, spec in todo.items():
+    def collect(item) -> bool:
+        k, spec = item
         f = work / f"{safe_filename(k)}.a3m"
-        if f.exists() and _valid_a3m(f, len(protein_chains(spec))):
-            os.replace(f, cache / f"{k}.a3m")
-            got += 1
+        if not (f.exists() and _valid_a3m(f, len(protein_chains(spec)))):
+            return False
+        store_a3m(f, cache / f"{k}.a3m")
+        return True
+
+    with ThreadPoolExecutor(_workers()) as pool:      # lzma releases the GIL
+        got = sum(pool.map(collect, todo.items()))
     print(f"[colabfold msa] {got}/{len(todo)} MSA(s) in {time.time() - t0:.0f}s (exit {rc})", flush=True)
     if got == len(todo):
         shutil.rmtree(work, ignore_errors=True)
@@ -355,6 +410,41 @@ def convert(pair: str, spec: dict, run_dir: Path, out_dir: Path, n_samples: int,
     return written
 
 
+def _purge_outputs(jobs: set[str], run_dir: Path) -> None:
+    """Delete what ColabFold left in run_dir for finished `jobs`: PDB/JSON, the done
+    marker, and <job>.a3m, its copy of the input (3173 files, 108 GB for 3,075 pairs:
+    `<job>_*` alone missed it; nothing reads it, the MSA is in the cache)."""
+    for name in os.listdir(run_dir):
+        if any(name.startswith(f"{j}_") or name in (f"{j}.a3m", f"{j}.done.txt") for j in jobs):
+            (run_dir / name).unlink(missing_ok=True)
+
+
+def _sweep_inputs(run_dir: Path) -> None:
+    """Delete unpacked inputs of a job killed long ago (see STALE_INPUTS_S)."""
+    for stale in run_dir.glob("in_*"):
+        try:
+            if time.time() - stale.stat().st_mtime > STALE_INPUTS_S:
+                shutil.rmtree(stale, ignore_errors=True)
+        except FileNotFoundError:   # another chunk's job just swept it
+            pass
+
+
+def _folded(cache: Path, n_samples: int, params: dict) -> bool:
+    """The pair's cache dir is complete AND folded with these settings."""
+    from nanopulldown.fold.esmfold2 import _complete
+    import pyarrow.parquet as pq
+
+    if not _complete(cache, n_samples):
+        return False
+    meta = pq.read_schema(cache / FOLD_FILE).metadata or {}
+    return json.loads(meta.get(b"colabfold", b"{}")) == json.loads(json.dumps(params))
+
+
+def _same_params(run_dir: Path, params: dict) -> bool:
+    stamp = run_dir / "nanopulldown_params.json"
+    return stamp.exists() and json.loads(stamp.read_text()) == json.loads(json.dumps(params))
+
+
 def fold_batch(pairs: list[str], out_root: Path) -> int:
     """One colabfold_batch call over the chunk's pairs (crash-safe, see the module docstring)."""
     from nanopulldown.fold.esmfold2 import _complete, _link_tree
@@ -367,15 +457,7 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
     specs = load_pairs(REPO_ROOT)
     cache_root = root / CACHE_DIR
 
-    def done(p):   # complete AND folded with these settings
-        d = cache_root / p
-        if not _complete(d, n_samples):
-            return False
-        import pyarrow.parquet as pq
-        meta = pq.read_schema(d / FOLD_FILE).metadata or {}
-        return json.loads(meta.get(b"colabfold", b"{}")) == json.loads(json.dumps(params))
-
-    params_json = json.loads(json.dumps(params))
+    keep_raw = cf.get("keep_raw_outputs", False)
 
     def harvest(p, run_dir) -> bool | None:
         """Convert p's finished ColabFold run in run_dir into the cache. None: not
@@ -393,21 +475,22 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
             shutil.rmtree(cache, ignore_errors=True)
             (run_dir / f"{job}.done.txt").unlink()
             return False
-        if not cf.get("keep_raw_outputs", False):          # PDB/JSON copies (the JSON PAE is large)
-            for f in run_dir.glob(f"{job}_*"):
-                f.unlink()
+        if not keep_raw:
+            _purge_outputs({job}, run_dir)
         (run_dir / f"{job}.done.txt").unlink(missing_ok=True)   # the cache is the record now
         return True
 
-    def same_params(run_dir) -> bool:
-        stamp = run_dir / "nanopulldown_params.json"
-        return stamp.exists() and json.loads(stamp.read_text()) == params_json
-
-    todo = [p for p in pairs if not done(p)]
+    todo = [p for p in pairs if not _folded(cache_root / p, n_samples, params)]
+    finished = {safe_filename(p) for p in pairs} - {safe_filename(p) for p in todo}
     # pairs ColabFold finished in an earlier job that died before converting them
-    # (walltime, preemption) -- possibly another chunk's run dir: convert, don't refold
+    # (walltime, preemption) -- possibly another chunk's run dir: convert, don't refold.
+    # One that died just after converting left its outputs: this pair is `finished`
+    # now, and harvest never sees it again.
     for d in sorted((root / RUN_DIR).glob("*/")):
-        if same_params(d):
+        _sweep_inputs(d)
+        if _same_params(d, params):
+            if finished and not keep_raw:
+                _purge_outputs(finished, d)
             todo = [p for p in todo if not harvest(p, d)]
     print(f"[colabfold fold] {len(pairs)} pair(s) in chunk, {len(todo)} to fold, "
           f"{len(pairs) - len(todo)} already done", flush=True)
@@ -420,13 +503,15 @@ def fold_batch(pairs: list[str], out_root: Path) -> int:
             return 1
         chunk = hashlib.sha1(" ".join(sorted(todo)).encode()).hexdigest()[:12]
         run_dir = root / RUN_DIR / chunk
-        if run_dir.exists() and not same_params(run_dir):
+        if run_dir.exists() and not _same_params(run_dir, params):
             shutil.rmtree(run_dir)           # other settings: ColabFold's done markers no longer apply
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "nanopulldown_params.json").write_text(json.dumps(params, sort_keys=True))
+        for stale in run_dir.glob("in_*"):   # this job's own chunk, killed before: never in use
+            shutil.rmtree(stale, ignore_errors=True)
         in_dir = Path(tempfile.mkdtemp(prefix="in_", dir=run_dir))
         for p in todo:                       # jobname = file stem = the pair
-            os.symlink(a3m_path(specs[p], cf).resolve(), in_dir / f"{safe_filename(p)}.a3m")
+            _unpack_a3m(a3m_path(specs[p], cf), in_dir / f"{safe_filename(p)}.a3m")
         t0 = time.time()
         rc = _run(_batch_cmd(cf, in_dir, run_dir))
         shutil.rmtree(in_dir, ignore_errors=True)
@@ -448,6 +533,29 @@ def fold_main() -> int:
     ap.add_argument("--out-root", default="results", help="results root")
     a = ap.parse_args()
     return fold_batch(a.pairs, Path(a.out_root))
+
+
+def tidy_main() -> int:
+    ap = argparse.ArgumentParser(description="xz the plain cached a3m files; with --out-root, "
+                                 "delete the ColabFold outputs of that run's finished pairs")
+    ap.add_argument("--out-root", help="results root of a run folded with the current config")
+    a = ap.parse_args()
+    cfg = load_config()
+    cf = cfg["colabfold"]
+    plain = sorted(msa_dir(cf).glob("*.a3m"))
+    with ThreadPoolExecutor(_workers()) as pool:
+        list(pool.map(lambda f: store_a3m(f, f), plain))
+    print(f"[colabfold tidy] {len(plain)} a3m file(s) compressed", flush=True)
+    if a.out_root:
+        root, params, n_samples = Path(a.out_root), run_params(cf), engine_samples(cfg)
+        finished = {safe_filename(d.name) for d in (root / CACHE_DIR).glob("*/")
+                    if _folded(d, n_samples, params)}
+        run_dirs = [d for d in sorted((root / RUN_DIR).glob("*/")) if _same_params(d, params)]
+        for d in run_dirs:
+            _purge_outputs(finished, d)
+        print(f"[colabfold tidy] {len(finished)} finished pair(s) purged from {len(run_dirs)} run dir(s)",
+              flush=True)
+    return 0
 
 
 def convert_main() -> int:

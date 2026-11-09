@@ -259,7 +259,7 @@ dirs: {postproc: results_<run>_colabfold, reports: reports_<run>_colabfold, logs
 Two rules replace `run_esmfold2`:
 
 - `colabfold_msa` runs ONE batch, a paired + unpaired MSA per complex, cached by content in
-  `data/msa/<key>.a3m`. Only complexes missing from the cache are searched, so
+  `data/msa/<key>.a3m.xz`. Only complexes missing from the cache are searched, so
   adding preys or rerunning costs nothing for the rest.
   - `msa.mode: server`: `colabfold_batch --msa-only` against ColabFold's public
     MMseqs2 API. Needs internet; meant for small runs, and refuses more than
