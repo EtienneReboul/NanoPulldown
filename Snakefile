@@ -23,6 +23,10 @@ straight into folding.
                          data/annotation/elm_motifs.parquet, and per pair the
                          motif x partner binding Pfam domain matches ->
                          elm_partner_matches.parquet + a ranked CSV in the report dir
+      fetch_deepcoil_weights / deepcoil_fasta / annotate_coils_batch
+                         DeepCoil 2 coiled coils + heptad register per unique
+                         sequence (envs/deepcoil.yaml, CPU) -> _cache/deepcoil/;
+                         merge_annotation puts them in place of InterPro COILS
       annotate_cdd       CDD domains + their conserved-feature sites (InterPro API
                          `?residues`, cached per sequence) of every chain ->
                          data/annotation/cdd_sites.parquet, read against PLIP
@@ -290,6 +294,15 @@ DOMAIN_PROTEINS = _domain_proteins()
 # ELM motifs (annotate_elm): on unless annotate.elm.enabled is false
 ELM_CFG = CFG["annotate"].get("elm") or {}
 ELM_ON = bool(ELM_CFG.get("enabled", True))
+# DeepCoil coiled coils (annotate_coils_batch): on unless annotate.deepcoil.enabled
+# is false; they replace InterPro's COILS in annotation.yaml. The geometry test
+# (coiled_coil_geometry) reads them from there.
+DC_CFG = CFG["annotate"].get("deepcoil") or {}
+DC_ON = bool(DC_CFG.get("enabled", True))
+DC_WEIGHTS = Path(DC_CFG.get("weights_dir") or "data/deepcoil_weights")
+DC_ENV = DC_CFG.get("conda_env") or "envs/deepcoil.yaml"
+CCG = CFG.get("coiled_coil") or {}
+
 ELM_OUTPUTS = ([str(Path(DIRS["annotation"]) / "elm_partner_matches.parquet"),
                 str(Path(DIRS["reports"]) / "preprocessing" / "elm_partner_matches.csv")] if ELM_ON else [])
 
@@ -369,6 +382,72 @@ rule annotate_disorder_batch:
         """
 
 
+# DeepCoil 2 over every unique sequence (nanopulldown.annotate.coils), once per
+# run, cached per sequence like AIUPred. Its own Python 3.7 env, so the
+# sequences come in as a FASTA from the analysis env and the runner imports
+# nothing of nanopulldown. The SeqVec weights are fetched on their own (login
+# node on CAIUS: compute nodes are offline) into a dir shared by all runs.
+rule fetch_deepcoil_weights:
+    output:
+        [str(DC_WEIGHTS / "uniref50_v2" / f) for f in ("options.json", "weights.hdf5")],
+    log:
+        str(PRE_LOG / "fetch_deepcoil_weights.log"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        out_dir=str(DC_WEIGHTS),
+    shell:
+        r"""
+        {NP} annotate coils-weights --out-dir {params.out_dir} > {log} 2>&1
+        """
+
+
+rule deepcoil_fasta:
+    output:
+        str(ANN_CACHE / "deepcoil_input.fasta"),
+    log:
+        str(PRE_LOG / "deepcoil_fasta.log"),
+    conda:
+        "envs/analysis.yaml"
+    priority: 50
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
+    shell:
+        r"""
+        {NP} annotate coils-fasta --pairs {params.pairs} --out {output[0]} > {log} 2>&1
+        """
+
+
+rule annotate_coils_batch:
+    input:
+        fasta=rules.deepcoil_fasta.output[0],
+        weights=rules.fetch_deepcoil_weights.output,
+    output:
+        done=str(ANN_CACHE / "deepcoil.done"),
+    log:
+        str(PRE_LOG / "annotate_coils_batch.log"),
+    conda:
+        DC_ENV
+    priority: 50
+    threads: int(DC_CFG.get("threads", 8))
+    params:
+        cache=str(ANN_CACHE / "deepcoil"),
+        weights=str(DC_WEIGHTS),
+        chunk=int(DC_CFG.get("chunk", 100)),
+    resources:
+        mem_mb=16000,
+        # CPU only, like AIUPred: never overlaps a fold model load
+        docker_heavy=1,
+    shell:
+        r"""
+        # the env's lib/ first: its TensorFlow needs a newer libstdc++ than RHEL 8's (CAIUS)
+        LD_LIBRARY_PATH="$(python -c 'import sys; print(sys.prefix)')/lib${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}" \
+        CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS={threads} python -I src/nanopulldown/annotate/deepcoil_runner.py \
+          --fasta {input.fasta} --cache-dir {params.cache} --weights {params.weights} \
+          --n-cpu {threads} --chunk {params.chunk} --done {output.done} > {log} 2>&1
+        """
+
+
 # Per pair, straight from the per-sequence cache the batch rules filled (with
 # a live lookup for any sequence they missed).
 rule merge_annotation:
@@ -376,6 +455,7 @@ rule merge_annotation:
     input:
         domains=str(ANN_CACHE / "domains.done"),
         disorder=str(ANN_CACHE / "disorder.done"),
+        coils=[str(ANN_CACHE / "deepcoil.done")] if DC_ON else [],
     output:
         yaml=str(ANN / "{pair}" / "annotation.yaml"),
     log:
@@ -1000,6 +1080,7 @@ rule fig_plip_cdd:
         cdd=str(ANN / "cdd_sites.parquet"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
         elm=[str(ANN / "elm_partner_matches.parquet")] if ELM_ON else [],
+        coiled=[str(POST / "{pair}" / "coiled_coil.parquet")] if CCG.get("enabled", True) else [],
     output:
         report(str(FOLD_REP / "{pair}" / "plip_cdd.svg"),
                category="PLIP contacts on CDD sites", subcategory=bait_subcategory, labels=pair_report_labels),
@@ -1012,12 +1093,13 @@ rule fig_plip_cdd:
         curation=lambda wc: CUR_KEY[wc.pair],
         labels=lambda wc: LABEL_KEY[wc.pair],
         elm=lambda wc, input: f"--elm {input.elm[0]}" if input.elm else "",
+        coiled=lambda wc, input: f"--coiled-coil {input.coiled[0]}" if input.coiled else "",
     shell:
         r"""
         {NP} plot plip-cdd --pair {wildcards.pair} \
           --contacts {input.contacts} --cdd {input.cdd} --annotation {input.annotation} \
           --num-samples {params.n} --out {output[0]} --formats {params.fmts} \
-          {params.elm}
+          {params.elm} {params.coiled}
         """
 
 
@@ -1146,6 +1228,30 @@ rule count_clashes:
           --results-root {POST} --num-samples {params.n} --out {output[0]} \
           --overlap-cutoff {params.cutoff} --hbond-allowance {params.hb} \
           --bond-separation {params.sep}
+        """
+
+
+# Did the predicted coiled coils pair? SOCKET-style knobs-into-holes test of
+# every bait-side x prey-side coil segment pair in each minimized sample
+# (nanopulldown.structure.coiled_coil); segments from annotation.yaml.
+rule coiled_coil_geometry:
+    group: "pair_post"
+    input:
+        minimized=lambda wc: expand(str(POST / wc.pair / "minimized" / "sample_{s}.pdb.gz"), s=SAMPLE_IDX),
+        annotation=str(ANN / "{pair}" / "annotation.yaml"),
+    output:
+        str(POST / "{pair}" / "coiled_coil.parquet"),
+    log:
+        str(FOLD_LOG / "coiled_coil" / "{pair}.log"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        n=N_SAMPLES,
+        geometry=json.dumps(CCG, sort_keys=True),
+    shell:
+        r"""
+        {NP} coiled-coil --pair {wildcards.pair} --annotation {input.annotation} \
+          --results-root {POST} --num-samples {params.n} --out {output[0]} > {log} 2>&1
         """
 
 

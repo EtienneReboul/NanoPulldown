@@ -22,13 +22,18 @@ bait chains first, residue on x:
                  contacts the partner's binding domain, and in how many samples
                  the motif touches that domain. On the partner's chain, one row
                  per binding Pfam domain, naming the motifs it would bind.
-  Coiled coils   one row per COILS segment of the chain (InterPro extra
-                 feature, annotation.yaml `interpro.<chain>.features.coils`):
-                 a tick per residue, filled when contacted, solid when it
-                 contacts a coiled coil of the other side, and in how many
-                 samples the two coils pair -- coiled coils are often predicted
-                 disordered yet drive IDP-IDP pairing, with no folded domain
-                 on either side for CDD or ELM to see.
+  Coiled coils   one row per coiled-coil segment of the chain (annotation.yaml
+                 `interpro.<chain>.features.coils`: DeepCoil where it ran,
+                 else InterPro COILS -- nanopulldown.annotate.coils): a tick
+                 per residue, filled when contacted. With --coiled-coil
+                 (results/<pair>/coiled_coil.parquet,
+                 nanopulldown.structure.coiled_coil) solid ticks are the knobs
+                 packing into the partner coil's holes in samples that pass the
+                 knobs-into-holes test, and the row counts those samples
+                 ("KIH coiled coil m/N");
+                 without it, solid = contacting a coil of the other side.
+                 Coiled coils are often predicted disordered yet drive IDP-IDP
+                 pairing, with no folded domain on either side for CDD or ELM.
 
 The panel header summarises the chain with nanopulldown.report.cdd's
 statistics (sites contacted in any sample; enrichment and share of contacts
@@ -78,15 +83,36 @@ def contact_pairs_by_sample(pl: pd.DataFrame) -> dict[int, set]:
 
 
 def coil_segments(ann: dict, cid: str) -> list[tuple[int, int]]:
-    """COILS segments of one chain (chain numbering) from annotation.yaml."""
+    """Coiled-coil segments of one chain (chain numbering) from annotation.yaml."""
     feats = (((ann.get("interpro") or {}).get(cid) or {}).get("features") or {})
     return [(int(a), int(b)) for a, b in feats.get("coils") or []]
 
 
-def coil_pairing(coils: dict, panels: list, pairs_by_smp: dict) -> dict[str, list[dict]]:
-    """{chain: [{start, end, res, to_cc, smp_cc, partner}]}: per coiled-coil
-    segment, its residues contacting a coiled coil of the OTHER side, and the
-    samples in which it does."""
+def coil_source(ann: dict, cid: str) -> str:
+    """DeepCoil or COILS (annotation.yaml from before DeepCoil: COILS)."""
+    return ((ann.get("interpro") or {}).get(cid) or {}).get("coils_source") or "COILS"
+
+
+def _kih(geo: pd.DataFrame | None, cid: str, a: int, b: int) -> tuple[set[int], int] | None:
+    """(knob residues of segment cid:a-b in passing samples, number of samples
+    where it forms a coiled coil with a partner segment), None without a table."""
+    if geo is None:
+        return None
+    knobs, smps = set(), set()
+    for s, (ch, st, en, kcol) in (("a", ("chain_a", "start_a", "end_a", "knob_residues_a")),
+                                  ("b", ("chain_b", "start_b", "end_b", "knob_residues_b"))):
+        g = geo[(geo[ch] == cid) & (geo[st] == a) & (geo[en] == b) & geo["coiled_coil"]]
+        smps |= set(g["sample"])
+        knobs |= {int(r) for v in g[kcol] for r in str(v).split(",") if r}
+    return knobs, len(smps)
+
+
+def coil_pairing(coils: dict, panels: list, pairs_by_smp: dict,
+                 geo: pd.DataFrame | None = None) -> dict[str, list[dict]]:
+    """{chain: [{start, end, res, to_cc, smp_cc, partner, kih}]}: per
+    coiled-coil segment, its residues contacting a coiled coil of the OTHER
+    side and the samples in which it does -- or, with the geometry table, its
+    knobs-into-holes residues and the samples forming a coiled coil (kih)."""
     side_of = {cid: side for side, cid in panels}
     out = {}
     for side, cid in panels:
@@ -100,8 +126,11 @@ def coil_pairing(coils: dict, panels: list, pairs_by_smp: dict) -> dict[str, lis
                 hit = {x[1] for x, y in pairs if x[0] == cid and x[1] in res and y in partner}
                 to_cc |= hit
                 smp_cc += bool(hit)
+            kih = _kih(geo, cid, a, b) if partner else None
+            if kih is not None:
+                to_cc, smp_cc = kih
             rows.append({"start": a, "end": b, "res": sorted(res), "to_cc": to_cc, "smp_cc": smp_cc,
-                         "partner": bool(partner)})
+                         "partner": bool(partner), "kih": kih is not None})
         out[cid] = rows
     return out
 
@@ -138,7 +167,7 @@ def elm_partner_domains(elm: pd.DataFrame, cid: str) -> list[dict]:
 
 
 def chain_rows(segs: list[dict], cdd: pd.DataFrame, hit_any: set[int], motifs=(), pdoms=(),
-               n_samples: int = 0, coils=()) -> list[dict]:
+               n_samples: int = 0, coils=(), coil_src: str = "COILS") -> list[dict]:
     """Track rows of one chain: {label, sub, kind, bars | ticks}."""
     col = _colors()
     rows = [{"label": "Domain map", "sub": None, "kind": "bars",
@@ -157,9 +186,11 @@ def chain_rows(segs: list[dict], cdd: pd.DataFrame, hit_any: set[int], motifs=()
                          "ticks": res, "hit": hit_any})
     for i, c in enumerate(coils):
         k = sum(r in hit_any for r in c["res"])
-        pair = f"↔ partner coil in {c['smp_cc']}/{n_samples}" if c["partner"] else "partner has no coiled coil"
+        pair = ("partner has no coiled coil" if not c["partner"]
+                else f"KIH coiled coil {c['smp_cc']}/{n_samples}" if c.get("kih")
+                else f"↔ partner coil in {c['smp_cc']}/{n_samples}")
         rows.append({"label": f"Coiled coil {c['start']}–{c['end']}", "gap": i == 0, "kind": "ticks",
-                     "sub": f"COILS · {k}/{len(c['res'])} contacted · {pair}",
+                     "sub": f"{coil_src} · {k}/{len(c['res'])} contacted · {pair}",
                      "ticks": c["res"], "hit": hit_any, "strong": c["to_cc"], "color": col["coil"]})
     for i, d in enumerate(pdoms):
         rows.append({"label": f"ELM partner: {d['name']}", "gap": i == 0, "kind": "bars",
@@ -186,7 +217,7 @@ def draw_panel(fig, H, y_top, role, cid, spec, ann, cdd, by_smp, n_samples, moti
     cdd_c = cdd[cdd["chain"] == cid]
     sites, spans = cdd_residues(cdd_c, {cid})
     hit_any = {r for s in by_smp.values() for _, r in s}
-    rows = chain_rows(segs, cdd_c, hit_any, motifs, pdoms, n_samples, coils)
+    rows = chain_rows(segs, cdd_c, hit_any, motifs, pdoms, n_samples, coils, coil_source(ann, cid))
 
     freq = np.zeros(L + 1)
     for s in by_smp.values():
@@ -208,7 +239,9 @@ def draw_panel(fig, H, y_top, role, cid, spec, ann, cdd, by_smp, n_samples, moti
     summary += (f" · contacts in CDD domains {in_cdd:.0%}" if not np.isnan(in_cdd)
                 else " · no CDD domain" if not spans else "")
     if coils and any(c["partner"] for c in coils):
-        summary += f" · coiled coils paired with the partner's: {sum(c['smp_cc'] > 0 for c in coils)}/{len(coils)}"
+        what = ("in a knobs-into-holes coiled coil with the partner" if any(c.get("kih") for c in coils)
+                else "paired with the partner's")
+        summary += f" · coils {what}: {sum(c['smp_cc'] > 0 for c in coils)}/{len(coils)}"
     if motifs:
         n_dom = sum(m["smp_dom"] > 0 for m in motifs)
         summary += f" · ELM motifs on the partner domain: {n_dom}/{len(motifs)}"
@@ -295,6 +328,7 @@ def main() -> int:
     ap.add_argument("--annotation", required=True, help="data/annotation/<pair>/annotation.yaml")
     ap.add_argument("--num-samples", type=int, required=True)
     ap.add_argument("--elm", default=None, help="<annotation dir>/elm_partner_matches.parquet (optional)")
+    ap.add_argument("--coiled-coil", default=None, help="results/<pair>/coiled_coil.parquet (optional)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--formats", default="svg")
     a = ap.parse_args()
@@ -311,7 +345,8 @@ def main() -> int:
     elm = elm[elm["pair"] == a.pair] if elm is not None else None
     coils = {cid: coil_segments(ann, cid) for _, cid in panels}
     pairs_by_smp = contact_pairs_by_sample(pl) if (elm is not None and len(elm)) or any(coils.values()) else {}
-    coil_rows = coil_pairing(coils, panels, pairs_by_smp)
+    geo = pd.read_parquet(a.coiled_coil) if a.coiled_coil and Path(a.coiled_coil).exists() else None
+    coil_rows = coil_pairing(coils, panels, pairs_by_smp, geo)
     if elm is not None and len(elm):
         motifs = {cid: elm_motifs(elm, cid, pairs_by_smp) for _, cid in panels}
         pdoms = {cid: elm_partner_domains(elm, cid) for _, cid in panels}
@@ -324,8 +359,12 @@ def main() -> int:
                mlines.Line2D([], [], color=col["site"], lw=1.8, label="CDD site residue, contacted (≥1 sample)"),
                mlines.Line2D([], [], color=INK2, lw=0.9, label="CDD site / motif / coil residue, not contacted")]
     if any(coil_rows.values()):
-        handles += [mlines.Line2D([], [], color=col["coil"], lw=1.8, alpha=0.4, label="coiled coil, contacted elsewhere"),
-                    mlines.Line2D([], [], color=col["coil"], lw=1.8, label="coiled coil on the partner's coil")]
+        kih = any(c.get("kih") for v in coil_rows.values() for c in v)
+        handles += [mlines.Line2D([], [], color=col["coil"], lw=1.8, alpha=0.4, label="coiled coil, contacted"
+                                  + ("" if kih else " elsewhere")),
+                    mlines.Line2D([], [], color=col["coil"], lw=1.8,
+                                  label="coil knob in the partner coil's holes" if kih
+                                  else "coiled coil on the partner's coil")]
     if any(motifs.values()) or any(pdoms.values()):
         handles += [mlines.Line2D([], [], color=col["slim"], lw=1.8, alpha=0.4,
                                   label="ELM motif, contacted elsewhere"),

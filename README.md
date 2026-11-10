@@ -30,6 +30,7 @@ OOM-crash.
 │  sequence annotation:  domains (ScanProsite + InterProScan v6 MATCH API)   │
 │                        disorder + MoRF (AIUPred docker)                    │
 │                        ELM motifs in disordered regions x partner Pfam     │
+│                        coiled coils + heptad register (DeepCoil, CPU)      │
 │                     ─► data/annotation/elm_partner_matches.parquet         │
 │                     ─► data/annotation/<pair>/annotation.yaml              │
 │                        (proposed `domains:`; curate into                   │
@@ -484,10 +485,10 @@ downward, and each layer adds as few dependencies as it can:
 | `cli`          | the dispatcher; imports a command's module only when it runs                | none                          |
 | `core`         | config, pair specs, protein names, fold table, cache, small io helpers      | pyyaml (+ pyarrow, lazily)    |
 | `services`     | UniProt, interactor databases, polite rate-limited HTTP                     | requests                      |
-| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), ELM motifs, per-pair merge | requests, pandas    |
+| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), ELM motifs, coiled coils (DeepCoil, own py3.7 env), per-pair merge | requests, pandas / deepcoil |
 | `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
 | `fold`         | ESMFold2-Fast (MLX / CUDA), or ColabFold MSAs + folds converted to the same table | esm, mlx / colabfold, gemmi |
-| `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc), pyDock energy | openmm / gemmi, scipy, numpy / lightdock |
+| `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc), pyDock energy, coiled-coil knobs-into-holes test | openmm / gemmi, scipy, numpy / lightdock |
 | `plip`         | pliparser's cxc config, per-pair contact table (the PLIP image run and the pliparser calls stay shell in the Snakefile) | none / pandas |
 | `report`       | figures (`report.plots`), tables, decoy calibration, datavzrd + report zip  | matplotlib, plotly, pandas    |
 
@@ -527,3 +528,10 @@ ab_initio_pipeline uses for its own worked example) is kept in
   arm64 build, so `plip.docker_platform` defaults to `linux/amd64` (x86
   emulation via Docker Desktop's Rosetta) — slower than a native image, and
   needs "Use Rosetta for x86/amd64 emulation" enabled in Docker Desktop.
+- **DeepCoil on Apple Silicon**: `envs/deepcoil.yaml` is Python 3.7, which
+  conda-forge does not build for osx-arm64. Build it once under Rosetta,
+  `CONDA_SUBDIR=osx-64 conda env create -p ~/miniconda3/envs/nanopulldown-deepcoil -f envs/deepcoil.yaml`,
+  and set `annotate.deepcoil.conda_env` to that prefix in `config.local.yaml`
+  (Snakemake then uses the prebuilt env). On Linux (IFB, CAIUS) Snakemake builds
+  it as usual. The SeqVec weights (~370 MB) go to `data/deepcoil_weights/` via
+  rule `fetch_deepcoil_weights` (CAIUS: run on the login node by `scripts/caius/run.sh`).

@@ -53,6 +53,7 @@ from pathlib import Path
 import yaml
 
 from nanopulldown.annotate.disorder import DISORDER_COLUMNS, pair_disorder_rows
+from nanopulldown.annotate.coils import chain_coils, overlay_tracks
 from nanopulldown.annotate.domains import pair_domain_features, pair_domain_rows
 from nanopulldown.core.config import load_config
 from nanopulldown.core.specs import load_pair, protein_chains
@@ -310,6 +311,7 @@ def main() -> int:
     spec = load_pair(args.pair)
     acfg = CFG["annotate"]
 
+    dc_on = bool((acfg.get("deepcoil") or {}).get("enabled", True))
     dom_all = pair_domain_rows(spec)
     feats = pair_domain_features(spec)
     dis_all = [dict(zip(DISORDER_COLUMNS, r)) for r in pair_disorder_rows(spec)]
@@ -318,6 +320,8 @@ def main() -> int:
     for ch in protein_chains(spec):
         cid = ch["id"]
         tracks[cid] = interpro_tracks([h for h in dom_all if h["chain"] == cid], feats.get(cid))
+        # DeepCoil's coils (annotate_coils_batch) take precedence over InterPro's COILS
+        overlay_tracks(tracks[cid], chain_coils(spec, ch) if dc_on else None)
         segs, summ = _chain_segments(
             len(ch["sequence"]),
             [h for h in dom_all if h["chain"] == cid],

@@ -1,0 +1,27 @@
+name: nanopulldown-deepcoil
+# DeepCoil 2 (coiled-coil + heptad a/d register from SeqVec embeddings), for
+# rule annotate_coils_batch. Pinned to an old stack by deepcoil itself
+# (allennlp 0.9 -> spaCy 2.1, jsonnet; TensorFlow 2.x, torch). Python 3.7, not
+# 3.8: spaCy 2.1 and jsonnet only exist prebuilt for 3.7 on conda-forge, and
+# pip builds of them fail. linux-64 and osx-64 only (no Python 3.7 on
+# osx-arm64): on Apple Silicon build it once under Rosetta,
+#   CONDA_SUBDIR=osx-64 conda env create -p <prefix> -f envs/deepcoil.yaml
+# and point annotate.deepcoil.conda_env at <prefix> (config.local.yaml).
+# The SeqVec weights (~370 MB) are NOT fetched by deepcoil at run time here:
+# rule fetch_deepcoil_weights puts them in annotate.deepcoil.weights_dir
+# (the compute nodes of CAIUS are offline).
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.7
+  - pip
+  - spacy=2.1.8
+  - jsonnet
+  - gevent        # allennlp -> flask/gevent: pip cannot build greenlet for osx-64 py3.7
+  - greenlet
+  # conda-forge's TensorFlow, not pip's: the pip wheels need AVX, which Rosetta
+  # (osx-64 on Apple Silicon) lacks; 2.10 is the last py3.7 build there
+  - tensorflow=2.10
+  - pip:
+      - deepcoil==2.0.2

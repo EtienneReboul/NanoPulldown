@@ -1721,6 +1721,22 @@ annotate:
     max_probability: null          # drop classes whose regex matches by chance more often than this
                                    # (ELM "Probability"; e.g. 0.005 drops most MOD_/CLV_ sites)
     exclude_types: []              # ELM class types to skip: CLV DEG DOC LIG MOD TRG
+  # DeepCoil 2 coiled coils + heptad a/d register (nanopulldown.annotate.coils;
+  # rules fetch_deepcoil_weights, deepcoil_fasta, annotate_coils_batch). Where
+  # DeepCoil has a prediction, its segments REPLACE InterPro's COILS in
+  # annotation.yaml (features.coils; COILS kept as features.coils_interpro) and
+  # so in every figure. CPU: ~4 ms/residue + ~40 s model load, ~6 GB RAM
+  # (CAIUS test 2026-11-10: 20 proteins / 17.5k residues in 85 s on 8 CPUs).
+  deepcoil:
+    enabled: true
+    cc_threshold: 0.5              # DeepCoil sharpened cc probability for a coiled-coil residue
+    min_len: 7                     # residues (one heptad)
+    weights_dir: "data/deepcoil_weights"   # SeqVec weights, shared by every run (~370 MB)
+    conda_env: null                # null -> envs/deepcoil.yaml (linux-64, osx-64). On Apple
+                                   # Silicon (no Python 3.7 for osx-arm64) set the path of an env
+                                   # built with CONDA_SUBDIR=osx-64 from that file
+    threads: 8
+    chunk: 100                     # sequences per DeepCoil predict() call
 
 # ── Stage 1a: fragment mode (nanopulldown.inputs.fragments) ──────────────────
 # Cut baits and preys into their annotated domains before pairing, and fold
@@ -1898,6 +1914,19 @@ minimize:
     hbond_allowance: 0.4       # A: subtracted for N/O--N/O pairs
     bond_separation: 4         # ignore pairs <= this many bonds apart
     alternative: "greater"     # Wilcoxon H1 on (raw - minimized); "two-sided" to be agnostic
+
+# ── Stage 2d': coiled-coil geometry (nanopulldown.structure.coiled_coil) ────
+# Per minimized sample, every bait-side x prey-side predicted coil segment pair
+# (annotation.yaml coils: DeepCoil, else COILS) gets a SOCKET-style
+# knobs-into-holes test (rule coiled_coil_geometry -> results/<pair>/coiled_coil.parquet);
+# fig_plip_cdd draws its result on the coil rows.
+coiled_coil:
+  enabled: true
+  packing_cutoff: 7.0          # A between side-chain centroids, knob to each hole residue (SOCKET default)
+  min_knobs: 3                 # knobs needed on EACH helix for a coiled coil (one dimer heptad gives 2)
+  pad: 3                       # residues added on each side of a predicted segment
+  ca_i3: [4.5, 5.9]            # A, CA(i)-CA(i+3) range counted as alpha-helical (ideal ~5.0-5.4)
+  ca_i4: [5.5, 6.9]            # A, CA(i)-CA(i+4) (ideal ~6.2)
 
 # ── Stage 2d: PLIP contact analysis (docker + pliparser) ────────────────────
 # Once per minimized sample: PLIP (docker) identifies bait<->prey contacts,

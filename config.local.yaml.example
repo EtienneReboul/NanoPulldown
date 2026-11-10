@@ -3,6 +3,9 @@
 # config.yaml when present.
 
 annotate:
+  # Apple Silicon only: DeepCoil's env prebuilt under Rosetta (README, "DeepCoil on Apple Silicon")
+  # deepcoil:
+  #   conda_env: "/Users/<you>/miniconda3/envs/nanopulldown-deepcoil"
   interproscan:
     email: "you@yourinstitute.org"   # REQUIRED — EBI rejects requests with no contact address
   aiupred:

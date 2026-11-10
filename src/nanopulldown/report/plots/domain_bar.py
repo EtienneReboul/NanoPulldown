@@ -169,6 +169,8 @@ def build_rows(segs: list[dict], ipr: dict, source_label: str) -> list[dict]:
     first = True
     for key, label, color in FEATURES:
         if feats.get(key):
+            if key == "coils":          # DeepCoil replaces COILS where it ran (annotate.coils)
+                label = f"{label} ({ipr.get('coils_source') or 'COILS'})"
             rows.append({"label": label, "sub": None, "gap": first,
                          "bars": [(s, e, color, None, 0.35, 0.8) for s, e in feats[key]]})
             first = False

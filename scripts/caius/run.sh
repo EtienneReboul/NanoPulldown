@@ -32,6 +32,9 @@ print(f'{cfg["dirs"]["annotation"]}/_cache/domains.done')
 print(f'{cfg["dirs"]["annotation"]}/cdd_sites.parquet')   # InterPro API: compute nodes are offline
 if (cfg["annotate"].get("elm") or {}).get("enabled", True):
     print(f'{cfg["dirs"]["annotation"]}/_cache/elm/elms_index.tsv')   # elm.eu.org (fetch_elm)
+dc = cfg["annotate"].get("deepcoil") or {}
+if dc.get("enabled", True):   # SeqVec weights for DeepCoil (fetch_deepcoil_weights)
+    print(f'{dc.get("weights_dir") or "data/deepcoil_weights"}/uniref50_v2/weights.hdf5')
 if fold_engine(cfg) == "colabfold" and (cfg["colabfold"].get("msa") or {}).get("mode", "server") == "server":
     print(f'{cfg["dirs"]["postproc"]}/_colabfold/msa.done')
 PY
