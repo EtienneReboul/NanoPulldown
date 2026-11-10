@@ -30,6 +30,8 @@ from nanopulldown.core.fold_table import fold_engine
 cfg = load_config(".")
 print(f'{cfg["dirs"]["annotation"]}/_cache/domains.done')
 print(f'{cfg["dirs"]["annotation"]}/cdd_sites.parquet')   # InterPro API: compute nodes are offline
+if (cfg["annotate"].get("elm") or {}).get("enabled", True):
+    print(f'{cfg["dirs"]["annotation"]}/_cache/elm/elms_index.tsv')   # elm.eu.org (fetch_elm)
 if fold_engine(cfg) == "colabfold" and (cfg["colabfold"].get("msa") or {}).get("mode", "server") == "server":
     print(f'{cfg["dirs"]["postproc"]}/_colabfold/msa.done')
 PY

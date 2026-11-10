@@ -118,6 +118,8 @@ def disorder_main() -> int:
     for p in a.pairs:
         for ch in specs[p]["sequences"]:
             seqs.add(ch["sequence"])
+        # full-length entries of fragment chains too: the ELM scan reads their disorder
+        seqs.update(annotation_targets(specs[p]))
     cache = annotation_cache_dir(CFG, "disorder")
     todo = sorted((s for s in seqs if not cache_is_current(cache / f"{seq_md5(s)}.json")), key=len)
     print(f"[disorder_batch] {len(seqs)} unique sequence(s), {len(todo)} to run, chunks of {chunk}",

@@ -18,6 +18,11 @@ straight into folding.
                           proposed `domains:` block; hand-curate it into
                           configs/curated_domains.yaml whenever convenient
                           (see configs/_schema.md), it isn't required to proceed
+      fetch_elm / annotate_elm  ELM short linear motifs in the disordered
+                         regions (AIUPred) of every full-length protein ->
+                         data/annotation/elm_motifs.parquet, and per pair the
+                         motif x partner binding Pfam domain matches ->
+                         elm_partner_matches.parquet + a ranked CSV in the report dir
       annotate_cdd       CDD domains + their conserved-feature sites (InterPro API
                          `?residues`, cached per sequence) of every chain ->
                          data/annotation/cdd_sites.parquet, read against PLIP
@@ -282,6 +287,12 @@ DOMAIN_PROTEINS = _domain_proteins()
 # Not grouped: folding, minimize_cif (GPU, other partition), the single run-wide steps.
 # All members of a group must agree on the string resources (partition, account).
 
+# ELM motifs (annotate_elm): on unless annotate.elm.enabled is false
+ELM_CFG = CFG["annotate"].get("elm") or {}
+ELM_ON = bool(ELM_CFG.get("enabled", True))
+ELM_OUTPUTS = ([str(Path(DIRS["annotation"]) / "elm_partner_matches.parquet"),
+                str(Path(DIRS["reports"]) / "preprocessing" / "elm_partner_matches.csv")] if ELM_ON else [])
+
 
 rule all:
     default_target: True
@@ -302,6 +313,7 @@ rule all:
         [str(FOLD_REP / p / "msa_paired.svg") for p in PAIRS] if ENGINE == "colabfold" else [],
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
+        ELM_OUTPUTS,
         # per-bait report sections (the run-wide pages above are on-demand targets)
         [str(BY_BAIT / b / page) for b in BAITS for page in BAIT_PAGES],
 
@@ -396,6 +408,57 @@ rule annotate_cdd:
     shell:
         r"""
         {NP} annotate cdd --pairs {params.pairs} --out {output[0]} > {log} 2>&1
+        """
+
+
+# ELM short linear motifs in disordered regions x the partner's binding Pfam
+# domain (nanopulldown.annotate.elm). fetch_elm calls the web once (login node
+# on CAIUS, scripts/caius/run.sh); annotate_elm is offline, from the caches.
+ELM_DIR = ANN_CACHE / "elm"
+
+
+rule fetch_elm:
+    output:
+        [str(ELM_DIR / t) for t in ("elms_index.tsv", "interaction_domains.tsv", "instances.tsv")],
+    log:
+        str(PRE_LOG / "fetch_elm.log"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        out_dir=str(ELM_DIR),
+    shell:
+        r"""
+        {NP} annotate elm-fetch --out-dir {params.out_dir} > {log} 2>&1
+        """
+
+
+rule annotate_elm:
+    input:
+        tables=rules.fetch_elm.output,
+        domains=str(ANN_CACHE / "domains.done"),
+        disorder=str(ANN_CACHE / "disorder.done"),
+    output:
+        motifs=str(ANN / "elm_motifs.parquet"),
+        matches=str(ANN / "elm_partner_matches.parquet"),
+        csv=str(PRE_REP / "elm_partner_matches.csv"),
+    log:
+        str(PRE_LOG / "annotate_elm.log"),
+    conda:
+        "envs/analysis.yaml"
+    priority: 50
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
+        elm=json.dumps({**ELM_CFG, "cutoff": CFG["annotate"]["consensus"]["disorder_cutoff"],
+                        "morf": CFG["annotate"]["morfchibi"]}, sort_keys=True),
+        elm_dir=str(ELM_DIR),
+    resources:
+        # runs AIUPred (container) for full-length entries of fragment chains
+        # missing from the disorder cache -- none once annotate_disorder_batch covers them
+        docker_heavy=1,
+    shell:
+        r"""
+        {NP} annotate elm --pairs {params.pairs} --elm-dir {params.elm_dir} \
+          --motifs {output.motifs} --matches {output.matches} --csv {output.csv} > {log} 2>&1
         """
 
 
@@ -936,6 +999,7 @@ rule fig_plip_cdd:
         contacts=str(POST / "{pair}" / "plip_contacts.parquet"),
         cdd=str(ANN / "cdd_sites.parquet"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
+        elm=[str(ANN / "elm_partner_matches.parquet")] if ELM_ON else [],
     output:
         report(str(FOLD_REP / "{pair}" / "plip_cdd.svg"),
                category="PLIP contacts on CDD sites", subcategory=bait_subcategory, labels=pair_report_labels),
@@ -947,11 +1011,13 @@ rule fig_plip_cdd:
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
         labels=lambda wc: LABEL_KEY[wc.pair],
+        elm=lambda wc, input: f"--elm {input.elm[0]}" if input.elm else "",
     shell:
         r"""
         {NP} plot plip-cdd --pair {wildcards.pair} \
           --contacts {input.contacts} --cdd {input.cdd} --annotation {input.annotation} \
-          --num-samples {params.n} --out {output[0]} --formats {params.fmts}
+          --num-samples {params.n} --out {output[0]} --formats {params.fmts} \
+          {params.elm}
         """
 
 

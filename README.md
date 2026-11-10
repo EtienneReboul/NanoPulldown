@@ -29,6 +29,8 @@ OOM-crash.
 ┌─ preprocessing (needs internet) ───────────────────────────────────────────┐
 │  sequence annotation:  domains (ScanProsite + InterProScan v6 MATCH API)   │
 │                        disorder + MoRF (AIUPred docker)                    │
+│                        ELM motifs in disordered regions x partner Pfam     │
+│                     ─► data/annotation/elm_partner_matches.parquet         │
 │                     ─► data/annotation/<pair>/annotation.yaml              │
 │                        (proposed `domains:`; curate into                   │
 │                        configs/curated_domains.yaml                        │
@@ -482,7 +484,7 @@ downward, and each layer adds as few dependencies as it can:
 | `cli`          | the dispatcher; imports a command's module only when it runs                | none                          |
 | `core`         | config, pair specs, protein names, fold table, cache, small io helpers      | pyyaml (+ pyarrow, lazily)    |
 | `services`     | UniProt, interactor databases, polite rate-limited HTTP                     | requests                      |
-| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), per-pair merge   | requests                      |
+| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), ELM motifs, per-pair merge | requests, pandas    |
 | `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
 | `fold`         | ESMFold2-Fast (MLX / CUDA), or ColabFold MSAs + folds converted to the same table | esm, mlx / colabfold, gemmi |
 | `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc), pyDock energy | openmm / gemmi, scipy, numpy / lightdock |

@@ -34,6 +34,8 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "disorder": ("annotate.batch:disorder_main", "fill the per-sequence AIUPred disorder cache"),
         "merge": ("annotate.merge:main", "one pair's proposed annotation.yaml, from the caches"),
         "cdd": ("annotate.cdd:main", "CDD domains + conserved-feature sites of a run's chains"),
+        "elm-fetch": ("annotate.elm:fetch_main", "download the ELM motif tables (elm.eu.org; once)"),
+        "elm": ("annotate.elm:main", "ELM motifs in disordered regions x partner binding domains"),
         "domains-tsv": ("annotate.domains:main", "one pair's raw domain hits as TSV (debugging)"),
         "disorder-tsv": ("annotate.disorder:main", "one pair's AIUPred tracks as TSV (debugging)"),
     },
@@ -83,7 +85,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
 
 GROUP_HELP = {
     "inputs": "build the run's pairs (before Snakemake; needs internet)",
-    "annotate": "sequence annotation (domains, disorder)",
+    "annotate": "sequence annotation (domains, disorder, ELM motifs)",
     "colabfold": "fold.engine: colabfold (MSAs, then AlphaFold2-multimer folds)",
     "plip": "PLIP contacts",
     "plot": "report figures",

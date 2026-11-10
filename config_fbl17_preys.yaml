@@ -1,8 +1,8 @@
 # Run overlay: bait Q8W104 (FBL17) x the 262 preys of data/preys-FBL17.fasta,
 # full length, folded with ColabFold (AlphaFold2-multimer v3) on CAIUS with fast
 # kernels: 5 models x 1 seed = 5 samples per pair. Settings follow
-# config_dne1_dcp_ip_full_colabfold.yaml. MSAs: local MMseqs2-GPU search (one
-# H200 job) on the ColabFold databases; paths in CAIUS's config.local.yaml.
+# config_dne1_dcp_ip_full_colabfold.yaml. MSAs: ColabFold's public MMseqs2
+# server (see colabfold.msa), run on the login node by scripts/caius/run.sh.
 # Controls: positives only (tier >= high); decoys off to have results by Monday 2026-11-09.
 #   nanopulldown --run-config config_fbl17_preys.yaml inputs expand
 #   NANOPULLDOWN_RUN_CONFIG=config_fbl17_preys.yaml scripts/caius/run.sh
@@ -23,12 +23,11 @@ colabfold:
     - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
     - {constraint: "gpuh200|gpu80g", max_tokens: 0, mem_mb: 100000, cpus: 8}
   msa:
-    mode: local
-    gpu: 1
-    gpu_server: 0                       # NOT 1: mmseqs waits only 600 s for the gpuserver to load
-                                        # the padded UniRef30 from BeeGFS, and it takes longer
-    db_load_mode: 0                     # the databases have no .idx index
-    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 1440}
+    mode: server                        # ColabFold's public MMseqs2 API, from the login node (run.sh):
+                                        # 2026-11-09, the local GPU search (H200/H100) waited 3.5 days
+                                        # in the queue. Same msa_mode / pair_mode as local, other DBs
+                                        # versions possible on the server side. 169 complexes < the
+                                        # server_max_queries guard (500)
 
 fragments:
   enabled: false
