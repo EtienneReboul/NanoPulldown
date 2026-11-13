@@ -38,6 +38,8 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "elm": ("annotate.elm:main", "ELM motifs in disordered regions x partner binding domains"),
         "coils-fasta": ("annotate.coils:fasta_main", "unique sequences of the pairs as md5-headed FASTA (DeepCoil input)"),
         "coils-weights": ("annotate.coils:weights_main", "download DeepCoil's SeqVec weights (once)"),
+        "idr-reference": ("annotate.idr_pairs:reference_main", "background proteome sample + control sequences (IDR pairs)"),
+        "idr-pairs": ("annotate.idr_pairs:main", "SPARROW IDR x IDR complementarity of bait/prey disordered regions"),
         "domains-tsv": ("annotate.domains:main", "one pair's raw domain hits as TSV (debugging)"),
         "disorder-tsv": ("annotate.disorder:main", "one pair's AIUPred tracks as TSV (debugging)"),
     },

@@ -1737,6 +1737,35 @@ annotate:
                                    # built with CONDA_SUBDIR=osx-64 from that file
     threads: 8
     chunk: 100                     # sequences per DeepCoil predict() call
+  # IDR x IDR physicochemical complementarity with SPARROW / ALBATROSS
+  # (nanopulldown.annotate.idr_pairs; rules fetch_idr_reference + idr_compatibility,
+  # envs/sparrow.yaml). Motif-independent IDR-IDR binding (opposite charge blocks,
+  # cation-pi / pi-pi stickers, hydrophobic patches), ranked against a shuffle null
+  # (patterning) and a background proteome null. Heuristic ranking, not binding.
+  idr_pairs:
+    enabled: true
+    conda_env: null                # null -> envs/sparrow.yaml; or the path of a prebuilt env
+    disorder_cutoff: null          # AIUPred disorder for an IDR residue; null -> consensus.disorder_cutoff
+    max_gap: 10                    # ordered gaps <= this many residues are merged into the IDR
+    min_len: 30                    # aa; also the minimum piece kept on a fragment chain
+    windows: [15, 25]              # residues; the FIRST is the primary window (mechanisms, plots, phospho)
+    n_shuffles: 1000               # composition-preserving shuffles per IDR (shuffle null)
+    label_percentile: 0.95         # background percentile a mechanism needs to be called
+    kappa_blocky: 0.3              # kappa >= this on both IDRs -> blocky_both
+    hydro_patch_percentile: 0.9    # background quantile of max window hydrophobicity = a "patch"
+    top_n_plots: 20                # profile figures of the run-wide top IDR pairs
+    threads: 4
+    background:                    # random proteome sample, IDRs called like the run's
+      taxon: 3702                  # NCBI taxon (3702 Arabidopsis thaliana)
+      reviewed: true               # Swiss-Prot only
+      n: 500                       # proteins
+      seed: 0
+      max_len: 2000                # aa (AIUPred time)
+    phosphosites: null             # TSV with columns accession, position (full-length) -> pS/pT/pY = -2
+    predict_phosphosites: false    # add SPARROW's S/T/Y phosphorylation predictions (many sites)
+    controls: null                 # null -> built-in: H1.4 / H1.0 x prothymosin alpha (expect high),
+                                   # H1.4 x H1.0 and ProTalpha x parathymosin (expect low); else a list
+                                   # of {name, a: <UniProt>, b: <UniProt>, expect: high|low}
 
 # ── Stage 1a: fragment mode (nanopulldown.inputs.fragments) ──────────────────
 # Cut baits and preys into their annotated domains before pairing, and fold

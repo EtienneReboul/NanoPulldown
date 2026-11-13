@@ -1,0 +1,29 @@
+name: nanopulldown-sparrow
+# SPARROW (idptools; Holehouse lab) + ALBATROSS, for rule idr_compatibility
+# (nanopulldown.annotate.idr_pairs): per-IDR sequence features and the
+# pairwise IDR complementarity scores. Its own env: SPARROW pulls torch (via
+# idptools-parrot, ALBATROSS's networks), metapredict, pyfamsa. CPU is enough
+# (ALBATROSS batch prediction of a few thousand IDRs takes seconds).
+# SPARROW is pinned to a commit: it has no PyPI release and changes under
+# active development (the commit is written into the output metadata).
+# License: CC BY-NC-ND (non-commercial use).
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11
+  - numpy>=1.26,<2.3
+  - cython
+  - scipy>=1.11
+  - pandas>=2.0
+  - pyarrow>=15.0
+  - pyyaml>=6.0
+  - requests>=2.31
+  - matplotlib>=3.8
+  - pytorch>=2.1
+  - pytest
+  - pip
+  - pip:
+      # parrot (ALBATROSS's network code) is an unpinned git dependency of SPARROW: pinned here
+      - idptools-parrot @ git+https://github.com/idptools/parrot.git@8d5c671a6796ab69ace69e5cdf98fb2469deafb2
+      - sparrow @ git+https://github.com/idptools/sparrow.git@03aa232abcbe191d96daf55ee28e1f7881979a68

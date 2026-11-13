@@ -35,6 +35,9 @@ if (cfg["annotate"].get("elm") or {}).get("enabled", True):
 dc = cfg["annotate"].get("deepcoil") or {}
 if dc.get("enabled", True):   # SeqVec weights for DeepCoil (fetch_deepcoil_weights)
     print(f'{dc.get("weights_dir") or "data/deepcoil_weights"}/uniref50_v2/weights.hdf5')
+idr = cfg["annotate"].get("idr_pairs") or {}
+if idr.get("enabled", True):   # UniProt background sample + control sequences (fetch_idr_reference)
+    print("fetch_idr_reference")
 if fold_engine(cfg) == "colabfold" and (cfg["colabfold"].get("msa") or {}).get("mode", "server") == "server":
     print(f'{cfg["dirs"]["postproc"]}/_colabfold/msa.done')
 PY

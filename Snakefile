@@ -27,6 +27,12 @@ straight into folding.
                          DeepCoil 2 coiled coils + heptad register per unique
                          sequence (envs/deepcoil.yaml, CPU) -> _cache/deepcoil/;
                          merge_annotation puts them in place of InterPro COILS
+      fetch_idr_reference / idr_compatibility
+                         SPARROW bait IDR x prey IDR complementarity (charge
+                         blocks, cation-pi / pi-pi, hydrophobic patches) vs a
+                         shuffle + background-proteome null, with controls ->
+                         idr_features / idr_pair_scores.parquet + ranked CSV
+                         + figures in the report dir (envs/sparrow.yaml)
       annotate_cdd       CDD domains + their conserved-feature sites (InterPro API
                          `?residues`, cached per sequence) of every chain ->
                          data/annotation/cdd_sites.parquet, read against PLIP
@@ -305,6 +311,22 @@ CCG = CFG.get("coiled_coil") or {}
 
 ELM_OUTPUTS = ([str(Path(DIRS["annotation"]) / "elm_partner_matches.parquet"),
                 str(Path(DIRS["reports"]) / "preprocessing" / "elm_partner_matches.csv")] if ELM_ON else [])
+# SPARROW IDR x IDR complementarity (idr_compatibility): on unless
+# annotate.idr_pairs.enabled is false. The background sample and the control
+# sequences are fetched once (fetch_idr_reference; login node on CAIUS) into
+# files named after their parameters, shared by every run.
+IDR_CFG = CFG["annotate"].get("idr_pairs") or {}
+IDR_ON = bool(IDR_CFG.get("enabled", True))
+IDR_ENV = IDR_CFG.get("conda_env") or "envs/sparrow.yaml"
+_idr_bg = IDR_CFG.get("background") or {}
+IDR_DIR = Path(DIRS["annotation"]) / "_cache" / "idr_pairs"
+IDR_BG = str(IDR_DIR / "background_{}_{}{}_seed{}_max{}.fasta".format(
+    _idr_bg.get("taxon", 3702), _idr_bg.get("n", 500), "" if _idr_bg.get("reviewed", True) else "_all",
+    _idr_bg.get("seed", 0), _idr_bg.get("max_len", 2000)))
+IDR_CTL = str(IDR_DIR / "controls_{}.fasta".format(
+    hashlib.sha1(json.dumps(IDR_CFG.get("controls"), sort_keys=True).encode()).hexdigest()[:8]))
+IDR_OUTPUTS = ([str(Path(DIRS["annotation"]) / "idr_pair_scores.parquet"),
+                str(Path(DIRS["reports"]) / "preprocessing" / "idr_pair_scores.csv")] if IDR_ON else [])
 
 
 rule all:
@@ -327,6 +349,7 @@ rule all:
         str(FOLD_REP / "results_table.csv"),
         str(FOLD_REP / "minimize_failure_rate.csv"),
         ELM_OUTPUTS,
+        IDR_OUTPUTS,
         # per-bait report sections (the run-wide pages above are on-demand targets)
         [str(BY_BAIT / b / page) for b in BAITS for page in BAIT_PAGES],
 
@@ -539,6 +562,61 @@ rule annotate_elm:
         r"""
         {NP} annotate elm --pairs {params.pairs} --elm-dir {params.elm_dir} \
           --motifs {output.motifs} --matches {output.matches} --csv {output.csv} > {log} 2>&1
+        """
+
+
+# Bait IDR x prey IDR physicochemical complementarity (SPARROW / ALBATROSS;
+# nanopulldown.annotate.idr_pairs): charge blocks, cation-pi / pi-pi stickers,
+# hydrophobic patches, against a shuffle null and a background proteome null,
+# + the controls (H1 x prothymosin alpha). fetch_idr_reference calls UniProt
+# once; idr_compatibility is offline (AIUPred for the background proteins on
+# the first run, ~0.3 s/protein, cached like the run's).
+rule fetch_idr_reference:
+    output:
+        background=IDR_BG,
+        controls=IDR_CTL,
+    log:
+        str(PRE_LOG / "fetch_idr_reference.log"),
+    conda:
+        "envs/analysis.yaml"
+    shell:
+        r"""
+        {NP} annotate idr-reference --background {output.background} --controls {output.controls} > {log} 2>&1
+        """
+
+
+rule idr_compatibility:
+    input:
+        disorder=str(ANN_CACHE / "disorder.done"),
+        background=rules.fetch_idr_reference.output.background,
+        controls=rules.fetch_idr_reference.output.controls,
+    output:
+        features=str(ANN / "idr_features.parquet"),
+        scores=str(ANN / "idr_pair_scores.parquet"),
+        csv=str(PRE_REP / "idr_pair_scores.csv"),
+        controls=str(PRE_REP / "idr_controls.csv"),
+        figs=directory(str(PRE_REP / "idr_pairs")),
+    log:
+        str(PRE_LOG / "idr_compatibility.log"),
+    conda:
+        IDR_ENV
+    priority: 50
+    threads: int(IDR_CFG.get("threads", 4))
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
+        idr=json.dumps({k: v for k, v in IDR_CFG.items() if k not in ("conda_env", "threads")}, sort_keys=True),
+        fmts=FMTS,
+    resources:
+        mem_mb=8000,
+        # runs AIUPred (container) for the background proteins on the first run
+        docker_heavy=1,
+    shell:
+        r"""
+        OMP_NUM_THREADS={threads} {NP} annotate idr-pairs --pairs {params.pairs} \
+          --background {input.background} --controls {input.controls} \
+          --features {output.features} --scores {output.scores} --csv {output.csv} \
+          --controls-csv {output.controls} --fig-dir {output.figs} \
+          --formats {params.fmts} --threads {threads} > {log} 2>&1
         """
 
 

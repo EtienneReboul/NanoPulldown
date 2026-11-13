@@ -31,6 +31,7 @@ OOM-crash.
 │                        disorder + MoRF (AIUPred docker)                    │
 │                        ELM motifs in disordered regions x partner Pfam     │
 │                        coiled coils + heptad register (DeepCoil, CPU)      │
+│                        IDR x IDR complementarity (SPARROW, own env)        │
 │                     ─► data/annotation/elm_partner_matches.parquet         │
 │                     ─► data/annotation/<pair>/annotation.yaml              │
 │                        (proposed `domains:`; curate into                   │
@@ -450,6 +451,83 @@ NANOPULLDOWN_RUN_CONFIG=config_<run>.yaml snakemake --use-conda --cores 4 --reso
   `data/interactors/interactors_<run>.*`, `data/interactors/psi_mi_*.json`).
   The draw is seeded, so a control set can be rebuilt exactly.
 
+## IDR x IDR complementarity (SPARROW)
+
+Rules `fetch_idr_reference` (UniProt, once; login node on CAIUS) and
+`idr_compatibility` (`envs/sparrow.yaml`, offline) look for motif-independent
+IDR–IDR binding between bait and prey: opposite charge blocks (histone H1 (+)
+x prothymosin α (−) form a fully disordered high-affinity complex, Borgia et
+al. 2018), cation–π / π–π stickers, and hydrophobic patches. This step complements
+the ELM scan (motif x domain) and the AIUPred MoRFs. Code:
+`nanopulldown.annotate.idr_scores` (numpy, the arithmetic) and
+`nanopulldown.annotate.idr_pairs` (SPARROW, plumbing); tests in
+`tests/test_idr_scores.py` (`PYTHONPATH=src python -m pytest tests/`, in the sparrow env).
+
+**SPARROW version.** The env pins SPARROW `03aa232` (2026-06-09, reports `0.2.2+68.g03aa232`) and
+parrot `8d5c671`. SPARROW has no PyPI release and changes quickly, so the version is
+written into every output's parquet metadata. License: CC BY-NC-ND.
+
+**Steps and thresholds** (`annotate.idr_pairs` in config.yaml):
+
+1. IDRs: AIUPred disorder >= 0.5, ordered gaps <= 10 aa merged, >= 30 aa,
+   called on the full-length protein and projected onto fragment chains.
+   metapredict (SPARROW's predictor) gives `metapredict_agreement`: the fraction of
+   the IDR it also calls disordered.
+2. Per IDR (`idr_features.parquet`): FCR, NCPR, f+, f−, κ, SCD, mean
+   hydrophobicity, SHD, complexity, aromatic / R / K / Q+N / G+S fractions,
+   Y and R counts, mean PScore (SPARROW's phase-separation predictor; π–π
+   contacts), ALBATROSS Rg, Re, ν, asphericity and prefactor, and the extremes
+   of the 15- and 25-residue windowed profiles.
+3. Per pair, every bait IDR x prey IDR (`idr_pair_scores.parquet`, ranked CSV):
+   `s_charge = −NCPR_a·NCPR_b` (plus f+·f− products); `local_charge` = the
+   most complementary pair of charge windows, with the coordinates and
+   sequences of both segments (finds charge blocks inside an overall neutral
+   IDR); κ / SCD with `blocky_both`; `s_catpi`, `s_pi` and their windowed
+   versions; `hydro_local` with `hydro_patch_both`; MoRF overlap of the best
+   charge windows.
+4. Null models. **Shuffle**: 1000 composition-preserving shuffles of each IDR give a z-score and p
+   for each local score. Shuffling keeps composition, so z > 0 means the
+   *patterning* adds to the complementarity. **Background**: 500 random reviewed
+   proteins of `background.taxon` (Arabidopsis by default), with IDRs called the same way. Every score of
+   IDR_a x background and background x IDR_b gives the pair's percentile:
+   "more complementary than a random partner of either". A pair cannot rank far
+   above its weaker partner's own standing: an IDR with nothing to offer caps
+   every pair it is in.
+5. `dominant_mechanism`: charge / cation_pi / pi / hydrophobic, the one with the
+   highest background percentile (max over its global and local scores,
+   scores > 0), called when >= `label_percentile` (0.95), else `none`.
+6. Phosphorylation (off by default): `phosphosites:` (TSV accession, position)
+   and/or `predict_phosphosites:` (SPARROW S/T/Y predictors). pS/pT/pY count as −2,
+   and the charge scores are recomputed (`*_phospho`, `d_*_phospho`): can
+   phosphorylation switch the interaction on or off?
+7. Controls (`idr_controls.csv`), scored against the same background:
+   H1.4 (P10412) and H1.0 (P07305; the one Borgia et al. used) x ProTα (P06454) must come out as
+   `charge`; H1.4 x H1.0 (both basic) and ProTα x parathymosin (P20962, both
+   acidic) must stay below the label percentile. The log prints PASS/FAIL. Check
+   it before reading the run's scores.
+
+Validation (2026-11-10, BPM6 run, 1,365 pairs, 141 s on 4 CPUs, 1.2 GB):
+all four controls pass. The H1 x ProTα charge percentiles are 0.996 and 0.999,
+above every run pair. The like-charged negatives score 0.38 and 0.55. No BPM6 pair
+reaches a mechanism call: both BPM6 IDRs are near-neutral (NCPR 0.03, 0.06) and
+have almost no aromatics.
+
+Figures in `<reports>/preprocessing/idr_pairs/`: `mechanism_heatmap.svg`
+(top pairs x mechanisms, background percentile), and `top/` with, for each top
+pair, aligned windowed NCPR, aromatic and R+K, and AIUPred panels of both chains.
+The IDRs, the best charge windows and the windows behind the dominant mechanism are
+marked.
+
+**Limits.**
+- Electrostatic complementarity is non-specific and salt dependent:
+  "compatible" does not mean "binds".
+- The scores are heuristics for ranking candidates, not binding energies.
+- ALBATROSS and SPARROW are trained and validated on isolated IDRs, not on complexes.
+- RNA-mediated co-condensation (use catGRANULE) and motif-based binding (the
+  ELM step) are not covered.
+- Test top candidates by other means: AF-Multimer/AF3 (with caution for IDP–IDP),
+  coarse-grained simulation (Mpipi, CALVADOS), or experiments.
+
 ## Layout
 
 | Path                                         | What                                                                                             |
@@ -485,7 +563,7 @@ downward, and each layer adds as few dependencies as it can:
 | `cli`          | the dispatcher; imports a command's module only when it runs                | none                          |
 | `core`         | config, pair specs, protein names, fold table, cache, small io helpers      | pyyaml (+ pyarrow, lazily)    |
 | `services`     | UniProt, interactor databases, polite rate-limited HTTP                     | requests                      |
-| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), ELM motifs, coiled coils (DeepCoil, own py3.7 env), per-pair merge | requests, pandas / deepcoil |
+| `annotate`     | domains (InterPro/ScanProsite), disorder (AIUPred docker), ELM motifs, coiled coils (DeepCoil, own py3.7 env), IDR x IDR complementarity (SPARROW, own env), per-pair merge | requests, pandas / deepcoil / sparrow |
 | `inputs`       | `inputs:` resolution, fragments, decoys, positives -> `configs/pairs.parquet` | requests, pandas, numpy     |
 | `fold`         | ESMFold2-Fast (MLX / CUDA), or ColabFold MSAs + folds converted to the same table | esm, mlx / colabfold, gemmi |
 | `structure`    | OpenMM minimization, clashes, interface metrics (+ vendored ipSAE, Pinc), pyDock energy, coiled-coil knobs-into-holes test | openmm / gemmi, scipy, numpy / lightdock |
