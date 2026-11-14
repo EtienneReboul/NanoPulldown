@@ -50,8 +50,14 @@ def main() -> int:
         df = pd.read_parquet(energy_pq)
         steps = df["step"].tolist()
         energies = df["energy_kJ_mol"].tolist()
-        if any(abs(e) > a.max_abs_energy for e in energies):
+        # The first point is the RAW model's energy (up to ~1e24 kJ/mol for a
+        # clashed ColabFold model); minimize.py applies max_abs_energy only to
+        # the points after it, so do the same here. A huge raw point is left
+        # off the curve (it would flatten every other point) but is no failure.
+        if not energies or any(e != e or abs(e) > a.max_abs_energy for e in energies[1:]):
             continue
+        if abs(energies[0]) > a.max_abs_energy:
+            steps, energies = steps[1:], energies[1:]
         ax.plot(steps, energies, marker="o", ms=2, lw=1, label=f"sample {i}")
         n_ok += 1
     ax.set_xlabel("minimization step")

@@ -1909,7 +1909,8 @@ minimize:
   forcefield: ["amber14-all.xml", "implicit/gbn2.xml"]
   platform_preference: ["OpenCL"]   # OpenCL for Mac Metal-backed GPU accel. No CPU fallback: a CPU minimization of
                                     # a clashed complex runs for hours without a guarantee of converging
-  max_abs_energy: 1.0e15       # |energy| kJ/mol above this = diverged, stop and flag
+  max_abs_energy: 1.0e15       # |energy| kJ/mol above this AFTER the raw model's first evaluation
+                               # (raw models reach ~1e24) = diverged, stop and flag
   divergence_factor: 100.0     # energy rising by more than this x its running min = diverged
   probe_steps: 200
   max_steps: 2000
