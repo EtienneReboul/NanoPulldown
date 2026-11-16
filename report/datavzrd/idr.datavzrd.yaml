@@ -1,0 +1,325 @@
+name: "IDR complementarity (SPARROW)"
+
+# Rendered by rule datavzrd_idr into <reports>/preprocessing/idr_tables; the
+# paths below resolve against <reports>/preprocessing (nanopulldown report tables).
+# Columns not listed here are shown (normal mode); new score columns need no edit.
+
+default-view: idr_pairs
+
+datasets:
+  idr_pairs:
+    path: "idr_pair_scores.csv"
+    separator: ","
+  idr_controls:
+    path: "idr_controls.csv"
+    separator: ","
+
+views:
+  idr_pairs:
+    dataset: idr_pairs
+    desc: |
+      Every bait IDR x prey IDR of every pair, ranked run-wide by the best
+      background percentile over the four mechanisms (charge, cation-pi,
+      pi-pi, hydrophobic; nanopulldown.annotate.idr_pairs, SPARROW). A
+      percentile is how the pair scores against the same IDR paired with
+      random background IDRs (1 = more complementary than every random
+      partner); `local charge z (shuffle)` asks whether the charge
+      patterning matters, against composition-preserving shuffles.
+      IDRs: AIUPred >= cutoff, chain numbering (`a_` = bait, `b_` = prey);
+      expand a row for SPARROW features (kappa, SCD, SHD, nu), the w25
+      window, per-mechanism scores and phosphorylation-adjusted charge.
+      A heuristic ranking of candidates, not a binding energy.
+    page-size: 50
+    render-table:
+      columns:
+        pair:
+          label: "pair id"
+        bait_protein:
+          label: "bait"
+        prey_protein:
+          label: "prey"
+        rank:
+          label: "rank in pair"
+        dominant_mechanism:
+          label: "dominant mechanism"
+        max_mechanism_pct:
+          label: "best percentile"
+          precision: 3
+        a_chain:
+          display-mode: detail
+        a_accession:
+          display-mode: detail
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        a_idr_id:
+          display-mode: detail
+        a_start:
+          label: "bait IDR start"
+        a_end:
+          label: "bait IDR end"
+        a_full_start:
+          display-mode: detail
+        a_full_end:
+          display-mode: detail
+        a_length:
+          display-mode: detail
+        ncpr_a:
+          label: "bait IDR NCPR"
+          precision: 3
+        kappa_a:
+          display-mode: detail
+          precision: 3
+        scd_a:
+          display-mode: detail
+          precision: 3
+        shd_a:
+          display-mode: detail
+          precision: 3
+        hydrophobicity_a:
+          display-mode: detail
+          precision: 3
+        nu_a:
+          display-mode: detail
+          precision: 3
+        b_chain:
+          display-mode: detail
+        b_accession:
+          display-mode: detail
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        b_idr_id:
+          display-mode: detail
+        b_start:
+          label: "prey IDR start"
+        b_end:
+          label: "prey IDR end"
+        b_full_start:
+          display-mode: detail
+        b_full_end:
+          display-mode: detail
+        b_length:
+          display-mode: detail
+        ncpr_b:
+          label: "prey IDR NCPR"
+          precision: 3
+        kappa_b:
+          display-mode: detail
+          precision: 3
+        scd_b:
+          display-mode: detail
+          precision: 3
+        shd_b:
+          display-mode: detail
+          precision: 3
+        hydrophobicity_b:
+          display-mode: detail
+          precision: 3
+        nu_b:
+          display-mode: detail
+          precision: 3
+        s_charge:
+          display-mode: detail
+          precision: 3
+        fpos_a_x_fneg_b:
+          display-mode: detail
+          precision: 3
+        fneg_a_x_fpos_b:
+          display-mode: detail
+          precision: 3
+        s_charge_pct_bg:
+          display-mode: detail
+          precision: 3
+        local_charge_w15:
+          label: "local charge (w15)"
+          precision: 3
+        a_seg_start_w15:
+          display-mode: detail
+        a_seg_end_w15:
+          display-mode: detail
+        a_seg_w15:
+          label: "bait segment"
+        b_seg_start_w15:
+          display-mode: detail
+        b_seg_end_w15:
+          display-mode: detail
+        b_seg_w15:
+          label: "prey segment"
+        local_charge_w15_z_shuffle:
+          label: "local charge z (shuffle)"
+          precision: 3
+        local_charge_w15_p_shuffle:
+          display-mode: detail
+          precision: 3
+        local_charge_w15_pct_bg:
+          display-mode: detail
+          precision: 3
+        local_charge_w25:
+          display-mode: detail
+          precision: 3
+        a_seg_start_w25:
+          display-mode: detail
+        a_seg_end_w25:
+          display-mode: detail
+        a_seg_w25:
+          display-mode: detail
+        b_seg_start_w25:
+          display-mode: detail
+        b_seg_end_w25:
+          display-mode: detail
+        b_seg_w25:
+          display-mode: detail
+        local_charge_w25_z_shuffle:
+          display-mode: detail
+          precision: 3
+        local_charge_w25_p_shuffle:
+          display-mode: detail
+          precision: 3
+        local_charge_w25_pct_bg:
+          display-mode: detail
+          precision: 3
+        a_seg_morf:
+          label: "bait seg. MoRF"
+        b_seg_morf:
+          label: "prey seg. MoRF"
+        blocky_both:
+          display-mode: detail
+        s_catpi:
+          display-mode: detail
+          precision: 3
+        s_catpi_pct_bg:
+          display-mode: detail
+          precision: 3
+        local_catpi:
+          display-mode: detail
+          precision: 3
+        local_catpi_z_shuffle:
+          display-mode: detail
+          precision: 3
+        local_catpi_pct_bg:
+          display-mode: detail
+          precision: 3
+        s_pi:
+          display-mode: detail
+          precision: 3
+        s_pi_pct_bg:
+          display-mode: detail
+          precision: 3
+        local_pi:
+          display-mode: detail
+          precision: 3
+        local_pi_z_shuffle:
+          display-mode: detail
+          precision: 3
+        local_pi_pct_bg:
+          display-mode: detail
+          precision: 3
+        hydro_local:
+          display-mode: detail
+          precision: 3
+        hydro_local_z_shuffle:
+          display-mode: detail
+          precision: 3
+        hydro_local_pct_bg:
+          display-mode: detail
+          precision: 3
+        hydro_patch_both:
+          display-mode: detail
+        pct_charge:
+          label: "charge pct"
+          precision: 3
+        pct_cation_pi:
+          label: "cation-pi pct"
+          precision: 3
+        pct_pi:
+          label: "pi-pi pct"
+          precision: 3
+        pct_hydrophobic:
+          label: "hydrophobic pct"
+          precision: 3
+        a_mech_start:
+          display-mode: detail
+        a_mech_end:
+          display-mode: detail
+        b_mech_start:
+          display-mode: detail
+        b_mech_end:
+          display-mode: detail
+        n_phospho_a:
+          display-mode: detail
+        n_phospho_b:
+          display-mode: detail
+        s_charge_phospho:
+          display-mode: detail
+          precision: 3
+        local_charge_w15_phospho:
+          display-mode: detail
+          precision: 3
+        d_s_charge_phospho:
+          display-mode: detail
+          precision: 3
+        d_local_charge_w15_phospho:
+          display-mode: detail
+          precision: 3
+
+  idr_controls:
+    dataset: idr_controls
+    desc: |
+      Control protein pairs scored like the run (best IDR pair each).
+      `expect: high` passes when charge is the dominant mechanism (e.g.
+      histone H1 x prothymosin alpha, Borgia et al. 2018); `expect: low`
+      passes when even the best charge pair stays below the label
+      percentile. `run_percentile` places the control among this run's pairs.
+    render-table:
+      columns:
+        control:
+          label: "control"
+        expect:
+          label: "expect"
+        passed:
+          label: "passed"
+        run_percentile:
+          label: "run percentile"
+          precision: 3
+        a_accession:
+          label: "a accession"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        a_full_start:
+          label: "a full start"
+        a_full_end:
+          label: "a full end"
+        b_accession:
+          label: "b accession"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        b_full_start:
+          label: "b full start"
+        b_full_end:
+          label: "b full end"
+        dominant_mechanism:
+          label: "dominant mechanism"
+        pct_charge:
+          label: "pct charge"
+          precision: 3
+        s_charge:
+          label: "s charge"
+          precision: 3
+        s_charge_pct_bg:
+          label: "s charge pct bg"
+          precision: 3
+        local_charge_w15:
+          label: "local charge w15"
+          precision: 3
+        local_charge_w15_pct_bg:
+          label: "local charge w15 pct bg"
+          precision: 3
+        local_charge_w15_z_shuffle:
+          label: "local charge w15 z shuffle"
+          precision: 3
+        max_mechanism_pct:
+          label: "max mechanism pct"
+          precision: 3

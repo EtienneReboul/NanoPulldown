@@ -516,7 +516,11 @@ Figures in `<reports>/preprocessing/idr_pairs/`: `mechanism_heatmap.svg`
 (top pairs x mechanisms, background percentile), and `top/` with, for each top
 pair, aligned windowed NCPR, aromatic and R+K, and AIUPred panels of both chains.
 The IDRs, the best charge windows and the windows behind the dominant mechanism are
-marked.
+marked. In report.zip they are under **IDR complementarity (SPARROW)** (Figures),
+next to interactive tables of `idr_pair_scores.csv` and `idr_controls.csv`
+(rule `datavzrd_idr`). The ELM matches (`elm_partner_matches.csv`) are a table
+under **Short linear motifs (ELM)** (rule `datavzrd_elm`); per pair, they are drawn
+in the PLIP x CDD figures.
 
 **Limits.**
 - Electrostatic complementarity is non-specific and salt dependent:

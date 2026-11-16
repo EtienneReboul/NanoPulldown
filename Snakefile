@@ -310,7 +310,9 @@ DC_ENV = DC_CFG.get("conda_env") or "envs/deepcoil.yaml"
 CCG = CFG.get("coiled_coil") or {}
 
 ELM_OUTPUTS = ([str(Path(DIRS["annotation"]) / "elm_partner_matches.parquet"),
-                str(Path(DIRS["reports"]) / "preprocessing" / "elm_partner_matches.csv")] if ELM_ON else [])
+                str(Path(DIRS["reports"]) / "preprocessing" / "elm_partner_matches.csv")]
+               + ([str(Path(DIRS["reports"]) / "preprocessing" / "elm_tables")] if DATAVZRD else [])
+               if ELM_ON else [])
 # SPARROW IDR x IDR complementarity (idr_compatibility): on unless
 # annotate.idr_pairs.enabled is false. The background sample and the control
 # sequences are fetched once (fetch_idr_reference; login node on CAIUS) into
@@ -326,7 +328,27 @@ IDR_BG = str(IDR_DIR / "background_{}_{}{}_seed{}_max{}.fasta".format(
 IDR_CTL = str(IDR_DIR / "controls_{}.fasta".format(
     hashlib.sha1(json.dumps(IDR_CFG.get("controls"), sort_keys=True).encode()).hexdigest()[:8]))
 IDR_OUTPUTS = ([str(Path(DIRS["annotation"]) / "idr_pair_scores.parquet"),
-                str(Path(DIRS["reports"]) / "preprocessing" / "idr_pair_scores.csv")] if IDR_ON else [])
+                str(Path(DIRS["reports"]) / "preprocessing" / "idr_pair_scores.csv")]
+               + ([str(Path(DIRS["reports"]) / "preprocessing" / "idr_tables")] if DATAVZRD else [])
+               if IDR_ON else [])
+# report categories of the two run-wide sequence analyses (their per-pair ELM
+# rows are in the "PLIP contacts on CDD sites" figures)
+ELM_CAT = "Short linear motifs (ELM)"
+IDR_CAT = "IDR complementarity (SPARROW)"
+
+
+def idr_figure_labels(wc):
+    """Report labels of one idr_pairs figure (`fig`: the file stem under the
+    figure dir, "mechanism_heatmap" or "top/<NN>_<pair>_<bait IDR>_<prey IDR>")."""
+    if not wc.fig.startswith("top/"):
+        return {"figure": "mechanism heatmap", "bait": "top pairs", "prey": "top pairs"}
+    stem = wc.fig[len("top/"):]
+    num, _, rest = stem.partition("_")
+    pair = max((p for p in LABELS if rest.startswith(p + "_")), key=len, default=None)
+    if pair is None:
+        return {"figure": f"#{num} {rest}", "bait": "", "prey": ""}
+    return {"figure": f"#{num} IDR profiles {rest[len(pair) + 1:]}",
+            "bait": LABELS[pair]["bait"], "prey": LABELS[pair]["prey"]}
 
 
 rule all:
@@ -595,7 +617,10 @@ rule idr_compatibility:
         scores=str(ANN / "idr_pair_scores.parquet"),
         csv=str(PRE_REP / "idr_pair_scores.csv"),
         controls=str(PRE_REP / "idr_controls.csv"),
-        figs=directory(str(PRE_REP / "idr_pairs")),
+        # the SVGs only (the PDFs are the same figures): the heatmap + top/<NN>_*
+        figs=report(directory(str(PRE_REP / "idr_pairs")), patterns=["{fig}.svg"],
+                    category=IDR_CAT, subcategory="Figures", labels=idr_figure_labels,
+                    caption="report/captions/idr_pairs.rst"),
     log:
         str(PRE_LOG / "idr_compatibility.log"),
     conda:
@@ -617,6 +642,47 @@ rule idr_compatibility:
           --features {output.features} --scores {output.scores} --csv {output.csv} \
           --controls-csv {output.controls} --fig-dir {output.figs} \
           --formats {params.fmts} --threads {threads} > {log} 2>&1
+        """
+
+
+# Interactive tables of the two run-wide sequence analyses (datavzrd; the
+# configs' CSV paths resolve against PRE_REP, the bundle dir's parent).
+rule datavzrd_elm:
+    input:
+        config=str(REPO / "report" / "datavzrd" / "elm.datavzrd.yaml"),
+        css=str(REPO / "src" / "nanopulldown" / "report" / "assets" / "datavzrd-dark.css"),
+        csv=str(PRE_REP / "elm_partner_matches.csv"),
+    output:
+        report(directory(str(PRE_REP / "elm_tables")), htmlindex="index.html",
+               category=ELM_CAT, subcategory="Tables", labels={"table": "motif x partner domain matches"},
+               caption="report/captions/elm.rst"),
+    conda:
+        "envs/analysis.yaml"
+    log:
+        str(PRE_LOG / "datavzrd_elm.log"),
+    shell:
+        r"""
+        {NP} report tables --config {input.config} --outdir {output[0]} --css {input.css} > {log} 2>&1
+        """
+
+
+rule datavzrd_idr:
+    input:
+        config=str(REPO / "report" / "datavzrd" / "idr.datavzrd.yaml"),
+        css=str(REPO / "src" / "nanopulldown" / "report" / "assets" / "datavzrd-dark.css"),
+        csv=str(PRE_REP / "idr_pair_scores.csv"),
+        controls=str(PRE_REP / "idr_controls.csv"),
+    output:
+        report(directory(str(PRE_REP / "idr_tables")), htmlindex="index.html",
+               category=IDR_CAT, subcategory="Tables", labels={"table": "IDR pair scores + controls"},
+               caption="report/captions/idr_pairs.rst"),
+    conda:
+        "envs/analysis.yaml"
+    log:
+        str(PRE_LOG / "datavzrd_idr.log"),
+    shell:
+        r"""
+        {NP} report tables --config {input.config} --outdir {output[0]} --css {input.css} > {log} 2>&1
         """
 
 

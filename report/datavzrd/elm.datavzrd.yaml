@@ -1,0 +1,95 @@
+name: "ELM short linear motifs"
+
+# Rendered by rule datavzrd_elm into <reports>/preprocessing/elm_tables; the
+# path below resolves against <reports>/preprocessing (nanopulldown report tables).
+
+default-view: elm_matches
+
+datasets:
+  elm_matches:
+    path: "elm_partner_matches.csv"
+    separator: ","
+
+views:
+  elm_matches:
+    dataset: elm_matches
+    desc: |
+      ELM short linear motifs in the disordered regions of one side of a pair
+      whose ELM interaction domain (Pfam) is present on the other side
+      (nanopulldown.annotate.elm). Sequence-level only: whether the predicted
+      complex actually puts the motif on that domain is drawn per pair in
+      "PLIP contacts on CDD sites" (ELM rows of plip_cdd.svg).
+      Ranked run-wide: known ELM instance first, then MoRF overlap, then
+      lower `probability` (the chance of matching the regex at random; lower
+      is more specific). `rank` is the rank within the pair. `start`/`end`
+      are chain numbering, `full_start`/`full_end` full-length numbering.
+      Expand a row for the partner domain span and motif filters.
+    page-size: 50
+    render-table:
+      columns:
+        pair:
+          label: "pair id"
+        motif_protein:
+          label: "motif protein"
+        partner_protein:
+          label: "domain protein"
+        rank:
+          label: "rank in pair"
+        motif_role:
+          label: "motif side"
+        motif_chain:
+          display-mode: detail
+        motif_accession:
+          label: "motif UniProt"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        elm_identifier:
+          label: "ELM"
+          link-to-url:
+            ELM:
+              url: "http://elm.eu.org/elms/{value}"
+        elm_type:
+          label: "type"
+        start:
+          label: "start"
+        end:
+          label: "end"
+        full_start:
+          display-mode: detail
+        full_end:
+          display-mode: detail
+        motif:
+          label: "motif"
+        probability:
+          label: "probability"
+          precision: 3
+        disorder_fraction:
+          label: "disordered fraction"
+          display-mode: detail
+        morf_overlap:
+          label: "MoRF overlap (res)"
+        known_instance:
+          label: "known instance"
+        partner_role:
+          display-mode: detail
+        partner_chain:
+          display-mode: detail
+        partner_accession:
+          label: "domain UniProt"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        partner_pfam:
+          label: "Pfam"
+          link-to-url:
+            InterPro:
+              url: "https://www.ebi.ac.uk/interpro/entry/pfam/{value}"
+        partner_pfam_name:
+          label: "binding domain"
+        partner_domain_start:
+          display-mode: detail
+        partner_domain_end:
+          display-mode: detail
+        partner_domain_copies:
+          display-mode: detail
