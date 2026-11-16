@@ -1,9 +1,30 @@
+{%- set cfg = snakemake.config -%}
+{%- set engine = ((cfg.get("fold") or {}).get("engine") or "esmfold2") | lower -%}
+{%- if engine == "colabfold" -%}
+{%- set cf = cfg.get("colabfold") or {} -%}
+{%- set msa = cf.get("msa") or {} -%}
+{%- set n_seeds = cf.get("num_seeds", 1) | int -%}
+{%- set sample = "model" -%}
+{%- else -%}
+{%- set ef = cfg.get("esmfold2") or {} -%}
+{%- set n_seeds = ef.get("num_seeds", 1) | int -%}
+{%- set sample = "diffusion sample" -%}
+{%- endif -%}
 nanopulldown — bait/prey screening report
 ==========================================
 
+{% if engine == "colabfold" -%}
 The ONE report for every bait/prey pair in ``config.yaml``'s ``pairs:``
-list, folded locally with ESMFold2-Fast (one seed,
-``esmfold2.num_diffusion_samples`` diffusion samples, no MSA, no templates).
+list, folded with ColabFold (``{{ cf.get("model_type", "alphafold2_multimer_v3") }}``;
+{{ n_seeds }} seed{{ "s" if n_seeds != 1 }} x {{ cf.get("num_models", 5) }} models,
+MMseqs2 MSAs ({{ msa.get("mode", "server") }} mode, ``{{ msa.get("pair_mode", "unpaired_paired") }}``),
+no templates).
+{%- else -%}
+The ONE report for every bait/prey pair in ``config.yaml``'s ``pairs:``
+list, folded with ESMFold2-Fast ({{ n_seeds }} seed{{ "s" if n_seeds != 1 }} x
+{{ ef.get("num_diffusion_samples", 1) }} diffusion sample{{ "s" if (ef.get("num_diffusion_samples", 1) | int) != 1 }},
+no MSA, no templates).
+{%- endif %}
 
 * **Domain map + AIUPred** — split into **Baits** and **Preys**, one figure
   per distinct protein (not per pair: the bait is drawn once, not once per
@@ -16,7 +37,7 @@ list, folded locally with ESMFold2-Fast (one seed,
   it leaves uncovered), each region named after its InterPro domain entry;
   the curated ``domains:`` replace it once reviewed. The ``pairs`` label
   counts the pairs the protein is in.
-* **Bait x prey domain confidence** — one panel per diffusion sample,
+* **Bait x prey domain confidence** — one panel per {{ sample }},
   cell = mean ``1 - PAE/pae_cutoff`` (clipped at 0) between each bait-domain x
   prey-domain pair (AlphaPulldown-style PAE-derived confidence, domain-aggregated
   the way ab_initio_pipeline aggregates PLIP contacts). Cells fade into the
@@ -61,7 +82,7 @@ list, folded locally with ESMFold2-Fast (one seed,
     paired across the chains (same species), chains side by side, with each
     chain's median paired depth. A pair with few or no paired rows gives
     AF2-multimer little coevolution signal for the interface.
-* **Minimization energy** — OpenMM energy trace per diffusion sample, plus a
+* **Minimization energy** — OpenMM energy trace per {{ sample }}, plus a
   failure-rate table for any sample whose minimization diverged.
 
 Domain maps use the curated ``domains:`` of ``configs/curated_domains.yaml``
