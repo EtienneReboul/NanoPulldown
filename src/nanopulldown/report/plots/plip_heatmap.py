@@ -72,6 +72,15 @@ def main() -> int:
         )
         piv = df.pivot_table(index="rdom", columns="ldom", values="dist",
                              aggfunc="count", fill_value=0) / n_samples
+        # sequence order (chain, then first contacted residue), not pivot_table's
+        # alphabetical one -- "A:101" must not sort before "A:51", nor "BTB"
+        # before an N-terminal "MATH"
+        first = pd.concat([
+            df[["rdom", "reschain", "resnr"]].set_axis(["dom", "chain", "res"], axis=1),
+            df[["ldom", "reschain_lig", "resnr_lig"]].set_axis(["dom", "chain", "res"], axis=1),
+        ]).astype({"res": int}).sort_values(["chain", "res"]).drop_duplicates("dom")
+        rank = {d: k for k, d in enumerate(first["dom"])}
+        piv = piv.loc[sorted(piv.index, key=rank.get), sorted(piv.columns, key=rank.get)]
         vmax = max(float(piv.values.max()), 1e-9)
         im = ax.imshow(piv.values, cmap=TH.cmap(), aspect="auto", vmin=0, vmax=vmax)
         ax.set_xticks(range(len(piv.columns)))
