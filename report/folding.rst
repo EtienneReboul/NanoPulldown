@@ -26,6 +26,7 @@ list, folded with ESMFold2-Fast ({{ n_seeds }} seed{{ "s" if n_seeds != 1 }} x
 no MSA, no templates).
 {%- endif %}
 
+
 * **Domain map + AIUPred** — split into **Baits** and **Preys**, one figure
   per distinct protein (not per pair: the bait is drawn once, not once per
   pair it is in), laid out like InterPro's protein viewer: AIUPred's

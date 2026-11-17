@@ -115,6 +115,10 @@ if (REPO / "config.local.yaml").exists():
 report: "report/folding.rst"
 
 CFG = load_config(REPO)
+# the report template (report/folding.rst) reads `snakemake.config`, which holds
+# only the configfiles above: give it the merged config, run overlay included
+# (NANOPULLDOWN_RUN_CONFIG sets e.g. fold.engine)
+config.update(CFG)
 DIRS = CFG["dirs"]
 EF = CFG["esmfold2"]
 # fold.engine: esmfold2 | colabfold -- which of the two fold rule sets below
