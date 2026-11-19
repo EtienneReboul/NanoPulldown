@@ -1904,6 +1904,21 @@ metrics:
   contact_cutoff_cb: 8.0       # Angstrom -- Cb-Cb direct-contact cutoff (cLIS / iLIS)
   pairs: "bait_prey"           # "bait_prey" (each bait chain x each prey chain) | "all"
 
+# ── Stage 2d: min-iPAE short linear motifs (nanopulldown.structure.minipae) ──
+# Third SLiM evidence besides ELM (regex) and SPARROW (IDR x IDR): the residues
+# of one side the fold places confidently on the other side, min_i PAE(i, j)
+# (Omidi et al. 2024 PNAS; AF2_MiniPAE). From fold.parquet, no new folding.
+# Also scores every ELM motif x partner-domain match by its min-iPAE onto that
+# domain (minipae_elm_support.csv). Decoy pairs give a per-bait conformal p.
+minipae:
+  enabled: true
+  pae_threshold: 4.0           # Angstrom; AF2_MiniPAE's default, set on AF-Multimer
+  min_sample_fraction: 0.5     # a residue counts when below the threshold in >= this fraction of samples
+  max_gap: 2                   # residues above the threshold bridged inside one segment
+  min_len: 3                   # shortest segment kept
+  max_slim_len: 30             # longer confident stretches are domain interfaces, not SLiMs
+  min_disorder_fraction: 0.5   # AIUPred-disordered residues needed for `slim_like`
+
 # ── Stage 2c: OpenMM minimization (no ChimeraX, no antechamber) ────────────
 minimize:
   forcefield: ["amber14-all.xml", "implicit/gbn2.xml"]

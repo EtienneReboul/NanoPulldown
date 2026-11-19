@@ -53,6 +53,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "fold": ("fold.esmfold2:main", "fold pairs with ESMFold2-Fast (MLX); ONE model at a time"),
         "minimize": ("structure.minimize:main", "OpenMM energy minimization of one sample"),
         "metrics": ("structure.metrics:main", "ipSAE / iLIS / Pinc / pair ipTM of one pair"),
+        "minipae": ("structure.minipae:main", "min-iPAE short linear motifs of the folds (Omidi 2024 / AF2_MiniPAE) + ELM support"),
         "clashes": ("structure.clashes:main", "steric clashes, raw vs minimized samples"),
         "coiled-coil": ("structure.coiled_coil:main", "knobs-into-holes test of predicted coil pairs in one pair's models"),
         "pydock": ("structure.pydock:main", "pyDock bait-prey energy of one pair's minimized samples"),

@@ -532,6 +532,46 @@ in the PLIP x CDD figures.
 - Test top candidates by other means: AF-Multimer/AF3 (with caution for IDP–IDP),
   coarse-grained simulation (Mpipi, CALVADOS), or experiments.
 
+### Short linear motifs from the folds (min-iPAE)
+
+Rule `slim_minipae` (`nanopulldown.structure.minipae`, after folding, PAE only:
+no GPU, no new folds) is the third SLiM evidence, next to ELM (a regex, blind to
+the partner) and SPARROW (IDR x IDR physicochemistry, no motif). For each residue
+j of one side of a pair it takes min-iPAE(j) = min over the other side's residues
+i of PAE(i, j) (Omidi et al. 2024, PNAS 121:e2406407121: AUROC 0.91 for finding
+the binding IDR of a full-length protein; same score as
+[AF2_MiniPAE](https://github.com/martinovein/AF2_MiniPAE)), median over samples.
+
+- **Segments**: residues below `minipae.pae_threshold` (4 Å, AF2_MiniPAE's default)
+  in at least `min_sample_fraction` of the samples, gaps of up to `max_gap` bridged,
+  at least `min_len` long. `slim_like` = at most `max_slim_len` residues and mostly
+  disordered (AIUPred). Long ordered segments are domain–domain interfaces. Each
+  segment lists the partner residues and Pfam domains it is placed on, and the ELM
+  hits it overlaps.
+- **Per chain**: `mini_pae`, AF2_MiniPAE's own miniPAE and motif span on the best
+  sample (0.8 ipTM + 0.2 pTM), and a conformal **decoy p** against the same bait's
+  decoy pairs (same motif side).
+- **ELM support**: every ELM motif x partner-domain match gets the min-iPAE of
+  the motif onto that domain (PAE rows restricted to the domain span). The ones
+  below the threshold are the hypotheses where regex, binding domain and fold agree.
+
+Outputs: `<results>/_minipae/minipae_{profiles,segments,chains}.parquet`, and
+`minipae_{segments,chains,elm_support}.csv` in `<reports>/folding/`, also as
+interactive tables under **Short linear motifs (min-iPAE)** (rule `datavzrd_minipae`).
+Tests: `tests/test_minipae.py`.
+
+**First look (DNE1 ColabFold run, 612 local pairs, 2026-11-18).** 58 segments,
+9 SLiM-like. Top hits include the SMG7 `PPPGF` motif placed on DNE1's GYF domain
+(1.9 Å, all samples). That is a canonical GYF ligand that ELM misses, because ELM's
+only GYF class is the CD2BP2 type. Of the 805 ELM motif x domain matches,
+2 are supported. Below 4 Å: about 3 % of real chains, 0–1.6 % of decoys.
+
+**Limits.** This is model confidence: it carries the fold's own false positives
+(the decoy p measures them). The 4 Å threshold was set on AlphaFold-Multimer; for
+ESMFold2, check it against the decoys. A fragment fold only sees the motif when the
+fragment contains it. minD (the distogram version, slightly better in Omidi 2024)
+needs distogram logits that neither engine writes now.
+
 ## Layout
 
 | Path                                         | What                                                                                             |

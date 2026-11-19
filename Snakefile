@@ -33,6 +33,12 @@ straight into folding.
                          shuffle + background-proteome null, with controls ->
                          idr_features / idr_pair_scores.parquet + ranked CSV
                          + figures in the report dir (envs/sparrow.yaml)
+      slim_minipae       (after folding) min-iPAE short linear motifs: per
+                         residue, the min inter-chain PAE onto the other side
+                         (Omidi 2024 / AF2_MiniPAE), confident segments, a
+                         decoy p per chain, and every ELM motif's min-iPAE onto
+                         its partner domain -> results/_minipae/*.parquet +
+                         minipae_{segments,chains,elm_support}.csv in the report dir
       annotate_cdd       CDD domains + their conserved-feature sites (InterPro API
                          `?residues`, cached per sequence) of every chain ->
                          data/annotation/cdd_sites.parquet, read against PLIP
@@ -209,19 +215,20 @@ POSITIVE_TAG = (_CTL.get("positives") or {}).get("name", "known")
 DECOY_LENGTH_BINS = int((_CTL.get("decoys") or {}).get("length_bins", 8))
 
 
-def _run_has_decoys() -> bool:
+def _decoy_pairs() -> list[str]:
     # decoys among THIS run's folded preys: runs sharing a run_name share the inputs
     # table, and one of them may fold a decoy-free pairs_file
     if not INPUTS_TABLE.exists():
-        return False
+        return []
     import pyarrow.parquet as pq
     t = pq.read_table(INPUTS_TABLE, columns=["accession", "role", "sources"]).to_pydict()
     decoys = {a for a, r, s in zip(t["accession"], t["role"], t["sources"])
               if r == "prey" and DECOY_TAG in (s or [])}
-    return any(p.split("__", 1)[-1].split("x", 1)[0] in decoys for p in PAIRS)
+    return [p for p in PAIRS if p.split("__", 1)[-1].split("x", 1)[0] in decoys]
 
 
-HAS_DECOYS = _run_has_decoys()
+DECOY_PAIRS = _decoy_pairs()
+HAS_DECOYS = bool(DECOY_PAIRS)
 
 
 def pair_report_labels(wc):
@@ -335,10 +342,19 @@ IDR_OUTPUTS = ([str(Path(DIRS["annotation"]) / "idr_pair_scores.parquet"),
                 str(Path(DIRS["reports"]) / "preprocessing" / "idr_pair_scores.csv")]
                + ([str(Path(DIRS["reports"]) / "preprocessing" / "idr_tables")] if DATAVZRD else [])
                if IDR_ON else [])
+# min-iPAE SLiMs of the folds (slim_minipae, after every pair is folded): on
+# unless minipae.enabled is false. Reads the ELM matches when ELM is on.
+MINIPAE_CFG = CFG.get("minipae") or {}
+MINIPAE_ON = bool(MINIPAE_CFG.get("enabled", True))
+MINIPAE_OUTPUTS = ([str(Path(DIRS["postproc"]) / "_minipae" / "minipae_segments.parquet"),
+                    str(Path(DIRS["reports"]) / "folding" / "minipae_segments.csv")]
+                   + ([str(Path(DIRS["reports"]) / "folding" / "minipae_tables")] if DATAVZRD else [])
+                   if MINIPAE_ON else [])
 # report categories of the two run-wide sequence analyses (their per-pair ELM
 # rows are in the "PLIP contacts on CDD sites" figures)
 ELM_CAT = "Short linear motifs (ELM)"
 IDR_CAT = "IDR complementarity (SPARROW)"
+MINIPAE_CAT = "Short linear motifs (min-iPAE)"
 
 
 def idr_figure_labels(wc):
@@ -376,6 +392,7 @@ rule all:
         str(FOLD_REP / "minimize_failure_rate.csv"),
         ELM_OUTPUTS,
         IDR_OUTPUTS,
+        MINIPAE_OUTPUTS,
         # per-bait report sections (the run-wide pages above are on-demand targets)
         [str(BY_BAIT / b / page) for b in BAITS for page in BAIT_PAGES],
 
@@ -1051,6 +1068,66 @@ rule compute_metrics:
           --contact-cutoff-cb {params.cb} --pairs {params.pairs} \
           --bait-chains {params.bait} --prey-chains {params.prey} \
           > {log} 2>&1
+        """
+
+
+# Short linear motifs placed by the folds themselves: per residue, the minimum
+# inter-chain PAE onto the other side (Omidi 2024 min-iPAE / AF2_MiniPAE), the
+# confident segments, a decoy p per chain, and the min-iPAE of every ELM motif
+# onto its partner domain (nanopulldown.structure.minipae). PAE only: no GPU.
+rule slim_minipae:
+    input:
+        folds=[str(POST / p / "raw" / "fold.parquet") for p in PAIRS],
+        domains=str(ANN_CACHE / "domains.done"),
+        disorder=str(ANN_CACHE / "disorder.done"),
+        elm=[str(ANN / "elm_motifs.parquet"), str(ANN / "elm_partner_matches.parquet")] if ELM_ON else [],
+    output:
+        profiles=str(POST / "_minipae" / "minipae_profiles.parquet"),
+        segments=str(POST / "_minipae" / "minipae_segments.parquet"),
+        chains=str(POST / "_minipae" / "minipae_chains.parquet"),
+        csv=str(FOLD_REP / "minipae_segments.csv"),
+        chains_csv=str(FOLD_REP / "minipae_chains.csv"),
+        elm_csv=str(FOLD_REP / "minipae_elm_support.csv"),    # header only when ELM is off
+    log:
+        str(FOLD_LOG / "slim_minipae.log"),
+    conda:
+        "envs/analysis.yaml"
+    params:
+        pairs=ALL_PAIRS, specs=ALL_SPECS_KEY,
+        decoys=" ".join(DECOY_PAIRS),
+        cfg=json.dumps(MINIPAE_CFG, sort_keys=True),
+        elm=(f"--elm-motifs {ANN / 'elm_motifs.parquet'} --elm-matches {ANN / 'elm_partner_matches.parquet'}"
+             if ELM_ON else ""),
+    threads: 4
+    resources:
+        mem_mb=4000,
+    shell:
+        r"""
+        {NP} minipae --pairs {params.pairs} --results-root {POST} --threads {threads} \
+          --out-dir $(dirname {output.segments}) --csv-dir $(dirname {output.csv}) \
+          --decoy-pairs {params.decoys} {params.elm} > {log} 2>&1
+        """
+
+
+rule datavzrd_minipae:
+    input:
+        config=str(REPO / "report" / "datavzrd" / "minipae.datavzrd.yaml"),
+        css=str(REPO / "src" / "nanopulldown" / "report" / "assets" / "datavzrd-dark.css"),
+        csv=rules.slim_minipae.output.csv,
+        chains=rules.slim_minipae.output.chains_csv,
+        elm=rules.slim_minipae.output.elm_csv,
+    output:
+        report(directory(str(FOLD_REP / "minipae_tables")), htmlindex="index.html",
+               category=MINIPAE_CAT, subcategory="Tables",
+               labels={"table": "min-iPAE segments, chains, ELM support"},
+               caption="report/captions/minipae.rst"),
+    conda:
+        "envs/analysis.yaml"
+    log:
+        str(FOLD_LOG / "datavzrd_minipae.log"),
+    shell:
+        r"""
+        {NP} report tables --config {input.config} --outdir {output[0]} --css {input.css} > {log} 2>&1
         """
 
 

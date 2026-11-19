@@ -1,0 +1,184 @@
+name: "min-iPAE short linear motifs"
+
+# Rendered by rule datavzrd_minipae into <reports>/folding/minipae_tables; the
+# paths below resolve against <reports>/folding (nanopulldown report tables).
+
+default-view: minipae_segments
+
+datasets:
+  minipae_segments:
+    path: "minipae_segments.csv"
+    separator: ","
+  minipae_chains:
+    path: "minipae_chains.csv"
+    separator: ","
+  minipae_elm_support:
+    path: "minipae_elm_support.csv"
+    separator: ","
+
+views:
+  minipae_segments:
+    dataset: minipae_segments
+    desc: |
+      Stretches of one side of a pair that the fold places confidently on the
+      other side: min-iPAE(j) = min over the partner's residues i of PAE(i, j)
+      (Omidi et al. 2024 PNAS; AF2_MiniPAE), median over samples, below
+      minipae.pae_threshold in at least min_sample_fraction of the samples
+      (nanopulldown.structure.minipae). `slim_like` = short and mostly
+      disordered (AIUPred); the others are domain-domain interfaces. In
+      `segment`, upper case residues are below the threshold. `elm_hits`:
+      ELM classes the segment overlaps; with `elm_partner_match` the ELM
+      regex, its binding domain and the fold agree. Ranked run-wide:
+      SLiM-like first, then lower min_pae.
+    page-size: 50
+    render-table:
+      columns:
+        pair:
+          label: "pair id"
+        protein:
+          label: "motif protein"
+        rank:
+          label: "rank in pair"
+        motif_role:
+          label: "motif side"
+        motif_chain:
+          display-mode: detail
+        motif_accession:
+          label: "UniProt"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        start:
+          label: "start"
+        end:
+          label: "end"
+        full_start:
+          display-mode: detail
+        full_end:
+          display-mode: detail
+        segment:
+          label: "segment"
+        length:
+          label: "length"
+        min_pae:
+          label: "min-iPAE (A)"
+          precision: 2
+        mean_pae:
+          display-mode: detail
+        support:
+          label: "sample support"
+          precision: 2
+        disorder_fraction:
+          label: "disordered fraction"
+          precision: 2
+        morf_overlap:
+          label: "MoRF overlap (res)"
+        slim_like:
+          label: "SLiM-like"
+        partner_chain:
+          display-mode: detail
+        partner_start:
+          label: "partner from"
+        partner_end:
+          label: "partner to"
+        partner_domains:
+          label: "partner Pfam"
+        elm_hits:
+          label: "ELM hits"
+        elm_partner_match:
+          label: "ELM x domain"
+  minipae_chains:
+    dataset: minipae_chains
+    desc: |
+      One row per pair and chain. `mini_pae` = the lowest median min-iPAE of
+      the chain. `mini_pae_best` and the `span_*` columns are AF2_MiniPAE's
+      own output on the best sample (0.8 ipTM + 0.2 pTM): the min, and the
+      span from the first to the last confident residue. `decoy_p` is the
+      conformal p of mini_pae against the same bait's decoy pairs (same
+      motif side): how often a random folded prey gets a pose at least this
+      confident.
+    page-size: 50
+    render-table:
+      columns:
+        pair:
+          label: "pair id"
+        protein:
+          label: "protein"
+        motif_role:
+          label: "side"
+        motif_chain:
+          display-mode: detail
+        motif_accession:
+          label: "UniProt"
+          link-to-url:
+            UniProt:
+              url: "https://www.uniprot.org/uniprotkb/{value}/entry"
+        length:
+          display-mode: detail
+        n_samples:
+          display-mode: detail
+        mini_pae:
+          label: "miniPAE (median, A)"
+          precision: 2
+        mini_pae_best:
+          label: "miniPAE (best sample, A)"
+          precision: 2
+        span_start:
+          display-mode: detail
+        span_end:
+          display-mode: detail
+        span_sequence:
+          label: "AF2_MiniPAE span"
+          display-mode: detail
+        n_segments:
+          label: "segments"
+        n_slim_like:
+          label: "SLiM-like"
+        is_decoy:
+          label: "decoy"
+        n_decoys:
+          display-mode: detail
+        decoy_p:
+          label: "decoy p"
+          precision: 3
+  minipae_elm_support:
+    dataset: minipae_elm_support
+    desc: |
+      Every ELM motif x partner binding-domain match (annotate_elm) with its
+      min-iPAE onto THAT domain (PAE rows restricted to the domain span) and
+      onto the whole partner, median over samples. `supported` = onto the
+      domain below minipae.pae_threshold: the regex hit, its ELM binding
+      domain and the fold agree. Empty when annotate.elm is off.
+    page-size: 50
+    render-table:
+      columns:
+        pair:
+          label: "pair id"
+        motif_protein:
+          label: "motif protein"
+        partner_protein:
+          label: "domain protein"
+        elm_identifier:
+          label: "ELM"
+          link-to-url:
+            ELM:
+              url: "http://elm.eu.org/elms/{value}"
+        motif:
+          label: "motif"
+        start:
+          label: "start"
+        end:
+          label: "end"
+        partner_pfam_name:
+          label: "binding domain"
+        minipae_to_domain:
+          label: "min-iPAE to domain (A)"
+          precision: 2
+        minipae_to_partner:
+          label: "min-iPAE to partner (A)"
+          precision: 2
+        domain_support:
+          label: "sample support"
+          precision: 2
+        supported:
+          label: "supported"
