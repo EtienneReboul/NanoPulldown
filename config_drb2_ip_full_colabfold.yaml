@@ -1,0 +1,62 @@
+# Run overlay: FULL-LENGTH DRB2 IP screen (bait DRB2, Q9SKN2 / AT2G28380), folded
+# with ColabFold (AlphaFold2-multimer v3) on CAIUS, with fast kernels, same
+# engine settings as config_dne1_dcp_ip_full_colabfold.yaml. 5 models x 1 seed
+# = 5 samples per pair.
+# Preys: the UNION of the proteins enriched (UP) in DRB2 vs Col-0 in either IP,
+# non-infected (NI) or TBSV-infected -- 528 accessions (252 in both, 146 NI only,
+# 130 TBSV only; DRB2 itself, i.e. the homodimer, and the TBSV RdRp P15962
+# included). AGI -> UniProt by scripts/map_agi_ipms.py (Swiss-Prot first):
+#   python scripts/map_agi_ipms.py ni=data/ip_data_drb2/IP_DRB2_vs_Col_NI.csv \
+#     tbsv=data/ip_data_drb2/IP_DRB2_vs_Col_TBSV.csv --out data/ip_data_drb2/ip_drb2_uniprot.csv
+#   nanopulldown --run-config config_drb2_ip_full_colabfold.yaml inputs expand   (Mac)
+#   NANOPULLDOWN_RUN_CONFIG=config_drb2_ip_full_colabfold.yaml scripts/caius/run.sh
+
+run_name: "drb2_ip_full_colabfold"
+pairs_file: configs/pairs_drb2_ip_full_colabfold.txt
+
+fold:
+  engine: colabfold
+
+colabfold:
+  num_models: 5
+  num_seeds: 1
+  max_tokens: 4000                      # largest screen pair: DRB2 (434) x PRP8A Q9SSD2 (2,359) = 2,793
+  pairs_per_load: 30
+  fast_kernels: true
+  gpu_classes:                          # as the DNE1 ColabFold run
+    - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
+    - {constraint: "gpuh200|gpu80g", max_tokens: 0, mem_mb: 100000, cpus: 8}
+  msa:
+    mode: local
+    gpu: 1
+    gpu_server: 0                       # see config_dne1_dcp_ip_full_colabfold.yaml (gpuserver load timeout)
+    db_load_mode: 0
+    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 1440}
+
+fragments:
+  enabled: false
+
+plip:
+  max_chain_len: 500                    # as the DNE1 ColabFold run (PLIP segfaults on long chains)
+
+controls:
+  decoys:
+    enabled: true                       # n: 500 (config.yaml) x 1 bait = 500 folds, smallest p = 1/501
+
+dirs:
+  annotation:  "data/annotation_drb2_ip_full"
+  postproc:    "results_drb2_ip_full_colabfold"
+  reports:     "reports_drb2_ip_full_colabfold"
+  logs:        "logs_drb2_ip_full_colabfold"
+
+inputs:
+  baits:
+    - list: configs/baits_drb2.txt
+  preys:
+    - ipms:
+        name: drb2_ip
+        path: data/ip_data_drb2/ip_drb2_uniprot.csv
+        id_column: uniprot
+        name_column: gene               # IP gene names, for entries UniProt has none for
+        filter: "ni_call == 'UP' or tbsv_call == 'UP'"
+        keep_columns: [ni_log2fc, ni_adjp, ni_call, tbsv_log2fc, tbsv_adjp, tbsv_call]

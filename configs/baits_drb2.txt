@@ -1,0 +1,2 @@
+# Bait of the DRB2 IP (data/ip_data_drb2/, IP DRB2 vs Col-0, NI and TBSV-infected), 1 accession
+Q9SKN2

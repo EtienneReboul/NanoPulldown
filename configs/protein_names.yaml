@@ -6,3 +6,5 @@
 # next run: only the figures/tables of affected pairs are redrawn.
 Q9LMA8: {short: JAZ1}     # UniProt primary gene name: TIFY10A
 Q9SV55: {short: NINJA}    # UniProt primary gene name: AFPH2
+F4JHW4: {short: CESAR1}   # At4g02880, UniProt: "ELKS/Rab6-interacting/CAST family protein", no gene name
+Q9ZVT0: {short: CESAR2}   # At1g03290, no gene name in UniProt

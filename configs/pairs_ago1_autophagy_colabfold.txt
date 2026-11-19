@@ -1,0 +1,17 @@
+# ago1_autophagy_colabfold: 1 bait(s) x 16 prey(s) (incl. 0 positive control(s), 0 decoy(s)), written by nanopulldown.inputs.expand
+O04379__Q8LEM4
+O04379__Q9XEB5
+O04379__Q8S927
+O04379__Q9SL04
+O04379__Q8S926
+O04379__Q8VYK7
+O04379__Q9LZZ9
+O04379__Q8S925
+O04379__Q9LRP7
+O04379__Q9ZPE4
+O04379__Q9SB64
+O04379__O82775
+O04379__Q8VY98
+O04379__F4JHW4
+O04379__Q9ZVT0
+O04379__Q9LDX1

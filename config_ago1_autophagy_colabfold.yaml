@@ -1,0 +1,53 @@
+# Run overlay: small FULL-LENGTH screen, bait AGO1 (O04379) x 16 preys: the nine
+# ATG8 isoforms (A-I), the AGO1-degradation / autophagy cargo-receptor side
+# (FBW2, NBR1, ATI1, ATI2), CESAR1/2 and SGS3. ColabFold (AlphaFold2-multimer
+# v3), 5 models x 1 seed = 5 samples per pair, on CAIUS. No decoys.
+#   nanopulldown --run-config config_ago1_autophagy_colabfold.yaml inputs expand   (Mac)
+#   NANOPULLDOWN_RUN_CONFIG=config_ago1_autophagy_colabfold.yaml scripts/caius/run.sh
+
+run_name: "ago1_autophagy_colabfold"
+pairs_file: configs/pairs_ago1_autophagy_colabfold.txt
+
+fold:
+  engine: colabfold
+
+colabfold:
+  num_models: 5
+  num_seeds: 1
+  max_tokens: 4000                      # largest pair: AGO1 (1,048) x NBR1 (704) = 1,752
+  pairs_per_load: 30                    # all 16 pairs in one GPU job
+  fast_kernels: true
+  gpu_classes:                          # as the DNE1 / DRB2 ColabFold runs
+    - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
+    - {constraint: "gpuh200|gpu80g", max_tokens: 0, mem_mb: 100000, cpus: 8}
+  msa:
+    mode: server                        # 16 complexes: ColabFold's MMseqs2 API from the login node
+                                        # (run.sh), no H200 job streaming the full databases
+
+fragments:
+  enabled: false
+
+plip:
+  max_chain_len: 500                    # as the other ColabFold runs (PLIP segfaults on long chains)
+
+controls:
+  decoys:
+    enabled: false
+
+dirs:
+  annotation:  "data/annotation_ago1_autophagy"
+  postproc:    "results_ago1_autophagy_colabfold"
+  reports:     "reports_ago1_autophagy_colabfold"
+  logs:        "logs_ago1_autophagy_colabfold"
+
+inputs:
+  baits:
+    - accessions: [O04379]              # AGO1
+      name: ago1
+  preys:
+    - accessions: [Q8LEM4, Q9XEB5, Q8S927, Q9SL04, Q8S926, Q8VYK7, Q9LZZ9, Q8S925, Q9LRP7]
+      name: atg8                        # ATG8A, B, C, D, E, F, G, H, I (Swiss-Prot)
+    - accessions: [Q9ZPE4, Q9SB64, O82775, Q8VY98]
+      name: autophagy                   # FBW2, NBR1, ATI1, ATI2
+    - accessions: [F4JHW4, Q9ZVT0, Q9LDX1]
+      name: rnai                        # CESAR1 (At4g02880, TrEMBL), CESAR2 (At1g03290), SGS3
