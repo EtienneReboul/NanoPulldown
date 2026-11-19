@@ -18,7 +18,7 @@ views:
       whose ELM interaction domain (Pfam) is present on the other side
       (nanopulldown.annotate.elm). Sequence-level only: whether the predicted
       complex actually puts the motif on that domain is drawn per pair in
-      "PLIP contacts on CDD sites" (ELM rows of plip_cdd.svg).
+      "PLIP contacts on sequences of interest" (subsection ELM motifs).
       Ranked run-wide: known ELM instance first, then MoRF overlap, then
       lower `probability` (the chance of matching the regex at random; lower
       is more specific). `rank` is the rank within the pair. `start`/`end`

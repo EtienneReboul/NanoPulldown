@@ -69,7 +69,7 @@ COMMANDS: dict[str | None, dict[str, tuple[str, str]]] = {
         "domain-bar": ("report.plots.domain_bar:main", "domain map + AIUPred tracks of one protein"),
         "domain-heatmap": ("report.plots.domain_heatmap:main", "bait x prey domain PAE confidence"),
         "plip-heatmap": ("report.plots.plip_heatmap:main", "bait x prey domain PLIP contacts"),
-        "plip-cdd": ("report.plots.plip_cdd:main", "PLIP contacts of one pair against its CDD sites"),
+        "plip-soi": ("report.plots.plip_cdd:main", "PLIP contacts of one pair on its CDD sites, ELM motifs, SPARROW IDR pairs, min-iPAE segments"),
         "bait-cdd-map": ("report.plots.bait_cdd_map:main", "every prey's contacts on one bait vs its CDD sites"),
         "minimize-energy": ("report.plots.minimize_energy:main", "minimization energy traces of one pair"),
         "msa-unpaired": ("report.plots.msa_coverage:unpaired_main", "ColabFold unpaired MSA coverage of one protein"),

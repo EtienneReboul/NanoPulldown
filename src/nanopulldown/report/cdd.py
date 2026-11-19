@@ -3,7 +3,7 @@ nanopulldown.report.cdd
 =======================
 PLIP contacts read against each chain's CDD annotation (<annotation dir>/
 cdd_sites.parquet, nanopulldown.annotate.cdd), shared by the results table's
-CDD columns and the plip-cdd / bait-cdd-map figures.
+CDD columns and the plip-soi (CDD figure) / bait-cdd-map figures.
 
 A residue is "contacted" in a sample when it appears in any PLIP bait-prey
 interaction of that sample. Per sample and side (bait / prey, all of that

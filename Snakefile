@@ -80,8 +80,9 @@ straight into folding.
                          the results table combines it with 0.8 ipTM + 0.2 pTM
                          into z-scores (Rodriguez-Lumbreras et al 2026, Eq. 1)
       + report figures (domain x domain confidence heatmaps, minimize energy,
-        PLIP contact heatmaps, PLIP contacts on CDD sites per pair and per
-        bait) and reports/report.zip (onsuccess hook; unzip -> report.html)
+        PLIP contact heatmaps, PLIP contacts on sequences of interest (CDD
+        sites, ELM motifs, SPARROW IDR pairs, min-iPAE segments) per pair,
+        CDD map per bait) and reports/report.zip (onsuccess hook; unzip -> report.html)
         -- the ONLY report this pipeline produces.
 
 Every step is a `nanopulldown` CLI command (src/nanopulldown/, run as
@@ -351,10 +352,14 @@ MINIPAE_OUTPUTS = ([str(Path(DIRS["postproc"]) / "_minipae" / "minipae_segments.
                    + ([str(Path(DIRS["reports"]) / "folding" / "minipae_tables")] if DATAVZRD else [])
                    if MINIPAE_ON else [])
 # report categories of the two run-wide sequence analyses (their per-pair ELM
-# rows are in the "PLIP contacts on CDD sites" figures)
+# rows are in the "PLIP contacts on sequences of interest" figures)
 ELM_CAT = "Short linear motifs (ELM)"
 IDR_CAT = "IDR complementarity (SPARROW)"
 MINIPAE_CAT = "Short linear motifs (min-iPAE)"
+# PLIP contacts on the sequences of interest (fig_plip_soi, fig_bait_cdd_map):
+# one subsection per analysis; the bait / prey labels filter within it
+SOI_CAT = "PLIP contacts on sequences of interest"
+SOI_SUB = {"cdd": "CDD sites", "elm": "ELM motifs", "sparrow": "SPARROW IDR pairs", "minipae": "min-iPAE segments"}
 
 
 def idr_figure_labels(wc):
@@ -384,7 +389,7 @@ rule all:
         str(FOLD_REP / "clash_test_stats.csv"),
         str(FOLD_REP / "clash_counts.csv"),
         [str(FOLD_REP / p / "plip_contacts.svg") for p in PAIRS],
-        [str(FOLD_REP / p / "plip_cdd.svg") for p in PAIRS],
+        [str(FOLD_REP / p / "plip_soi") for p in PAIRS],
         # MSA-based engines only (ESMFold2 has no MSA)
         [str(FOLD_REP / "msa_unpaired" / f"{prot}.svg") for prot in DOMAIN_PROTEINS] if ENGINE == "colabfold" else [],
         [str(FOLD_REP / p / "msa_paired.svg") for p in PAIRS] if ENGINE == "colabfold" else [],
@@ -1301,17 +1306,25 @@ rule fig_plip_contacts:
 
 # PLIP contact frequency per residue of each chain against its CDD domains and
 # conserved-feature sites (nanopulldown.report.cdd).
-rule fig_plip_cdd:
+# PLIP contacts on the sequences of interest of the four sequence / PAE
+# analyses: does a predicted complex actually touch what CDD, ELM, SPARROW and
+# min-iPAE point at? One figure per analysis, drawn alike
+# (nanopulldown.report.plots.plip_cdd); elm / sparrow / minipae.svg only for
+# pairs with rows, so the report lists only those.
+rule fig_plip_soi:
     group: "pair_post"
     input:
         contacts=str(POST / "{pair}" / "plip_contacts.parquet"),
         cdd=str(ANN / "cdd_sites.parquet"),
         annotation=str(ANN / "{pair}" / "annotation.yaml"),
         elm=[str(ANN / "elm_partner_matches.parquet")] if ELM_ON else [],
+        idr=[str(ANN / "idr_pair_scores.parquet")] if IDR_ON else [],
+        minipae=[str(POST / "_minipae" / "minipae_segments.parquet")] if MINIPAE_ON else [],
         coiled=[str(POST / "{pair}" / "coiled_coil.parquet")] if CCG.get("enabled", True) else [],
     output:
-        report(str(FOLD_REP / "{pair}" / "plip_cdd.svg"),
-               category="PLIP contacts on CDD sites", subcategory=bait_subcategory, labels=pair_report_labels),
+        report(directory(str(FOLD_REP / "{pair}" / "plip_soi")), patterns=["{analysis}.svg"],
+               category=SOI_CAT, subcategory=lambda wc: SOI_SUB[wc.analysis], labels=pair_report_labels,
+               caption="report/captions/plip_soi.rst"),
     conda:
         "envs/analysis.yaml"
     params:
@@ -1320,14 +1333,14 @@ rule fig_plip_cdd:
         spec=lambda wc: SPEC_KEY[wc.pair],
         curation=lambda wc: CUR_KEY[wc.pair],
         labels=lambda wc: LABEL_KEY[wc.pair],
-        elm=lambda wc, input: f"--elm {input.elm[0]}" if input.elm else "",
+        opt=lambda wc, input: " ".join(f"--{k} {input[k][0]}" for k in ("elm", "idr", "minipae") if input[k]),
         coiled=lambda wc, input: f"--coiled-coil {input.coiled[0]}" if input.coiled else "",
     shell:
         r"""
-        {NP} plot plip-cdd --pair {wildcards.pair} \
+        {NP} plot plip-soi --pair {wildcards.pair} \
           --contacts {input.contacts} --cdd {input.cdd} --annotation {input.annotation} \
-          --num-samples {params.n} --out {output[0]} --formats {params.fmts} \
-          {params.elm} {params.coiled}
+          --num-samples {params.n} --out-dir {output[0]} --formats {params.fmts} \
+          {params.opt} {params.coiled}
         """
 
 
@@ -1722,7 +1735,7 @@ rule fig_bait_cdd_map:
         cdd=str(ANN / "cdd_sites.parquet"),
     output:
         report(str(BY_BAIT / "{bait}" / "cdd_contact_map.svg"),
-               category="PLIP contacts on CDD sites", subcategory=lambda wc: BAIT_LABEL[wc.bait],
+               category=SOI_CAT, subcategory=SOI_SUB["cdd"],
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait], "prey": "all preys"}),
     conda:
         "envs/analysis.yaml"

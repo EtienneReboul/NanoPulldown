@@ -8,3 +8,7 @@ The **#NN IDR profiles** figures show, per top pair, windowed NCPR, aromatic and
 R + K fractions, and AIUPred disorder + MoRFs on the bait (left) and prey (right) chains.
 The tables list every IDR pair and the control pairs (histone H1 x prothymosin alpha).
 A heuristic ranking of candidates, not a binding energy.
+
+Whether the predicted complexes actually bring the paired IDRs into contact is
+drawn per pair in **PLIP contacts on sequences of interest** (subsection
+*SPARROW IDR pairs*).

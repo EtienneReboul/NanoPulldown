@@ -3,7 +3,7 @@
 nanopulldown.report.plots.bait_cdd_map — Stage 2g report figure (per bait)
 ==========================================================================
 Where every prey lands on ONE bait protein, against the bait's CDD
-annotation: the cross-pair view the per-pair plip-cdd figure can't give.
+annotation: the cross-pair view the per-pair plip-soi CDD figure can't give.
 Bait residues are in full-length UniProt numbering, so fragment pairs (bait
 fragments numbered from 1) line up (nanopulldown.report.cdd.to_full).
 

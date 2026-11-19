@@ -61,16 +61,21 @@ no MSA, no templates).
   salt bridges, π-stacking, π-cation, ...), one violin per type; the total
   count is the ``plip_contacts`` panel of the metric distributions, so it can
   be compared with the confidence scores as a ranking signal.
-* **PLIP contacts on CDD sites** — per pair, one panel per chain: the
-  per-residue PLIP contact frequency over the samples, under the chain's CDD
-  domains and the conserved-feature sites CDD curates in them ("dimer
-  interface", "substrate binding site", ...), each site residue marked
-  contacted or not. Per bait, one map of every prey's contacts on the bait
-  (full-length numbering, so fragments line up), grouped as known partners /
-  preys / decoys and ordered by how many of the bait's site residues they
-  touch. The results table carries the same per sample and side: site
-  residues contacted, their enrichment over the chain's contact rate, and
-  the share of contacts inside CDD domains.
+* **PLIP contacts on sequences of interest**: do the predicted complexes
+  touch what the sequence analyses point at? Per pair, one panel per chain:
+  the per-residue PLIP contact frequency over the samples, then one row per
+  sequence of interest, each residue marked never contacted, contacted
+  elsewhere, or contacting the partner region the analysis names, with the
+  number of samples where it does. One subsection per analysis: **CDD
+  sites** (CDD domains and their conserved-feature sites such as "dimer
+  interface" or "substrate binding site", plus coiled coils; per bait, one
+  map of every prey's contacts on the bait in full-length numbering, so
+  fragments line up, grouped as known partners / preys / decoys), **ELM
+  motifs** (on the partner's binding domain), **SPARROW IDR pairs** (on the
+  partner IDR) and **min-iPAE segments** (on the partner residues the fold
+  places them on). The results table carries the CDD numbers per sample and
+  side: site residues contacted, their enrichment over the chain's contact
+  rate, and the share of contacts inside CDD domains.
 * **MSA coverage** (ColabFold runs only) — the MSAs ColabFold folded from,
   drawn like ColabFold's own "Sequence coverage" plot: one row per aligned
   sequence, sorted and coloured by identity to the query, blank where the

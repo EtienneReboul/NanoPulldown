@@ -1964,7 +1964,7 @@ minimize:
 # Per minimized sample, every bait-side x prey-side predicted coil segment pair
 # (annotation.yaml coils: DeepCoil, else COILS) gets a SOCKET-style
 # knobs-into-holes test (rule coiled_coil_geometry -> results/<pair>/coiled_coil.parquet);
-# fig_plip_cdd draws its result on the coil rows.
+# fig_plip_soi draws its result on the coil rows of the CDD figure.
 coiled_coil:
   enabled: true
   packing_cutoff: 7.0          # A between side-chain centroids, knob to each hole residue (SOCKET default)
