@@ -1100,7 +1100,10 @@ rule slim_minipae:
              if ELM_ON else ""),
     threads: 4
     resources:
-        mem_mb=4000,
+        # ~1 s/pair (float16 parquet decode, I/O bound); the per-residue
+        # profile table is ~1.5k rows/pair in memory (3,075 pairs: a few GB)
+        mem_mb=16000,
+        runtime=240,
     shell:
         r"""
         {NP} minipae --pairs {params.pairs} --results-root {POST} --threads {threads} \
