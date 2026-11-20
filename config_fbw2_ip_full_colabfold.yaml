@@ -1,0 +1,64 @@
+# Run overlay: FULL-LENGTH FBW2 IP screen (bait FBW2, Q9ZPE4 / AT4G08980, 317 aa),
+# folded with ColabFold (AlphaFold2-multimer v3) on CAIUS, same engine settings
+# as config_drb2_ip_full_colabfold.yaml. 5 models x 1 seed = 5 samples per pair.
+# Preys: proteins enriched in the FBW2 IP in the ago1-27 background
+# (data/ip_data_fbw2/FBW_IP_in_ago1_27_CellRep.xlsx, 4xFBW2-1-27 vs 4xCol0),
+# enriched = adjp < 0.05 and log2FC > 1 (the DRB2 'UP' criterion) -- 620 loci,
+# 619 accessions (AT3G13594 has no UniProt entry). FBW2 itself (homodimer) and
+# AGO1 are included. Ambiguous multi-locus hits (AT2G36170.1-AT3G52590.1) -> first locus.
+# The same list, readable: configs/preys_fbw2_ip.txt.
+#   (xlsx -> data/ip_data_fbw2/IP_FBW2_ago1-27_vs_Col.csv, UP/DOWN call column added)
+#   python scripts/map_agi_ipms.py fbw2=data/ip_data_fbw2/IP_FBW2_ago1-27_vs_Col.csv \
+#     --out data/ip_data_fbw2/ip_fbw2_uniprot.csv
+#   nanopulldown --run-config config_fbw2_ip_full_colabfold.yaml inputs expand   (Mac)
+#   NANOPULLDOWN_RUN_CONFIG=config_fbw2_ip_full_colabfold.yaml scripts/caius/run.sh
+
+run_name: "fbw2_ip_full_colabfold"
+pairs_file: configs/pairs_fbw2_ip_full_colabfold.txt
+
+fold:
+  engine: colabfold
+
+colabfold:
+  num_models: 5
+  num_seeds: 1
+  max_tokens: 4000                      # drops FBW2 x BIG Q9SRU2 (317 + 5,098 = 5,415); next largest 3,998
+  pairs_per_load: 30
+  fast_kernels: true
+  gpu_classes:                          # as the DRB2 / DNE1 ColabFold runs
+    - {constraint: "gpua100|gpuh100|gpul40s|gpua40", max_tokens: 1200, mem_mb: 60000, cpus: 8}
+    - {constraint: "gpuh200|gpu80g", max_tokens: 0, mem_mb: 100000, cpus: 8}
+  msa:
+    mode: local
+    gpu: 1
+    gpu_server: 0                       # see config_dne1_dcp_ip_full_colabfold.yaml (gpuserver load timeout)
+    db_load_mode: 0
+    slurm: {gpu_model: "h200", mem_mb: 400000, cpus: 32, runtime: 1440}
+
+fragments:
+  enabled: false
+
+plip:
+  max_chain_len: 500                    # as the DNE1 ColabFold run (PLIP segfaults on long chains)
+
+controls:
+  decoys:
+    enabled: true                       # n: 500 (config.yaml) x 1 bait = 500 folds, smallest p = 1/501
+
+dirs:
+  annotation:  "data/annotation_fbw2_ip_full"
+  postproc:    "results_fbw2_ip_full_colabfold"
+  reports:     "reports_fbw2_ip_full_colabfold"
+  logs:        "logs_fbw2_ip_full_colabfold"
+
+inputs:
+  baits:
+    - list: configs/baits_fbw2.txt
+  preys:
+    - ipms:
+        name: fbw2_ip
+        path: data/ip_data_fbw2/ip_fbw2_uniprot.csv
+        id_column: uniprot
+        name_column: gene               # IP gene symbols, for entries UniProt has none for
+        filter: "fbw2_call == 'UP'"
+        keep_columns: [fbw2_log2fc, fbw2_adjp, fbw2_call]

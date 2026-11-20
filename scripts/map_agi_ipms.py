@@ -5,8 +5,9 @@ and merge them into one CSV that an `ipms:` input source reads.
 
 Each input is `<label>=<path>`: a ';'-separated, decimal-comma table (Excel FR
 export) with `Accession` (AT1G24450.1, or a UniProt accession for non-plant
-hits such as viral proteins), `log2FC`, `pvalue`, `adjp`, `Gene name` and an
-UP/DOWN call column. Output: one row per accession, contrast columns
+hits such as viral proteins; 'AT2G36170.1-AT3G52590.1' for peptides shared by
+paralogs -> the first locus), `log2FC`, `pvalue`, `adjp` ('ns' -> empty),
+`Gene name` and an UP/DOWN call column whose name starts with "enriched". Output: one row per accession, contrast columns
 `<label>_log2fc`, `<label>_adjp`, `<label>_call` (empty when the protein is not
 in that contrast).
 
@@ -45,7 +46,12 @@ def load_contrast(label: str, path: Path) -> pd.DataFrame:
                             "log2FC": "log2fc"})
     df["accession"] = df["accession"].astype(str).str.strip()
     df["call"] = df["call"].astype(str).str.strip().str.upper()
-    df["agi"] = df["accession"].str.replace(r"\.\d+$", "", regex=True).str.upper()
+    for c in ("log2fc", "adjp"):        # 'ns' cells (not quantified) -> NaN
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df.loc[df["call"].isin(["", "NAN", "NONE"]), "call"] = pd.NA
+    # 'AT2G36170.1-AT3G52590.1': peptides shared by paralogs -> the first locus
+    df["agi"] = (df["accession"].str.split("-").str[0]
+                 .str.replace(r"\.\d+$", "", regex=True).str.upper())
     df.loc[~df["agi"].str.match(AGI), "agi"] = pd.NA
     # one row per locus: several gene models of a locus -> the most significant
     df["_key"] = df["agi"].fillna(df["accession"])
