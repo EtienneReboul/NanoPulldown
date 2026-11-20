@@ -1,0 +1,27 @@
+name: nanopulldown-cavity-notebook
+# Environment for notebooks/fbw2_ago1_trp_pockets.ipynb: pyKVFinder cavity
+# detection on AGO1 x FBW2 ColabFold models, cross-referenced with PLIP and CDD.
+#
+#   conda env create -f envs/cavity_notebook.yaml
+#   conda run -n nanopulldown-cavity-notebook python -m ipykernel install --user \
+#       --name nanopulldown-cavity-notebook
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - numpy>=1.26
+  # pthreads (not OpenMP) OpenBLAS: the pyKVFinder wheel bundles its own
+  # libomp; conda's would be a second copy -> "OMP: Error #15" abort.
+  - libopenblas=*=*pthreads*
+  - pandas>=2.0
+  - pyarrow
+  - gemmi
+  - matplotlib>=3.8
+  - jupyterlab
+  - ipykernel
+  - nbconvert
+  - pip
+  - pip:
+      - pyKVFinder>=0.7
+      - py3Dmol
