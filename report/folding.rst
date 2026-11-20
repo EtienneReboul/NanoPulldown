@@ -61,12 +61,14 @@ no MSA, no templates).
   salt bridges, π-stacking, π-cation, ...), one violin per type; the total
   count is the ``plip_contacts`` panel of the metric distributions, so it can
   be compared with the confidence scores as a ranking signal.
-* **PLIP contacts on sequences of interest**: do the predicted complexes
+* **PLIP contacts on CDD sites / ELM motifs / SPARROW IDR pairs /
+  min-iPAE segments**: do the predicted complexes
   touch what the sequence analyses point at? Per pair, one panel per chain:
   the per-residue PLIP contact frequency over the samples, then one row per
   sequence of interest, each residue marked never contacted, contacted
   elsewhere, or contacting the partner region the analysis names, with the
-  number of samples where it does. One subsection per analysis: **CDD
+  number of samples where it does. One section per analysis
+  ("PLIP contacts on CDD sites", ...), one subsection per bait: **CDD
   sites** (CDD domains and their conserved-feature sites such as "dimer
   interface" or "substrate binding site", plus coiled coils; per bait, one
   map of every prey's contacts on the bait in full-length numbering, so

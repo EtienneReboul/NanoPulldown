@@ -520,9 +520,9 @@ marked. In report.zip they are under **IDR complementarity (SPARROW)** (Figures)
 next to interactive tables of `idr_pair_scores.csv` and `idr_controls.csv`
 (rule `datavzrd_idr`). The ELM matches (`elm_partner_matches.csv`) are a table
 under **Short linear motifs (ELM)** (rule `datavzrd_elm`); per pair, they are drawn
-in **PLIP contacts on sequences of interest** (rule `fig_plip_soi`), which has one
-subsection per analysis (CDD sites, ELM motifs, SPARROW IDR pairs, min-iPAE
-segments), each checking whether the predicted complexes actually contact the
+in the **PLIP contacts on ...** sections (rule `fig_plip_soi`): one section per
+analysis (CDD sites, ELM motifs, SPARROW IDR pairs, min-iPAE segments) with one
+subsection per bait, each checking whether the predicted complexes actually contact the
 region the analysis points at.
 
 **Limits.**

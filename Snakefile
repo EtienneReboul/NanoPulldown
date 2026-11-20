@@ -357,9 +357,11 @@ ELM_CAT = "Short linear motifs (ELM)"
 IDR_CAT = "IDR complementarity (SPARROW)"
 MINIPAE_CAT = "Short linear motifs (min-iPAE)"
 # PLIP contacts on the sequences of interest (fig_plip_soi, fig_bait_cdd_map):
-# one subsection per analysis; the bait / prey labels filter within it
-SOI_CAT = "PLIP contacts on sequences of interest"
+# one section per analysis ("PLIP contacts on CDD sites", ...), one subsection
+# per bait; the prey label filters within it. Sections sort by name, so the
+# shared prefix keeps the four together.
 SOI_SUB = {"cdd": "CDD sites", "elm": "ELM motifs", "sparrow": "SPARROW IDR pairs", "minipae": "min-iPAE segments"}
+SOI_CAT = {k: f"PLIP contacts on {v}" for k, v in SOI_SUB.items()}
 
 
 def idr_figure_labels(wc):
@@ -1323,7 +1325,8 @@ rule fig_plip_soi:
         coiled=[str(POST / "{pair}" / "coiled_coil.parquet")] if CCG.get("enabled", True) else [],
     output:
         report(directory(str(FOLD_REP / "{pair}" / "plip_soi")), patterns=["{analysis}.svg"],
-               category=SOI_CAT, subcategory=lambda wc: SOI_SUB[wc.analysis], labels=pair_report_labels,
+               category=lambda wc: SOI_CAT[wc.analysis],
+               subcategory=lambda wc: BAIT_LABEL[SPECS[wc.pair]["bait"]["uniprot"]], labels=pair_report_labels,
                caption="report/captions/plip_soi.rst"),
     conda:
         "envs/analysis.yaml"
@@ -1735,7 +1738,7 @@ rule fig_bait_cdd_map:
         cdd=str(ANN / "cdd_sites.parquet"),
     output:
         report(str(BY_BAIT / "{bait}" / "cdd_contact_map.svg"),
-               category=SOI_CAT, subcategory=SOI_SUB["cdd"],
+               category=SOI_CAT["cdd"], subcategory=lambda wc: BAIT_LABEL[wc.bait],
                labels=lambda wc: {"bait": BAIT_LABEL[wc.bait], "prey": "all preys"}),
     conda:
         "envs/analysis.yaml"

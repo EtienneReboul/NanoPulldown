@@ -4,7 +4,8 @@ Per pair, one panel per chain: the per-residue PLIP contact frequency over the
 samples, the domain map, then one row per sequence of interest with a tick per
 residue (grey: never contacted; faded: contacted, but not on the partner region
 the analysis names; solid: contacting that partner region), and in how many
-samples it does. One subsection per analysis:
+samples it does. One section per analysis
+("PLIP contacts on CDD sites", ...), one subsection per bait:
 
 * **CDD sites**: CDD domains and their conserved-feature sites, plus coiled
   coils (solid = knobs-into-holes with the partner's coil). Per bait, a map of
